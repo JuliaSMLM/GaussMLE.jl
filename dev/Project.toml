@@ -1,0 +1,8 @@
+[deps]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+GaussMLE = "39799108-5025-4d0e-9a62-95a61c8c6061"
+Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
