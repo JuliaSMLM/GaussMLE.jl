@@ -1,0 +1,13 @@
+name = "GaussMLE"
+uuid = "39799108-5025-4d0e-9a62-95a61c8c6061"
+authors = ["klidke@unm.edu"]
+version = "0.1.0"
+
+[compat]
+julia = "1.6"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
