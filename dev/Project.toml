@@ -1,8 +1,13 @@
 [deps]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 GaussMLE = "39799108-5025-4d0e-9a62-95a61c8c6061"
 Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+Latexify = "23fbe1c1-3f47-55db-b15f-69d7ec21a316"
+MacroTools = "1914dd2f-81c6-5fcd-8719-6d5c9610ff09"
 Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StatsFuns = "4c63d2b9-4356-54db-8cca-17b64c39e42c"
+Symbolics = "0c5d862f-8b57-4792-8d23-62f2024744c7"
 Zygote = "e88e6eb3-aa80-5325-afca-941959d7151f"
