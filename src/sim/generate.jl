@@ -9,7 +9,7 @@ const MODEL_MAP = Dict(
 function genroi!(box::AbstractMatrix{T}, θ::GaussMLEParams{T}, args::GaussMLEArgs{T}) where T <: Real
     for i in 1:size(box,1)
         for j in 1:size(box,2)
-            box[i,j] = model(θ, i, j, args)
+            box[i,j] = model(θ, args, i, j)
         end
     end
     return nothing

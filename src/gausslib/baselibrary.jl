@@ -43,15 +43,16 @@ end
 Compute the derivative of the integral of a 1D Gaussian function.
 """
 function derivative_integral_gaussian_1d(ii::Int, x::Real, sigma::Real, N::Real, PSFy::Real)
-    factor_a = exp(-0.5 * ((ii + 1.0 - x) / sigma)^2)
-    factor_b = exp(-0.5 * ((ii - x) / sigma)^2)
+    factor_a = exp(-0.5 * ((ii + 0.5 - x) / sigma)^2)
+    factor_b = exp(-0.5 * ((ii - 0.5 - x) / sigma)^2)
     
     constant = -N / sqrt(2.0 * pi) / sigma
     dudt = constant * (factor_a - factor_b) * PSFy
-    d2udt2 = constant / sigma^2 * ((ii + 1.0 - x) * factor_a - (ii - x) * factor_b) * PSFy
+    d2udt2 = constant / sigma^2 * ((ii + 0.5 - x) * factor_a - (ii - 0.5 - x) * factor_b) * PSFy
 
     return (dudt, d2udt2)
 end
+
 
 """
     center_of_mass_2d(sz::Int, data::Array{<:Real})
@@ -107,12 +108,13 @@ end
 Compute the derivative of the integral of a 1D Gaussian function with respect to sigma.
 """
 function derivative_integral_gaussian_1d_sigma(ii::Int, x::Real, Sx::Real, N::Real, PSFy::Real)    
-    ax = exp(-0.5 * ((ii + 1.0 - x) / Sx)^2)
-    bx = exp(-0.5 * ((ii - x) / Sx)^2) 
-    dudt = -N / sqrt(2.0 * pi) / Sx / Sx * (ax * (ii - x + 1.0) - bx * (ii - x)) * PSFy
-    d2udt2 = -2.0 / Sx * dudt - N / sqrt(2.0 * pi) / Sx^5 * (ax * (ii - x + 1.0)^3 - bx * (ii - x)^3) * PSFy
+    ax = exp(-0.5 * ((ii + 0.5 - x) / Sx)^2)
+    bx = exp(-0.5 * ((ii - 0.5 - x) / Sx)^2) 
+    dudt = -N / sqrt(2.0 * pi) / Sx / Sx * (ax * (ii - x + 0.5) - bx * (ii - x - 0.5)) * PSFy
+    d2udt2 = -2.0 / Sx * dudt - N / sqrt(2.0 * pi) / Sx^5 * (ax * (ii - x + 0.5)^3 - bx * (ii - x - 0.5)^3) * PSFy
     return (dudt, d2udt2)
 end
+
 
 """
     derivative_integral_gaussian_2d_sigma(ii::Int, jj::Int, x::Real, y::Real, S::Real, N::Real, PSFx::Real, PSFy::Real)

@@ -4,8 +4,8 @@ using CUDA
 
 include("constants.jl")
 include("gausslib/GaussLib.jl")
-include("models/FitModel.jl")
-include("sim/SimGauss.jl")
-
+include("models/GaussModel.jl")
+include("sim/GaussSim.jl")
+include("fit/GaussFit.jl")
 
 end

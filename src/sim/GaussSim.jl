@@ -1,7 +1,7 @@
-module SimGauss
+module GaussSim
 
 using Distributions
-using GaussMLE.FitModel
+using GaussMLE.GaussModel
 
 include("generate.jl")
 

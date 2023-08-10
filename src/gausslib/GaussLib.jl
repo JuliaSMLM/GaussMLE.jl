@@ -3,6 +3,7 @@ module GaussLib
 using LinearAlgebra
 using SpecialFunctions
 
+import GaussMLE.MAXPARAMS
 
 export integral_gaussian_1d,
        compute_alpha,
