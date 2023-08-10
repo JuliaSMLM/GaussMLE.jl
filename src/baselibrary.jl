@@ -1,4 +1,4 @@
-# Base Library for Gauss MLE 
+# Base Library for Gauss mLE 
 
 
 function intGauss1D(ii::Int, x, sigma::Real) 
@@ -104,8 +104,8 @@ function gaussFMaxMin2D(sz::Int, sigma::Real, data)
 
     filteredpixel = 0
     sum = 0
-    MaxN = 0.0
-    MinBG = 1e10 # big
+    maxN = 0.0
+    minBG = 1e10 # big
     norm = 0.5 / sigma^2
 
     for kk = 0:sz - 1
@@ -120,12 +120,12 @@ function gaussFMaxMin2D(sz::Int, sigma::Real, data)
             end
 
             filteredpixel /= sum
-            MaxN = max(MaxN, filteredpixel)
-            MinBG = min(MinBG, filteredpixel)
+            maxN = max(maxN, filteredpixel)
+            minBG = min(minBG, filteredpixel)
 
         end
     end
-    return (MaxN, MinBG)
+    return (maxN, minBG)
 end
 
 function mymax(x, y)
@@ -144,7 +144,7 @@ function mymin(x, y)
     return x
 end
 
-function matInv(m::Array{Real}, sz::Int)
+function matInv(m::Array{<:Real}, sz::Int)
 
     tmp1 = 0
     mtype = typeof(m[1])
@@ -156,21 +156,21 @@ function matInv(m::Array{Real}, sz::Int)
         for ii = 1:jj
             if(ii > 1)
                 for kk = 1:ii-1
-                    tmp1 += M[kk, ii] * M[jj, kk]
+                    tmp1 += m[kk, ii] * m[jj, kk]
                 end
-                M[jj, ii] -= tmp1
+                m[jj, ii] -= tmp1
                 tmp1 = 0.0
             end
         end
         for ii = jj + 1:sz
             if(jj > 1)
                 for kk = 1:jj-1
-                    tmp1 += M[kk, ii] * M[jj, kk]
+                    tmp1 += m[kk, ii] * m[jj, kk]
                 end
-                M[jj, ii] = (1/M[jj, jj]) * (M[jj, ii] - tmp1)
+                m[jj, ii] = (1/m[jj, jj]) * (m[jj, ii] - tmp1)
                 tmp1 = 0
             else
-                M[jj, ii] = (1/M[jj, jj]) * M[jj, ii]
+                m[jj, ii] = (1/m[jj, jj]) * m[jj, ii]
             end
         end
     end
@@ -193,28 +193,28 @@ function matInv(m::Array{Real}, sz::Int)
                 b = 0
             end
             for jj = 1:ii-1
-                tmp1 += M[jj, ii] * yy[jj]
+                tmp1 += m[jj, ii] * yy[jj]
             end
 
             yy[ii] = b - tmp1
             tmp1 = 0.0
         end
 
-        Minv[num, sz - 1] = yy[sz - 1]/ M[sz - 1, sz - 1]
+        minv[num, sz - 1] = yy[sz - 1]/ m[sz - 1, sz - 1]
 
         for ii = sz - 1:-1:1
             for jj = ii + 2:sz
-                tmp1 += M[jj, ii] * M[num, jj]
+                tmp1 += m[jj, ii] * m[num, jj]
             end
-            Minv[num, ii] = (1/M[ii, ii]) * (yy[ii] - tmp1)
+            minv[num, ii] = (1/m[ii, ii]) * (yy[ii] - tmp1)
             tmp1 = 0.0
         end
 
     end
 
     for ii = 1:sz
-        Diag[ii] = Minv[ii, ii]
+        diag[ii] = minv[ii, ii]
     end
 
-    return Minv, Diag
+    return minv, diag
 end
