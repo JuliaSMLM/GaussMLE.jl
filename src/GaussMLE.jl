@@ -1,11 +1,11 @@
 module GaussMLE
 
-using LinearAlgebra
-using SpecialFunctions
 using CUDA
 
-
-include("baselibrary.jl")
+include("constants.jl")
+include("gausslib/GaussLib.jl")
+include("models/FitModel.jl")
+include("sim/SimGauss.jl")
 
 
 end

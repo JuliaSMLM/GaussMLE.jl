@@ -1,9 +1,13 @@
 module FitModel
 
-using .BaseLibrary
+using GaussMLE.GaussLib
+
+export model, gradient, curvature, genargs, genparams, initialize_parameters!
+export GaussMLEParams, GaussMLEArgs, GaussMLEΣ
+export θ_xynb, Args_xynb, Σ_xynb
 
 
-include("interface.jl")
+include("types.jl")
 include("gauss_xynb.jl")
 
 
