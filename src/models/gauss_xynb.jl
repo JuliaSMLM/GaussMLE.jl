@@ -60,7 +60,7 @@ function curvature!(hessdiag::AbstractArray{T}, θ::θ_xynb{T}, args::Args_xynb{
 
     (_, hessdiag[1]) = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
     (_, hessdiag[2]) = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
-    hessdiag[3] = T(1)
+    hessdiag[3] = T(0)
     hessdiag[4] = T(0)
 
     return nothing
@@ -96,6 +96,9 @@ function update!(θ::θ_xynb{T}, numerator::AbstractArray{T}, denominator::Abstr
     maxjump = [1.0, 1.0, 100.0, 2.0]
 
     Δθ = numerator[1:nparams] ./ denominator[1:nparams]
+
+    display(Δθ)
+
     Δθ[1] = -min(max(Δθ[1], -maxjump[1]), maxjump[1])
     Δθ[2] = -min(max(Δθ[2], -maxjump[2]), maxjump[2])
     Δθ[3] = -min(max(Δθ[3], -maxjump[3]), maxjump[3])

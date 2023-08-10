@@ -16,7 +16,7 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
     smallmodel = T(1e-3)
     bigratio = T(1e4)
 
-    maxiter = 50
+    maxiter = 100
     iterations = 0
     tol=false
     while !tol && iterations < maxiter
@@ -28,7 +28,7 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
         for ii = 1:boxsize
             for jj = 1:boxsize
                 
-                data_pixel = box[boxsize * (jj - 1) + ii]
+                data_pixel = box[boxsize * (ii - 1) + jj]
                 model_pixel = model(θ, args, ii, jj)
                 gradient!(grad_pixel, θ, args, ii, jj)
                 curvature!(curve_pixel, θ, args, ii, jj)
@@ -82,7 +82,7 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
     end
 
     # Inverting the Fisher Information Matrix
-    _, minv_diag = matrix_inverse!(fi, boxsize)
+    _, minv_diag = matrix_inverse!(fi, θ.nparams)
     GaussMLE.GaussModel.fill!(Σ, minv_diag)
 
     return nothing
