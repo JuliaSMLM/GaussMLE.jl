@@ -6,10 +6,12 @@ using Test
 @testset "GaussMLE.jl" begin
 
     # Importing specific functions for testing from the provided baselibrary.jl content
-    using GaussMLE: integral_gaussian_1d, compute_alpha, derivative_alpha_z, 
-                    second_derivative_alpha_z, center_of_mass_2d, gaussian_max_min_2d, matrix_inverse!
     
     @testset "baselibrary" begin
+
+        using GaussMLE.GaussLib: integral_gaussian_1d, compute_alpha, derivative_alpha_z, 
+                    second_derivative_alpha_z, center_of_mass_2d, gaussian_max_min_2d, matrix_inverse!
+    
         # Test for integral_gaussian_1d
         @test integral_gaussian_1d(1, 2.0, 1.0) ≈ 0.2417303374571288
         
@@ -33,7 +35,7 @@ using Test
         # Test for matrix_inverse (assuming the function signature hasn't changed)
         m = [4.0 2.0; 2.0 2.0]
         m_inv_la = inv(m)
-        m_inverse, m_inverse_diag = matrix_inverse!(m, 2)
+        m_inverse, m_inverse_diag = matrix_inverse!(cat(m,m,dims = 2), 2)
         @test all(m_inverse .≈ m_inv_la)
         @test all(m_inverse_diag .≈ diag(m_inv_la))
     end

@@ -97,7 +97,7 @@ function update!(θ::θ_xynb{T}, numerator::AbstractArray{T}, denominator::Abstr
 
     Δθ = numerator[1:nparams] ./ denominator[1:nparams]
 
-    display(Δθ)
+    # display(Δθ)
 
     Δθ[1] = -min(max(Δθ[1], -maxjump[1]), maxjump[1])
     Δθ[2] = -min(max(Δθ[2], -maxjump[2]), maxjump[2])
@@ -112,7 +112,7 @@ function update!(θ::θ_xynb{T}, numerator::AbstractArray{T}, denominator::Abstr
     # Other constraints
     θ.n = max(θ.n, 0.1) # Make sure Photons is postitve
     θ.bg = max(θ.bg, 0.01) # Make sure Background is postitve
-    display(Δθ)
+    # display(Δθ)
     return all(abs.(Δθ) .<= θ_tol)
 end
 
@@ -122,11 +122,19 @@ function genargs(::Type{θ_xynb}; T::Type{<:Real}=Float32)
     return Args_xynb(σ_PSF)
 end
 
-function genparams(::Type{θ_xynb}, boxsize::Int; T::Type{<:Real}=Float32)
+function genθ(::Type{θ_xynb}, boxsize::Int; T::Type{<:Real}=Float32)
     x = T(boxsize / 2)
     y = T(boxsize / 2)
     n = T(500)
     bg = T(2)
     return θ_xynb(x, y, n, bg)
+end
+
+function genΣ(::Type{θ_xynb}; T::Type{<:Real}=Float32)
+    σ_x = T(0)
+    σ_y = T(0)
+    σ_n = T(0)
+    σ_bg = T(0)
+    return Σ_xynb(σ_x, σ_y, σ_n, σ_bg)
 end
 

@@ -11,7 +11,7 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
     boxsize = Int(sqrt(length(box)))
     initialize_parameters!(θ, box, boxsize, args)
 
-    println("initial parameters: ", θ)  
+    # println("initial parameters: ", θ)  
 
     smallmodel = T(1e-3)
     bigratio = T(1e4)
@@ -47,8 +47,8 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
         end
 
         tol = update!(θ, numerator, denominator)
-        println("tolerance: ", tol)
-        println("parameters: ", θ)  
+        # println("tolerance: ", tol)
+        # println("parameters: ", θ)  
     end
     
     # Calculating the CRLB and LogLikelihood
@@ -83,7 +83,7 @@ function fitbox!(θ::GaussMLEParams{T},Σ::GaussMLEΣ{T}, box::AbstractArray{T},
 
     # Inverting the Fisher Information Matrix
     _, minv_diag = matrix_inverse!(fi, θ.nparams)
-    GaussMLE.GaussModel.fill!(Σ, minv_diag)
+    GaussMLE.GaussModel.fill!(Σ, sqrt.(minv_diag))
 
     return nothing
     
