@@ -22,10 +22,20 @@ mutable struct Σ_xynb{T} <: GaussMLEΣ{T}
     σ_y::T
     σ_n::T
     σ_bg::T
+    logL::T
 end
 
 function Σ_xynb()
-    return Σ_xynb(0.0, 0.0, 0.0, 0.0)
+    return Σ_xynb(0.0, 0.0, 0.0, 0.0, 0.0)
+end
+
+function fill!(σ::Σ_xynb{T}, values::AbstractArray{T}, logL::T) where T <: Real
+    σ.σ_x = values[1]
+    σ.σ_y = values[2]
+    σ.σ_n = values[3]
+    σ.σ_bg = values[4]
+    σ.logL = logL
+    return nothing
 end
 
 function fill!(σ::Σ_xynb{T}, values::AbstractArray{T}) where T <: Real
@@ -135,6 +145,7 @@ function genΣ(::Type{θ_xynb}; T::Type{<:Real}=Float32)
     σ_y = T(0)
     σ_n = T(0)
     σ_bg = T(0)
-    return Σ_xynb(σ_x, σ_y, σ_n, σ_bg)
+    logL = T(0)
+    return Σ_xynb(σ_x, σ_y, σ_n, σ_bg, logL)
 end
 

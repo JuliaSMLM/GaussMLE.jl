@@ -5,21 +5,16 @@ using Printf
 
 
 # Simualte a stack of boxes
+T = Float32
 boxsz = 7
 nboxes = Int(1e5)
-out, θ_true, = GaussMLE.GaussSim.genstack(boxsz,nboxes,:xynb; T= Float64, poissonnoise=true)
-
-# Fit a single box
-θ = GaussMLE.GaussModel.θ_xynb()
-Σ = GaussMLE.GaussModel.Σ_xynb()
-args = GaussMLE.GaussModel.Args_xynb(1.3)
-GaussMLE.GaussFit.fitbox!(θ, Σ, out[:,:,1], args)
-display(θ_true[1])
-display(θ)
+σ_PSF = 1.3
+out, θ_true, = GaussMLE.GaussSim.genstack(boxsz,nboxes,:xynbs; T, poissonnoise=true)
 
 # Fit all boxes in the stack
+args = GaussMLE.GaussModel.Args_xynbs(T(1.3))
 t = @elapsed begin
-    θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args);
+    θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args);
 end
 fits_per_sec = nboxes / t
 
@@ -40,6 +35,9 @@ fits_per_sec = nboxes / t
 σ_bg_mc = std(getproperty.(θ_found, :bg))
 σ_bg_reported = mean(getproperty.(Σ_found, :σ_bg))
 
+μ_σ_PSF_mc = mean(getproperty.(θ_found, :σ_PSF))
+σ_σ_PSF_mc = std(getproperty.(θ_found, :σ_PSF))
+σ_σ_PSF_reported = mean(getproperty.(Σ_found, :σ_σ_PSF))
 
 # Formatted output 
 println("Results:")
@@ -50,10 +48,8 @@ println("x        | $(@sprintf("%.6f", μ_x_mc)) | $(@sprintf("%.6f", σ_x_mc)) 
 println("y        | $(@sprintf("%.6f", μ_y_mc)) | $(@sprintf("%.6f", σ_y_mc)) | $(@sprintf("%.6f", σ_y_reported))")
 println("n        | $(@sprintf("%.6f", μ_n_mc)) | $(@sprintf("%.6f", σ_n_mc)) | $(@sprintf("%.6f", σ_n_reported))")
 println("bg       | $(@sprintf("%.6f", μ_bg_mc)) | $(@sprintf("%.6f", σ_bg_mc)) | $(@sprintf("%.6f", σ_bg_reported))")
+println("σ_PSF    | $(@sprintf("%.6f", μ_σ_PSF_mc)) | $(@sprintf("%.6f", σ_σ_PSF_mc)) | $(@sprintf("%.6f", σ_σ_PSF_reported))")
 println("Fits per second: $(@sprintf("%.2f", fits_per_sec))")
 println("========================================")
 
-# Look for outliers visually 
-hist(getproperty.(θ_found, :x))
-
-
+@profview GaussMLE.GaussFit.fitstack(out, :xynbs, args);
