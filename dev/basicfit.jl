@@ -4,18 +4,11 @@ using CairoMakie
 using Printf
 
 
-# Simualte a stack of boxes
-boxsz = 7
-nboxes = Int(1e5)
-out, θ_true, = GaussMLE.GaussSim.genstack(boxsz,nboxes,:xynb; T= Float64, poissonnoise=true)
-
-# Fit a single box
-θ = GaussMLE.GaussModel.θ_xynb()
-Σ = GaussMLE.GaussModel.Σ_xynb()
-args = GaussMLE.GaussModel.Args_xynb(1.3)
-GaussMLE.GaussFit.fitbox!(θ, Σ, out[:,:,1], args)
-display(θ_true[1])
-display(θ)
+# Simulate a stack of boxes with Poisson noise
+T = Float32 # Data type
+boxsz = 7 # Box size
+nboxes = Int(1e5) # Number of boxes
+out, θ_true, args= GaussMLE.GaussSim.genstack(boxsz,nboxes,:xynb; T, poissonnoise=true)
 
 # Fit all boxes in the stack
 t = @elapsed begin
@@ -53,7 +46,4 @@ println("bg       | $(@sprintf("%.6f", μ_bg_mc)) | $(@sprintf("%.6f", σ_bg_mc)
 println("Fits per second: $(@sprintf("%.2f", fits_per_sec))")
 println("========================================")
 
-# Look for outliers visually 
-hist(getproperty.(θ_found, :x))
-
-
+@profview GaussMLE.GaussFit.fitstack(out, :xynb, args);

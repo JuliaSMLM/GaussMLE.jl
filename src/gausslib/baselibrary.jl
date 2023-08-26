@@ -175,7 +175,7 @@ function gaussian_max_min_2d(sz::Int, sigma::T, data::Array{T}) where T <: Real
 end
 
 
-function derivative_integral_gaussian_2d_z{T}(i::Int, j::Int, theta, PSFSigma_x::T, PSFSigma_y::T, Ax::T, Ay::T, Bx::T, By::T, gamma::T, d::T, dudt, d2udt2) where T <: Real
+function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T, PSFSigma_y::T, Ax::T, Ay::T, Bx::T, By::T, gamma::T, d::T, dudt, d2udt2) where T <: Real
     z = theta[5]
     alphax = compute_alpha(z - gamma, Ax, Bx, d)
     alphay = compute_alpha(z + gamma, Ay, By, d)

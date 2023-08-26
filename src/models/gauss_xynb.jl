@@ -46,51 +46,55 @@ function fill!(σ::Σ_xynb{T}, values::AbstractArray{T}) where T <: Real
     return nothing
 end
 
+# Helper function to compute model, gradient and/or curvature
+function compute_all!(model_val::Union{Nothing, Ref{T}}, grad::Union{Nothing, AbstractArray{T}}, hessdiag::Union{Nothing, AbstractArray{T}}, θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
+    PSFx = integral_gaussian_1d(i, θ.x, args.σ_PSF)
+    PSFy = integral_gaussian_1d(j, θ.y, args.σ_PSF)
+    
+    # Compute model if needed
+    if model_val !== nothing
+        model_val[] = θ.bg + θ.n * PSFx * PSFy
+    end
+    
+    # Compute gradient if needed
+    if grad !== nothing
+        grad[1], _ = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
+        grad[2], _ = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
+        grad[3] = PSFx * PSFy
+        grad[4] = T(1)
+    end
+    
+    # Compute curvature if needed
+    if hessdiag !== nothing
+        _, hessdiag[1] = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
+        _, hessdiag[2] = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
+        hessdiag[3] = T(0)
+        hessdiag[4] = T(0)
+    end
+    
+    return nothing
+end
+
+
+# Functions for individual tasks call the helper function
 function model(θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
-    return θ.bg + θ.n *
-                  integral_gaussian_1d(i, θ.x, args.σ_PSF) *
-                  integral_gaussian_1d(j, θ.y, args.σ_PSF)
+    val = Ref{T}(0)
+    compute_all!(val, nothing, nothing, θ, args, i, j)
+    return val[]
 end
 
 function gradient!(grad::AbstractArray{T}, θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
-    PSFx = integral_gaussian_1d(i, θ.x, args.σ_PSF)
-    PSFy = integral_gaussian_1d(j, θ.y, args.σ_PSF)
-
-    grad[1], = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
-    grad[2], = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
-    grad[3] = PSFx * PSFy
-    grad[4] = T(1)
-
-    return nothing
+    val = Ref{T}(0)
+    compute_all!(val, grad, nothing, θ, args, i, j)
+    return val[]
 end
 
-function curvature!(hessdiag::AbstractArray{T}, θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
-    PSFx = integral_gaussian_1d(i, θ.x, args.σ_PSF)
-    PSFy = integral_gaussian_1d(j, θ.y, args.σ_PSF)
-
-    (_, hessdiag[1]) = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
-    (_, hessdiag[2]) = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
-    hessdiag[3] = T(0)
-    hessdiag[4] = T(0)
-
-    return nothing
+function curvature!(grad::AbstractArray{T}, hessdiag::AbstractArray{T}, θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
+    val = Ref{T}(0)
+    compute_all!(val, grad, hessdiag, θ, args, i, j)
+    return val[]
 end
 
-function gradient_curvature!(grad::AbstractArray{T}, hessdiag::AbstractArray{T}, θ::θ_xynb{T}, args::Args_xynb{T}, i, j) where {T<:Real}
-    PSFx = integral_gaussian_1d(i, θ.x, args.σ_PSF)
-    PSFy = integral_gaussian_1d(j, θ.y, args.σ_PSF)
-
-    (grad.x, hessdiag.x) = derivative_integral_gaussian_1d(i, θ.x, args.σ_PSF, θ.n, PSFy)
-    (grad.y, hessdiag.y) = derivative_integral_gaussian_1d(j, θ.y, args.σ_PSF, θ.n, PSFx)
-
-    grad.n = PSFx * PSFy
-    grad.bg = T(1)
-
-    hessdiag.n = T(0)
-    hessdiag.bg = T(0)
-
-    return nothing
-end
 
 function initialize_parameters!(θ::θ_xynb{T}, data::Matrix{T}, boxsize::Int, args::Args_xynb{T}) where {T<:Real}
     (θ.x, θ.y) = center_of_mass_2d(boxsize, data)
