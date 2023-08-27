@@ -45,5 +45,3 @@ println("n        | $(@sprintf("%.6f", μ_n_mc)) | $(@sprintf("%.6f", σ_n_mc)) 
 println("bg       | $(@sprintf("%.6f", μ_bg_mc)) | $(@sprintf("%.6f", σ_bg_mc)) | $(@sprintf("%.6f", σ_bg_reported))")
 println("Fits per second: $(@sprintf("%.2f", fits_per_sec))")
 println("========================================")
-
-@profview GaussMLE.GaussFit.fitstack(out, :xynb, args);

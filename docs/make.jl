@@ -15,10 +15,10 @@ makedocs(;
     ),
     pages=[
         "GaussMLE" => "index.md",
-        "GaussLib Module" => "GaussLib.md",
-        "GaussSim Module" => "GaussSim.md",
-        "GaussFit Module" => "GaussFit.md",
-        "GaussModel Module" => "GaussModel.md",
+        "GaussFit" => "GaussFit.md",
+        "GaussModel" => "GaussModel.md",
+        "GaussLib" => "GaussLib.md",
+        "GaussSim" => "GaussSim.md",
     ],
 )
 

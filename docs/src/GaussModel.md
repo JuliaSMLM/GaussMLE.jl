@@ -6,6 +6,7 @@ end
 ```
 
 # GaussMLE.GaussModel
+## Overview
 ```@docs
 GaussModel
 ```

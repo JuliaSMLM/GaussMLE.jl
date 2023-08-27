@@ -6,6 +6,8 @@ end
 ```
 
 # GaussMLE.GaussFit
+
+## Overview
 ```@docs
 GaussFit
 ```

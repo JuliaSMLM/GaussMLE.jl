@@ -1,6 +1,7 @@
 """
-The `GaussLib.jl` module provides a collection of functions for working with Gaussian functions and matrices.
-All functions are exported for use in other modules.
+    GaussLib
+
+Low level functions for calcualting the Gaussian model and its derivatives.
 """
 module GaussLib
 
@@ -22,8 +23,4 @@ export integral_gaussian_1d,
        derivative_integral_gaussian_2d_sigma,
        derivative_integral_gaussian_2d_z,
        matrix_inverse!
-    
-include("baselibrary.jl")
-# include("inverse.jl")
-
 end
