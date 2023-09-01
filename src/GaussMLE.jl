@@ -1,12 +1,11 @@
 module GaussMLE
 
-using LinearAlgebra
-using SpecialFunctions
 using CUDA
 
-const MAXPARAMS = 5
-
-include("baselibrary.jl")
-
+include("constants.jl")
+include("gausslib/GaussLib.jl")
+include("models/GaussModel.jl")
+include("sim/GaussSim.jl")
+include("fit/GaussFit.jl")
 
 end

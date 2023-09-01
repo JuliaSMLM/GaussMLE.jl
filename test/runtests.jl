@@ -1,15 +1,18 @@
 using GaussMLE
 using SpecialFunctions
 using LinearAlgebra
+using Statistics 
 using Test
 
 @testset "GaussMLE.jl" begin
 
     # Importing specific functions for testing from the provided baselibrary.jl content
-    using GaussMLE: integral_gaussian_1d, compute_alpha, derivative_alpha_z, 
-                    second_derivative_alpha_z, center_of_mass_2d, gaussian_max_min_2d, matrix_inverse!
     
     @testset "baselibrary" begin
+
+        using GaussMLE.GaussLib: integral_gaussian_1d, compute_alpha, derivative_alpha_z, 
+                    second_derivative_alpha_z, center_of_mass_2d, gaussian_max_min_2d
+    
         # Test for integral_gaussian_1d
         @test integral_gaussian_1d(1, 2.0, 1.0) ≈ 0.2417303374571288
         
@@ -30,11 +33,50 @@ using Test
         # Test for gauss_f_max_min_2D (assuming the function signature hasn't changed)
         @test all(gaussian_max_min_2d(3, 1.0, data) .≈ (6.985605655276496, 3.0143943447235038))
         
-        # Test for matrix_inverse (assuming the function signature hasn't changed)
-        m = [4.0 2.0; 2.0 2.0]
-        m_inv_la = inv(m)
-        m_inverse, m_inverse_diag = matrix_inverse!(m, 2)
-        @test all(m_inverse .≈ m_inv_la)
-        @test all(m_inverse_diag .≈ diag(m_inv_la))
+        
     end
+
+    @testset "Gaussian blob fitting" begin
+
+        # Simulate a stack of boxes with Poisson noise
+        T = Float32 # Data type
+        boxsz = 7 # Box size
+        nboxes = Int(1e5) # Number of boxes
+        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
+
+        # Fit all boxes in the stack
+        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args)
+
+        # Compare the true and found parameters
+        μ_x_mc = mean(getproperty.(θ_found, :x))
+        σ_x_mc = std(getproperty.(θ_found, :x))
+        σ_x_reported = mean(getproperty.(Σ_found, :σ_x))
+
+        μ_y_mc = mean(getproperty.(θ_found, :y))
+        σ_y_mc = std(getproperty.(θ_found, :y))
+        σ_y_reported = mean(getproperty.(Σ_found, :σ_y))
+
+        μ_n_mc = mean(getproperty.(θ_found, :n))
+        σ_n_mc = std(getproperty.(θ_found, :n))
+        σ_n_reported = mean(getproperty.(Σ_found, :σ_n))
+
+        μ_bg_mc = mean(getproperty.(θ_found, :bg))
+        σ_bg_mc = std(getproperty.(θ_found, :bg))
+        σ_bg_reported = mean(getproperty.(Σ_found, :σ_bg))
+
+        # Check if the means and standard deviations are close to the true values
+        @test isapprox(μ_x_mc, θ_true[1].x, atol=1e-1)
+        @test isapprox(σ_x_mc, σ_x_reported, atol=1e-1)
+        
+        @test isapprox(μ_y_mc, θ_true[1].y, atol=1e-1)
+        @test isapprox(σ_y_mc, σ_y_reported, atol=1e-1)
+        
+        @test isapprox(μ_n_mc, θ_true[1].n, atol=1e1)
+        @test isapprox(σ_n_mc, σ_n_reported,atol=1e1)
+        
+        @test isapprox(μ_bg_mc, θ_true[1].bg, atol=1e-1)
+        @test isapprox(σ_bg_mc, σ_bg_reported, atol=1e-1)
+
+    end
+
 end
