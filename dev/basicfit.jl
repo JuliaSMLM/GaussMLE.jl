@@ -1,8 +1,6 @@
 using GaussMLE
 using Statistics 
-using CairoMakie
 using Printf
-
 
 # Simulate a stack of boxes with Poisson noise
 T = Float32 # Data type
