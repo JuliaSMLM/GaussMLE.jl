@@ -9,7 +9,7 @@
 
 **GaussMLE.jl** is a Julia package for performing Maximum Likelihood Estimation (MLE) of Gaussian blob parameters in 2D images under a Poisson noise model. 
 
-The main functionality is provided through the `GaussFit.fitstack` function, which takes a stack of 2D image boxes and returns the estimated Gaussian parameters for each box along with the uncertainties for each parameter.  Uncertainties are calculated using the Cramér-Rao Lower Bound.
+The main functionality is provided through the exported `fitstack` function, which takes a stack of 2D image boxes and returns the estimated Gaussian parameters for each box along with the uncertainties for each parameter.  Uncertainties are calculated using the Cramér-Rao Lower Bound.
 
 ### Features
 
@@ -42,7 +42,7 @@ modeltype = :xynb # Fit model type
 out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
 
 # Fit all boxes in the stack
-θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, modeltype, args);
+θ_found, Σ_found = fitstack(out, modeltype, args);
 
 ```
 
@@ -57,5 +57,5 @@ This package implements the algorithm described in:
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE.md](LICENSE.md) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
