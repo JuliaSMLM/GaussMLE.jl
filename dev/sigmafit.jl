@@ -1,8 +1,6 @@
 using GaussMLE
 using Statistics 
-using CairoMakie
 using Printf
-
 
 # Simualte a stack of boxes
 T = Float32

@@ -36,4 +36,6 @@ include("crlb.jl")
 include("newtonraphson.jl")
 include("fitstack.jl")
 
+export fitstack
+
 end
