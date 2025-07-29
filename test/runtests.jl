@@ -80,3 +80,10 @@ using Test
     end
 
 end
+
+# Include GPU tests if requested
+if get(ENV, "GAUSSMLE_TEST_GPU", "false") == "true"
+    include("gpu_tests.jl")
+else
+    @info "GPU tests skipped. Set GAUSSMLE_TEST_GPU=true to run them."
+end
