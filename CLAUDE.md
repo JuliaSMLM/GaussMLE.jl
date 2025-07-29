@@ -30,6 +30,9 @@ julia --project=dev
 # Run example fitting scripts
 julia --project=dev dev/basicfit.jl
 julia --project=dev dev/sigmafit.jl
+
+# Run GPU tests
+GAUSSMLE_TEST_GPU=true julia --project test/gpu_tests.jl
 ```
 
 ## Architecture
@@ -66,3 +69,19 @@ GaussMLE.jl implements Maximum Likelihood Estimation for Gaussian blob parameter
 - Matrix operations specialized for 2x2 to 5x5 sizes
 - Pre-allocated arrays minimize garbage collection
 - GPU dispatch available when CUDA.jl is loaded
+
+### GPU Development Status
+
+The GPU infrastructure is implemented with:
+- Backend abstraction for CPU/CUDA/Metal
+- Batching system for datasets larger than GPU memory (10^7 ROIs)
+- Comprehensive test suite and benchmarking tools
+
+Current status:
+- ✅ Infrastructure and backend abstraction complete
+- ✅ CPU backend with multi-threading
+- ⏳ CUDA kernels (not yet implemented, falls back to CPU)
+- ⏳ Metal backend (placeholder only)
+- ⏳ Benchmarking shows infrastructure overhead is minimal
+
+Next steps: Implement native CUDA kernels for 20-100x speedup
