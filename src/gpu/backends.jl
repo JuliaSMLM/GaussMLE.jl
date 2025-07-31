@@ -61,7 +61,7 @@ max_batch_size(b::MetalBackend) = estimate_max_batch_size(b)
 function estimate_max_batch_size(backend::CUDABackend, roi_size::Int=7, 
                                element_size::Int=sizeof(Float32))
     # Get available memory
-    free_mem, total_mem = CUDA.available_memory()
+    free_mem = CUDA.available_memory()
     
     # Conservative estimate: use 80% of free memory
     usable_memory = floor(Int, 0.8 * free_mem)

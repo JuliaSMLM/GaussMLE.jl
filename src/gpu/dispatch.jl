@@ -27,7 +27,7 @@ function fit_batched(backend::FittingBackend, data::AbstractArray{T,3},
     
     # Process batches
     start_time = time()
-    for (batch_idx, ((batch_data, start_idx, end_idx), _)) in enumerate(batch_iter)
+    for (batch_idx, (batch_data, start_idx, end_idx)) in enumerate(batch_iter)
         if verbose && batch_idx % 10 == 0
             elapsed = time() - start_time
             rate = (start_idx - 1) / elapsed
@@ -60,7 +60,7 @@ end
 
 # CPU backend implementation
 function fit_batch(backend::CPUBackend, data::AbstractArray{T,3}, 
-                  modeltype::Type{<:GaussMLEParams}, 
+                  modeltype::Type, 
                   variance::Union{Nothing,AbstractArray{T,3}}) where T
     
     # Create model arguments
@@ -73,8 +73,8 @@ function fit_batch(backend::CPUBackend, data::AbstractArray{T,3},
     
     # Use threading for CPU parallelism
     Threads.@threads for i in 1:n_rois
-        roi_data = view(data, :, :, i)
-        roi_variance = variance === nothing ? nothing : view(variance, :, :, i)
+        roi_data = data[:, :, i]  # Copy to ensure it's a Matrix
+        roi_variance = variance === nothing ? nothing : variance[:, :, i]
         
         # Fit single ROI (reuse existing CPU code)
         params[i], uncerts[i] = fit_single_roi(roi_data, modeltype, args, roi_variance)
@@ -85,7 +85,7 @@ end
 
 # CUDA backend implementation (placeholder)
 function fit_batch(backend::CUDABackend, data::AbstractArray{T,3}, 
-                  modeltype::Type{<:GaussMLEParams}, 
+                  modeltype::Type, 
                   variance::Union{Nothing,AbstractArray{T,3}}) where T
     
     # This will be implemented in cuda_kernels.jl
@@ -94,7 +94,7 @@ end
 
 # Metal backend implementation (placeholder)
 function fit_batch(backend::MetalBackend, data::AbstractArray{T,3}, 
-                  modeltype::Type{<:GaussMLEParams}, 
+                  modeltype::Type, 
                   variance::Union{Nothing,AbstractArray{T,3}}) where T
     
     # This will be implemented in metal_kernels.jl
@@ -102,16 +102,17 @@ function fit_batch(backend::MetalBackend, data::AbstractArray{T,3},
 end
 
 # Helper function to fit a single ROI (CPU)
-function fit_single_roi(data::AbstractMatrix{T}, modeltype::Type{<:GaussMLEParams},
+function fit_single_roi(data::AbstractMatrix{T}, modeltype::Type,
                        args::GaussMLEArgs, variance::Union{Nothing,AbstractMatrix{T}}) where T
     
     # Initialize parameters
-    θ = modeltype(T)
-    init!(θ, size(data, 1), data, args)
+    θ = genθ(modeltype, size(data, 1); T=T)
+    initialize_parameters!(θ, data, size(data, 1), args)
     
     # Create workspace
-    numerator = zeros(T, nparams(modeltype))
-    denominator = zeros(T, nparams(modeltype))
+    nparams = θ.nparams
+    numerator = zeros(T, nparams)
+    denominator = zeros(T, nparams)
     
     # Newton-Raphson optimization
     max_iterations = 50
@@ -127,8 +128,8 @@ function fit_single_roi(data::AbstractMatrix{T}, modeltype::Type{<:GaussMLEParam
             for i in 1:size(data, 1)
                 # Get model value and derivatives
                 model_val = Ref{T}()
-                grad = zeros(T, nparams(modeltype))
-                hessdiag = zeros(T, nparams(modeltype))
+                grad = zeros(T, nparams)
+                hessdiag = zeros(T, nparams)
                 
                 compute_all!(model_val, grad, hessdiag, θ, args, i, j)
                 
@@ -137,7 +138,7 @@ function fit_single_roi(data::AbstractMatrix{T}, modeltype::Type{<:GaussMLEParam
                 
                 # Accumulate for Newton-Raphson update
                 diff = data[i, j] - model_val[]
-                for k in 1:nparams(modeltype)
+                for k in 1:nparams
                     numerator[k] += weight * grad[k] * diff / max(model_val[], one(T))
                     denominator[k] += weight * (grad[k]^2 / max(model_val[], one(T)) + 
                                               hessdiag[k] * diff / max(model_val[], one(T)))
@@ -154,10 +155,22 @@ function fit_single_roi(data::AbstractMatrix{T}, modeltype::Type{<:GaussMLEParam
     end
     
     # Compute CRLB
-    Σ = crlb_struct(modeltype)(T)
+    Σ = genΣ(modeltype; T=T)
     compute_crlb!(Σ, θ, args, size(data, 1), variance)
     
     return θ, Σ
+end
+
+# Helper to get the CRLB struct type from model type
+function crlb_struct(modeltype::Type)
+    # This is a bit of a hack, but works for current models
+    if modeltype == θ_xynb
+        return Σ_xynb
+    elseif modeltype == θ_xynbs
+        return Σ_xynbs
+    else
+        error("Unknown CRLB struct for model type $modeltype")
+    end
 end
 
 # Helper to compute CRLB for a single ROI

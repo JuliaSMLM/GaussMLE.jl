@@ -36,7 +36,6 @@ function fitstack(stack::AbstractArray{T}, modelsymbol::Symbol, args::GaussMLEAr
     if modeltype == -1
         error("Model symbol not found")
     end
-    println(modeltype)
 
     θ = [genθ(modeltype, boxsz; T) for i in 1:nboxes]
     Σ = [genΣ(modeltype; T) for i in 1:nboxes]

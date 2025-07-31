@@ -9,6 +9,9 @@ module GaussGPU
 using CUDA
 using LinearAlgebra
 using GaussMLE.GaussModel
+using GaussMLE.GaussModel: MODEL_MAP, genargs, genθ, genΣ, compute_all!, update!
+using GaussMLE.GaussModel: θ_xynb, θ_xynbs, Σ_xynb, Σ_xynbs, GaussMLEParams, GaussMLEΣ, GaussMLEArgs
+using GaussMLE.GaussModel: initialize_parameters!, model
 using GaussMLE.GaussLib
 using GaussMLE.GaussFit
 

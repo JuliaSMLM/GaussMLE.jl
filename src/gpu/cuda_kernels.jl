@@ -4,7 +4,7 @@ CUDA kernel implementations for GPU-accelerated fitting
 
 # Main CUDA batch fitting function
 function cuda_fit_batch(backend::CUDABackend, data::AbstractArray{T,3}, 
-                       modeltype::Type{<:GaussMLEParams}, 
+                       modeltype::Type, 
                        variance::Union{Nothing,AbstractArray{T,3}}) where T
     
     # TODO: Implement CUDA kernels
