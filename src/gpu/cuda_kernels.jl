@@ -3,7 +3,7 @@ CUDA kernel implementations for GPU-accelerated fitting
 """
 
 # Include the actual kernel implementations
-include("cuda_kernels_impl.jl")
+include("cuda_kernels_clean.jl")
 
 # Main CUDA batch fitting function
 function cuda_fit_batch(backend::CUDABackend, data::AbstractArray{T,3}, 
@@ -25,7 +25,7 @@ function cuda_fit_batch(backend::CUDABackend, data::AbstractArray{T,3},
     d_crlb = CUDA.zeros(FT, n_params, n_rois)
     
     # Launch kernel
-    launch_cuda_fit_kernel!(d_data, d_params, d_crlb, Int32(roi_size))
+    launch_gaussian_fit!(d_data, d_params, d_crlb)
     
     # Synchronize and check for errors
     CUDA.synchronize()
@@ -43,7 +43,10 @@ function cuda_fit_batch(backend::CUDABackend, data::AbstractArray{T,3},
                           crlb_cpu[3,i], crlb_cpu[4,i], FT(0)) 
                     for i in 1:n_rois]
     else
-        error("Model type not yet supported in CUDA: $modeltype")
+        # Fall back to CPU for unsupported models
+        @warn "Model type $modeltype not supported in CUDA, falling back to CPU"
+        cpu_backend = CPUBackend(Threads.nthreads())
+        return fit_batch(cpu_backend, data, modeltype, variance)
     end
     
     return θ_result, Σ_result
@@ -62,7 +65,7 @@ function cuda_fit_batch(data::CuArray{T,3}, modeltype::Type,
     d_crlb = CUDA.zeros(T, n_params, n_rois)
     
     # Launch kernel
-    launch_cuda_fit_kernel!(data, d_params, d_crlb, Int32(roi_size))
+    launch_gaussian_fit!(data, d_params, d_crlb)
     
     # Synchronize
     CUDA.synchronize()

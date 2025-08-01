@@ -49,6 +49,9 @@ backend_available(::CPUBackend) = true
 backend_available(::CUDABackend) = CUDA.functional()
 backend_available(b::MetalBackend) = GaussGPU.metal_available()
 
+# Add a function to check CUDA availability
+cuda_available() = CUDA.functional()
+
 supports_streaming(::CPUBackend) = false
 supports_streaming(::CUDABackend) = true
 supports_streaming(::MetalBackend) = true

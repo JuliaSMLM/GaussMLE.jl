@@ -17,7 +17,7 @@ using GaussMLE.GaussFit
 
 # Export backend types and functions
 export FittingBackend, CPUBackend, CUDABackend, MetalBackend
-export select_backend, backend_available, backend_name
+export select_backend, backend_available, backend_name, cuda_available
 export BatchConfig, fitstack_gpu
 
 # Include sub-modules

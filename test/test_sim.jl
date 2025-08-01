@@ -5,20 +5,20 @@
         # Test basic generation without noise
         boxsz = 7
         nboxes = 100
-        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=false)
+        roi_stack, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=false)
         
-        @test size(out) == (boxsz, boxsz, nboxes)
+        @test size(roi_stack) == (boxsz, boxsz, nboxes)
         @test length(θ_true) == nboxes
-        @test all(isa.(θ_true, GaussMLE.GaussXyNb))
+        @test all(isa.(θ_true, GaussMLE.θ_xynb))
         
         # Test with Poisson noise
-        out_noise, θ_true_noise, args_noise = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=true)
-        @test size(out_noise) == (boxsz, boxsz, nboxes)
-        @test !all(out .== out_noise)  # Should be different with noise
+        roi_stack_noise, θ_true_noise, args_noise = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=true)
+        @test size(roi_stack_noise) == (boxsz, boxsz, nboxes)
+        @test !all(roi_stack .== roi_stack_noise)  # Should be different with noise
         
         # Test with different model
-        out_s, θ_true_s, args_s = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynbs; poissonnoise=true)
-        @test all(isa.(θ_true_s, GaussMLE.GaussXyNbS))
+        roi_stack_s, θ_true_s, args_s = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynbs; poissonnoise=true)
+        @test all(isa.(θ_true_s, GaussMLE.θ_xynbs))
     end
     
     @testset "genstack - parameter ranges" begin
@@ -26,7 +26,7 @@
         nboxes = 1000
         
         # Test that generated parameters are within reasonable ranges
-        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb)
+        roi_stack, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb)
         
         x_vals = getproperty.(θ_true, :x)
         y_vals = getproperty.(θ_true, :y)

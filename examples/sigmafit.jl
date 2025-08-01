@@ -7,7 +7,7 @@ using Printf
 using Dates
 
 # Example parameters (users can adjust these)
-use_gpu = false    # Set to true to attempt GPU fitting
+backend = :auto    # Backend selection (:auto, :cpu, :gpu)
 n_boxes = Int(1e4)  # Number of boxes to simulate and fit
 boxsz = 7          # Box size
 σ_PSF_init = 1.3   # Initial PSF width for fitting
@@ -19,57 +19,37 @@ mkpath(output_dir)  # Create if it doesn't exist
 
 println("=== Example: Gaussian Fitting with PSF Width ===")
 println("This example demonstrates fitting with variable PSF width (GaussXyNbS model)")
-println("Parameters: n_boxes=$n_boxes, boxsz=$boxsz, σ_PSF_init=$σ_PSF_init, use_gpu=$use_gpu")
-
-# Check GPU availability if requested
-gpu_available = false
-if use_gpu
-    try
-        using CUDA
-        global gpu_available = CUDA.functional()
-        if gpu_available
-            @info "GPU is available and will be used for fitting"
-        else
-            @warn "GPU was requested but CUDA is not functional. Falling back to CPU."
-        end
-    catch e
-        @warn "GPU was requested but CUDA.jl is not installed. Falling back to CPU." * 
-              "\nTo install CUDA support, run: ] add CUDA"
-    end
-end
+println("Parameters: n_boxes=$n_boxes, boxsz=$boxsz, σ_PSF_init=$σ_PSF_init, backend=$backend")
 
 println()
 
 # Step 1: Generate synthetic data with variable PSF width
 println("Generating synthetic data with variable PSF width...")
 T = Float32
-out, θ_true, = GaussMLE.GaussSim.genstack(boxsz, n_boxes, :xynbs; T, poissonnoise=true)
+roi_stack, θ_true, = GaussMLE.GaussSim.genstack(boxsz, n_boxes, :xynbs; T, poissonnoise=true)
 println("Generated $(n_boxes) simulated Gaussian blobs with varying PSF widths")
 println()
 
-# Step 2: Create fitting arguments
-# The Args_xynbs type specifies the initial PSF width for fitting
-args = GaussMLE.GaussModel.Args_xynbs(T(σ_PSF_init))
+# Step 2: Prepare for fitting
 println("Using initial PSF width σ=$σ_PSF_init for fitting")
 
-# Step 3: Fit the data
-backend_str = use_gpu && gpu_available ? "GPU" : "CPU"
-println("Fitting data using GaussXyNbS model on $backend_str (includes PSF width as free parameter)...")
+# Step 3: Fit the data using the new unified API
+println("Fitting data using GaussXyNbS model (includes PSF width as free parameter)...")
 t = @elapsed begin
-    if use_gpu && gpu_available
-        # Use GPU backend if available
-        θ_found, Σ_found = GaussMLE.GaussFit.fitstack_gpu(out, :xynbs, args)
-    else
-        # Use CPU backend
-        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args)
-    end
+    θ_found, Σ_found = GaussMLE.fitstack(roi_stack, :xynbs; 
+                                         σ_PSF=σ_PSF_init,
+                                         backend=backend,
+                                         verbose=verbose)
 end
 fits_per_sec = n_boxes / t
+
+# Determine which backend was actually used
+backend_used = backend == :auto ? "AUTO" : uppercase(string(backend))
 
 # Report performance prominently
 println()
 println("═" ^ 50)
-println("PERFORMANCE: $(@sprintf("%.0f", fits_per_sec)) fits/second ($backend_str)")
+println("PERFORMANCE: $(@sprintf("%.0f", fits_per_sec)) fits/second ($backend_used)")
 println("═" ^ 50)
 println()
 println("Fitting complete!")
@@ -122,7 +102,7 @@ open(results_file, "w") do io
     println(io, "Number of boxes: $n_boxes")
     println(io, "Box size: $boxsz × $boxsz pixels")
     println(io, "Initial PSF width: $σ_PSF_init")
-    println(io, "Backend used: $backend_str")
+    println(io, "Backend requested: $backend")
     println(io, "Processing speed: $(@sprintf("%.0f", fits_per_sec)) fits/second")
     println(io, "")
     println(io, "Parameter Statistics:")

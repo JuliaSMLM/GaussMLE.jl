@@ -35,7 +35,10 @@ import GaussMLE.MAXPARAMS
 include("crlb.jl")
 include("newtonraphson.jl")
 include("fitstack.jl")
+include("fitstack_unified.jl")
 
+# Export the new unified fitstack from fitstack_unified.jl
 export fitstack
+# The old fitstack is now fitstack_old for internal use
 
 end

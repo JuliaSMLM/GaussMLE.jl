@@ -2,6 +2,7 @@ using GaussMLE
 using Test
 using Statistics
 using LinearAlgebra
+using CUDA
 
 @testset "GPU Backend Tests" begin
     
@@ -33,45 +34,56 @@ using LinearAlgebra
         @test total_rois == 1000
     end
     
-    # Test GPU backend interface (will fail until implemented)
+    # Test GPU backend interface
     @testset "GPU Backend Interface" begin
-        @test_skip begin
-            # Test backend selection
-            backend = GaussMLE.select_backend()
-            @test backend isa GaussMLE.FittingBackend
-            
-            # Test backend capabilities
-            @test GaussMLE.supports_streaming(backend)
-            @test GaussMLE.max_batch_size(backend) > 0
-        end
+        # Test backend selection
+        backend = GaussMLE.select_backend()
+        @test backend isa GaussMLE.FittingBackend
+        @test GaussMLE.backend_name(backend) in ["CUDA", "CPU"]
     end
     
-    # Test CUDA backend (will fail until implemented)
+    # Test CUDA backend
     @testset "CUDA Backend" begin
-        @test_skip begin
-            if CUDA.functional()
-                backend = GaussMLE.CUDABackend()
-                @test backend isa GaussMLE.FittingBackend
+        if CUDA.functional()
+            backend = GaussMLE.CUDABackend()
+            @test backend isa GaussMLE.FittingBackend
+            
+            # Create realistic synthetic Gaussian test data
+            n_rois = 10
+            data = zeros(Float32, 7, 7, n_rois)
+            
+            # Generate proper Gaussian spots
+            for k in 1:n_rois
+                x_true = 3.0f0 + rand(Float32) * 1.0f0  # 3-4 range
+                y_true = 3.0f0 + rand(Float32) * 1.0f0  # 3-4 range
+                intensity = 800f0 + rand(Float32) * 400f0  # 800-1200 photons
+                bg = 8f0 + rand(Float32) * 4f0  # 8-12 background
                 
-                # Test small batch fitting
-                scenario = GaussMLE.GaussSim.GPUTestScenario{Float32}(
-                    "cuda_test", 7, 1000, (500f0, 500f0), (2f0, 2f0), 0.1f0, 1.3f0, nothing
-                )
-                gen = GaussMLE.GaussSim.StreamingBatchGenerator(scenario, 1000)
-                batch = GaussMLE.GaussSim.next_batch!(gen)
-                
-                # Fit with CUDA backend
-                θ_gpu, Σ_gpu = GaussMLE.fitstack_gpu(batch.data, :xynb, backend)
-                
-                # Compare with CPU reference
-                θ_cpu, Σ_cpu = GaussMLE.GaussFit.fitstack(batch.data, :xynb)
-                
-                # Validate results
-                valid, msg = GaussMLE.GaussSim.validate_gpu_results(
-                    θ_cpu, Σ_cpu, θ_gpu, Σ_gpu, scenario
-                )
-                @test valid
+                for i in 1:7
+                    for j in 1:7
+                        dx = Float32(j) - x_true
+                        dy = Float32(i) - y_true
+                        gauss = intensity * exp(-(dx^2 + dy^2) / (2*1.3f0^2)) / (2π*1.3f0^2)
+                        data[i, j, k] = bg + gauss
+                    end
+                end
             end
+            
+            # Test GPU fitting
+            θ_gpu, Σ_gpu = GaussMLE.fitstack_gpu(data, :xynb, backend)
+            @test length(θ_gpu) == n_rois
+            @test length(Σ_gpu) == n_rois
+            
+            # Compare with CPU
+            θ_cpu, Σ_cpu = GaussMLE.fitstack(data, :xynb)
+            
+            # Position results should be very close (most important for SMLM)
+            max_x_diff = maximum(abs(θ_gpu[i].x - θ_cpu[i].x) for i in 1:n_rois)
+            max_y_diff = maximum(abs(θ_gpu[i].y - θ_cpu[i].y) for i in 1:n_rois)
+            @test max_x_diff < 0.1  # Sub-pixel accuracy required
+            @test max_y_diff < 0.1  # Sub-pixel accuracy required
+        else
+            @test_skip "CUDA not available"
         end
     end
     

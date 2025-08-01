@@ -8,10 +8,10 @@
         T = Float32 # Data type
         boxsz = 7 # Box size
         nboxes = Int(1e5) # Number of boxes
-        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
+        roi_stack, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
 
-        # Fit all boxes in the stack
-        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args)
+        # Fit all boxes in the stack using the new unified API
+        θ_found, Σ_found = GaussMLE.fitstack(roi_stack, :xynb; σ_PSF=args.σ_PSF)
 
         # Compare the true and found parameters
         μ_x_mc = mean(getproperty.(θ_found, :x))
@@ -46,23 +46,30 @@
 
     @testset "Model types" begin
         # Test that model types are exported and constructible
-        @test GaussMLE.GaussXyNb <: GaussMLE.GaussModel
-        @test GaussMLE.GaussXyNbS <: GaussMLE.GaussModel
+        @test GaussMLE.θ_xynb{Float32} <: GaussMLE.GaussMLEParams{Float32}
+        @test GaussMLE.θ_xynbs{Float32} <: GaussMLE.GaussMLEParams{Float32}
+        
+        # Test that we can create instances
+        θ1 = GaussMLE.θ_xynb(1.0f0, 2.0f0, 100.0f0, 1.0f0)
+        @test isa(θ1, GaussMLE.GaussMLEParams)
+        
+        θ2 = GaussMLE.θ_xynbs(1.0f0, 2.0f0, 100.0f0, 1.0f0, 1.3f0)
+        @test isa(θ2, GaussMLE.GaussMLEParams)
     end
 
     @testset "fitstack with different models" begin
         # Test fitting with GaussXyNb model
         boxsz = 7
         nboxes = 100
-        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=true)
-        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args)
+        roi_stack, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=true)
+        θ_found, Σ_found = GaussMLE.fitstack(roi_stack, :xynb; σ_PSF=args.σ_PSF)
         @test length(θ_found) == nboxes
-        @test all(isa.(θ_found, GaussMLE.GaussXyNb))
+        @test all(isa.(θ_found, GaussMLE.θ_xynb))
         
         # Test fitting with GaussXyNbS model
-        out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynbs; poissonnoise=true)
-        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args)
+        roi_stack, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynbs; poissonnoise=true)
+        θ_found, Σ_found = GaussMLE.fitstack(roi_stack, :xynbs; σ_PSF=args.σ_PSF)
         @test length(θ_found) == nboxes
-        @test all(isa.(θ_found, GaussMLE.GaussXyNbS))
+        @test all(isa.(θ_found, GaussMLE.θ_xynbs))
     end
 end
