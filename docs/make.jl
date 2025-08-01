@@ -1,24 +1,33 @@
-using GaussMLE
 using Documenter
+using GaussMLE
 
-makedocs(;
-    modules=[GaussMLE],
-    authors="klidke@unm.edu",
-    repo="https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
-    sitename="GaussMLE.jl",
+# Set up doctests
+DocMeta.setdocmeta!(GaussMLE, :DocTestSetup, :(using GaussMLE); recursive=true)
 
-    format=Documenter.HTML(;
-        prettyurls=get(ENV, "CI", "false") == "true",
-        canonical="https://JuliaSMLM.github.io/GaussMLE.jl",
-        edit_link="main",
-        assets=String[],
+makedocs(
+    sitename = "GaussMLE.jl",
+    format = Documenter.HTML(
+        prettyurls = get(ENV, "CI", nothing) == "true",
+        canonical = "https://JuliaSMLM.github.io/GaussMLE.jl/stable/",
+        edit_link = "main",
+        assets = String[],
     ),
-    pages=[
-        "GaussMLE" => "index.md",
-        "GaussFit" => "GaussFit.md",
-        "GaussModel" => "GaussModel.md",
-        "GaussLib" => "GaussLib.md",
-        "GaussSim" => "GaussSim.md",
+    modules = [GaussMLE],
+    authors = "klidke@unm.edu",
+    repo = "https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
+    pages = [
+        "Home" => "index.md",
+        "User Guide" => [
+            "Getting Started" => "guide/getting_started.md",
+            "Models" => "guide/models.md",
+            "GPU Support" => "guide/gpu.md",
+        ],
+        "Examples" => [
+            "Basic Fitting" => "examples/basic.md",
+            "PSF Width Fitting" => "examples/sigma.md",
+        ],
+        "API Reference" => "api.md",
+        "Theory" => "theory.md",
     ],
 )
 

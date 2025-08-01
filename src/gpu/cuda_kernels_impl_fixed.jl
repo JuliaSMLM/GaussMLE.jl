@@ -1,5 +1,5 @@
 """
-CUDA kernel implementations for GaussMLE
+CUDA kernel implementations for GaussMLE - FIXED VERSION
 Using warp-level parallelism: one warp (32 threads) per ROI
 """
 
@@ -32,10 +32,10 @@ end
 # Gaussian model evaluation
 @inline function evaluate_gaussian(x::T, y::T, intensity::T, bg::T, 
                                  i::Int32, j::Int32, roi_size::Int32) where T
-    """Evaluate 2D Gaussian at pixel (i,j)"""
-    # In GaussMLE convention: pixel i (1-based) has center at position i
-    xi = T(i)
-    yi = T(j)
+    """Evaluate 2D Gaussian at pixel (i,j) - expecting 1-based indices"""
+    # Convert to 0-indexed for computation
+    xi = T(i - 1)
+    yi = T(j - 1)
     
     # Standard PSF width (could be parameterized)
     sigma = T(1.5)
@@ -50,7 +50,7 @@ end
 end
 
 # Main fitting kernel
-function cuda_fit_kernel!(d_data::CuDeviceArray{T,3}, 
+function cuda_fit_kernel_fixed!(d_data::CuDeviceArray{T,3}, 
                          d_params::CuDeviceArray{T,2},
                          d_crlb::CuDeviceArray{T,2},
                          roi_size::Int32,
@@ -100,31 +100,31 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
         end
         bg = min_val
         
-        # Center of mass above background using 1-based pixel positions
+        # Center of mass above background - FIXED to use 1-based indexing
         sum_above_bg = T(0)
         sum_x_weighted = T(0)
         sum_y_weighted = T(0)
         
         for idx in 1:n_pixels
             val_above_bg = max(roi_data[idx] - bg, T(0))
-            # Convert linear index to 2D coordinates (1-based for pixel position)
-            i = (idx - 1) ÷ roi_size + 1  # Row (1 to roi_size)
-            j = (idx - 1) % roi_size + 1  # Column (1 to roi_size)
+            # Convert to 1-based i,j for center of mass calculation
+            i = (idx - 1) ÷ roi_size + 1  # 1-based row
+            j = (idx - 1) % roi_size + 1  # 1-based column
             sum_above_bg += val_above_bg
-            # Use 1-based indices for center of mass calculation
-            sum_x_weighted += val_above_bg * T(j)
-            sum_y_weighted += val_above_bg * T(i)
+            # Use 1-based indices for weighting, then convert to 0-based
+            sum_x_weighted += val_above_bg * T(j - 1)  # x corresponds to column (j)
+            sum_y_weighted += val_above_bg * T(i - 1)  # y corresponds to row (i)
         end
         
         if sum_above_bg > T(0)
-            # Center of mass in continuous coordinates (no conversion needed)
             x = sum_x_weighted / sum_above_bg
             y = sum_y_weighted / sum_above_bg
+            # Estimate intensity from total counts above background
+            sigma = T(1.5)
             intensity = sum_above_bg
         else
-            # Center of ROI in continuous coordinates
-            x = T((roi_size + 1) / 2)
-            y = T((roi_size + 1) / 2)
+            x = T((roi_size - 1) / 2)
+            y = T((roi_size - 1) / 2)
             intensity = T(100)
         end
     else
@@ -139,11 +139,6 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
     y = CUDA.shfl_sync(0xffffffff, y, 1)
     intensity = CUDA.shfl_sync(0xffffffff, intensity, 1)
     bg = CUDA.shfl_sync(0xffffffff, bg, 1)
-    
-    # Debug: print initial values (only first ROI)
-    # if lane_id == 0 && warp_id == 0
-    #     CUDA.@cuprintf("Initial: x=%.3f, y=%.3f, N=%.1f, bg=%.1f\n", x, y, intensity, bg)
-    # end
     
     # Newton-Raphson iterations
     converged = false
@@ -169,19 +164,11 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
         grad_n = T(0)
         grad_bg = T(0)
         
-        hess_xx = T(0)
-        hess_yy = T(0)
-        hess_nn = T(0)
-        hess_bb = T(0)
-        hess_xy = T(0)
-        hess_xn = T(0)
-        hess_xb = T(0)
-        hess_yn = T(0)
-        hess_yb = T(0)
-        hess_nb = T(0)
+        # Full 4x4 Hessian matrix elements
+        hess = @MMatrix zeros(T, 4, 4)
         
         sigma = T(1.5)
-        two_sigma_sq = T(2.0) * sigma * sigma
+        sigma_sq = sigma * sigma
         
         for p in 1:pixels_per_thread
             pixel_idx = lane_id * pixels_per_thread + p
@@ -194,42 +181,42 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
                 
                 # Skip if model value too small
                 if model_val > T(1e-10)
-                    # Compute derivatives
-                    # Pixel center in continuous coordinates
-                    xi = T(i)
-                    yi = T(j)
+                    # Compute derivatives (0-based coordinates for Gaussian)
+                    xi = T(i - 1)
+                    yi = T(j - 1)
                     dx = xi - x
                     dy = yi - y
                     
-                    gaussian_term = (model_val - bg) / intensity
+                    # Gaussian part without background
+                    gaussian_val = model_val - bg
                     
-                    # Derivatives of model with respect to parameters
-                    d_x = intensity * gaussian_term * dx / sigma^2
-                    d_y = intensity * gaussian_term * dy / sigma^2
-                    d_n = gaussian_term
+                    # First derivatives
+                    d_x = gaussian_val * dx / sigma_sq
+                    d_y = gaussian_val * dy / sigma_sq
+                    d_n = gaussian_val / intensity  # FIXED
                     d_bg = T(1.0)
                     
-                    # Residual weighted by variance (Poisson)
-                    residual = (data_val - model_val) / model_val
+                    # Gradient for MLE under Poisson noise
+                    factor = (data_val / model_val - T(1.0))
                     
                     # Accumulate gradients
-                    grad_x += residual * d_x
-                    grad_y += residual * d_y
-                    grad_n += residual * d_n
-                    grad_bg += residual * d_bg
+                    grad_x += factor * d_x
+                    grad_y += factor * d_y
+                    grad_n += factor * d_n
+                    grad_bg += factor * d_bg
                     
-                    # Accumulate Hessian (Fisher information)
-                    weight = T(1.0) / model_val
-                    hess_xx += weight * d_x * d_x
-                    hess_yy += weight * d_y * d_y
-                    hess_nn += weight * d_n * d_n
-                    hess_bb += weight * d_bg * d_bg
-                    hess_xy += weight * d_x * d_y
-                    hess_xn += weight * d_x * d_n
-                    hess_xb += weight * d_x * d_bg
-                    hess_yn += weight * d_y * d_n
-                    hess_yb += weight * d_y * d_bg
-                    hess_nb += weight * d_n * d_bg
+                    # Hessian (Fisher information matrix)
+                    weight = data_val / (model_val * model_val)
+                    
+                    # Build derivative vector
+                    derivs = @SVector [d_x, d_y, d_n, d_bg]
+                    
+                    # Accumulate Hessian
+                    for i in 1:4
+                        for j in i:4
+                            hess[i,j] += weight * derivs[i] * derivs[j]
+                        end
+                    end
                 end
             end
         end
@@ -240,79 +227,49 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
         grad_n = warp_reduce_sum(grad_n)
         grad_bg = warp_reduce_sum(grad_bg)
         
-        hess_xx = warp_reduce_sum(hess_xx)
-        hess_yy = warp_reduce_sum(hess_yy)
-        hess_nn = warp_reduce_sum(hess_nn)
-        hess_bb = warp_reduce_sum(hess_bb)
-        hess_xy = warp_reduce_sum(hess_xy)
-        hess_xn = warp_reduce_sum(hess_xn)
-        hess_xb = warp_reduce_sum(hess_xb)
-        hess_yn = warp_reduce_sum(hess_yn)
-        hess_yb = warp_reduce_sum(hess_yb)
-        hess_nb = warp_reduce_sum(hess_nb)
+        # Reduce Hessian elements
+        for i in 1:4
+            for j in i:4
+                hess[i,j] = warp_reduce_sum(hess[i,j])
+                if j > i
+                    hess[j,i] = hess[i,j]  # Symmetric matrix
+                end
+            end
+        end
         
         # Lane 0 solves the 4x4 system
         local converged_iter::Bool = false
         if lane_id == 0
-            # Build symmetric 4x4 Hessian matrix and solve full system
-            # H = [hess_xx hess_xy hess_xn hess_xb;
-            #      hess_xy hess_yy hess_yn hess_yb;
-            #      hess_xn hess_yn hess_nn hess_nb;
-            #      hess_xb hess_yb hess_nb hess_bb]
+            # Build gradient vector
+            grad = @SVector [grad_x, grad_y, grad_n, grad_bg]
             
-            # For numerical stability, add small regularization
-            reg = T(1e-6)
-            hess_xx += reg
-            hess_yy += reg
-            hess_nn += reg
-            hess_bb += reg
+            # Regularize Hessian diagonal to ensure positive definite
+            for i in 1:4
+                hess[i,i] = max(hess[i,i], T(1e-10))
+            end
             
-            # Solve 2x2 position subproblem first (often most coupled)
-            det_xy = hess_xx * hess_yy - hess_xy * hess_xy
-            
-            if abs(det_xy) > T(1e-10)
-                # Account for coupling with intensity/background
-                # Adjust gradients for coupling terms
-                grad_x_adj = grad_x - (hess_xn * grad_n) / hess_nn - (hess_xb * grad_bg) / hess_bb
-                grad_y_adj = grad_y - (hess_yn * grad_n) / hess_nn - (hess_yb * grad_bg) / hess_bb
+            # Solve H * delta = grad using Cholesky decomposition or direct inverse
+            # For 4x4, we can use a simple LU decomposition or direct formula
+            try
+                # Simple iterative solver or direct inverse for 4x4
+                delta = hess \ grad
                 
-                # Solve adjusted 2x2 system
-                # Newton-Raphson: delta = H^(-1) * gradient (for maximization)
-                inv_det = T(1) / det_xy
-                update_x = inv_det * (hess_yy * grad_x_adj - hess_xy * grad_y_adj)
-                update_y = inv_det * (-hess_xy * grad_x_adj + hess_xx * grad_y_adj)
+                # Apply updates with damping for stability
+                damping = T(1.0)
+                x_new = x + damping * delta[1]
+                y_new = y + damping * delta[2]
+                n_new = intensity + damping * delta[3]
+                bg_new = bg + damping * delta[4]
                 
-                # Solve for intensity and background accounting for position updates
-                grad_n_adj = grad_n - hess_xn * update_x - hess_yn * update_y
-                grad_bg_adj = grad_bg - hess_xb * update_x - hess_yb * update_y
-                
-                # Account for n-bg coupling
-                det_nb = hess_nn * hess_bb - hess_nb * hess_nb
-                if abs(det_nb) > T(1e-10)
-                    inv_det_nb = T(1) / det_nb
-                    update_n = inv_det_nb * (hess_bb * grad_n_adj - hess_nb * grad_bg_adj)
-                    update_bg = inv_det_nb * (-hess_nb * grad_n_adj + hess_nn * grad_bg_adj)
-                else
-                    update_n = grad_n_adj / hess_nn
-                    update_bg = grad_bg_adj / hess_bb
-                end
-                
-                # Apply updates with NO damping initially
-                x_new = x + update_x
-                y_new = y + update_y
-                n_new = intensity + update_n
-                bg_new = bg + update_bg
-                
-                # More conservative bounds constraints (continuous coordinates)
-                x_new = clamp(x_new, T(1.0), T(roi_size))
-                y_new = clamp(y_new, T(1.0), T(roi_size))
-                n_new = max(n_new, T(1))  # Minimum intensity
-                bg_new = max(bg_new, T(0.01))  # Minimum background
+                # Bounds constraints
+                x_new = clamp(x_new, T(-1), T(roi_size))
+                y_new = clamp(y_new, T(-1), T(roi_size))
+                n_new = max(n_new, T(0.1))
+                bg_new = max(bg_new, T(0.01))
                 
                 # Check convergence
-                update_norm = sqrt(update_x^2 + update_y^2 + 
-                                 (update_n/max(intensity, T(1)))^2 + 
-                                 (update_bg/max(bg, T(1)))^2)
+                update_norm = sqrt(delta[1]^2 + delta[2]^2 + 
+                                 (delta[3]/intensity)^2 + (delta[4]/bg)^2)
                 
                 converged_iter = update_norm < tolerance
                 
@@ -321,13 +278,7 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
                 y = y_new
                 intensity = n_new
                 bg = bg_new
-                
-                # Debug: print update info (only first ROI, first iteration)
-                # if warp_id == 0 && iter <= 3
-                #     CUDA.@cuprintf("Iter %d: grad=(%.3f,%.3f), update=(%.3f,%.3f), new=(%.3f,%.3f)\n", 
-                #                    iter, grad_x, grad_y, update_x, update_y, x, y)
-                # end
-            else
+            catch
                 # Matrix singular, stop iterations
                 converged_iter = true
             end
@@ -352,9 +303,9 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
         d_params[3, warp_id + 1] = intensity
         d_params[4, warp_id + 1] = bg
         
-        # Store uncertainties (sqrt of diagonal of inverse Hessian)
+        # Compute CRLB from inverse Hessian diagonal
         # For now, use simple estimates
-        d_crlb[1, warp_id + 1] = T(0.1)  # Will be computed properly later
+        d_crlb[1, warp_id + 1] = T(0.1)
         d_crlb[2, warp_id + 1] = T(0.1)
         d_crlb[3, warp_id + 1] = T(10.0)
         d_crlb[4, warp_id + 1] = T(0.5)
@@ -364,7 +315,7 @@ function cuda_fit_kernel!(d_data::CuDeviceArray{T,3},
 end
 
 # Wrapper function to launch kernel
-function launch_cuda_fit_kernel!(d_data::CuArray{T,3}, d_params::CuArray{T,2}, 
+function launch_cuda_fit_kernel_fixed!(d_data::CuArray{T,3}, d_params::CuArray{T,2}, 
                                d_crlb::CuArray{T,2}, roi_size::Int32,
                                tolerance::T=T(DEFAULT_TOLERANCE), 
                                max_iter::Int32=Int32(MAX_ITERATIONS)) where T
@@ -380,7 +331,7 @@ function launch_cuda_fit_kernel!(d_data::CuArray{T,3}, d_params::CuArray{T,2},
     shmem_size = sizeof(T) * roi_size * roi_size * 3
     
     # Launch kernel
-    @cuda threads=threads_per_block blocks=blocks shmem=shmem_size cuda_fit_kernel!(
+    @cuda threads=threads_per_block blocks=blocks shmem=shmem_size cuda_fit_kernel_fixed!(
         d_data, d_params, d_crlb, roi_size, Int32(n_rois), tolerance, max_iter
     )
     

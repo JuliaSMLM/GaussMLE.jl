@@ -1,56 +1,66 @@
-```@meta
-CurrentModule = GaussMLE
-```
+# GaussMLE.jl
 
-# GaussMLE
+Maximum Likelihood Estimation for Gaussian blob parameters in 2D images under Poisson noise.
 
-Documentation for [GaussMLE](https://github.com/JuliaSMLM/GaussMLE.jl).
-
-## Overview
-*GaussMLE* provides a fast method for performing Maximum Likelihood Estimation (MLE) of Gaussian blob parameters under a Poisson noise model.  The form of the Gaussian expectation models are:
-
-$$\mu(\theta)_{i,j} = \theta_b + \theta_n \int_{i-0.5}^{i+0.5} \int_{j-0.5}^{j+0.5} 
-\mathcal{N}(\theta_x - x, \sigma_x^2)
-\mathcal{N}(\theta_y - y, \sigma_y^2)dxdy$$
-
-
-- $ \theta_n $: Integrated intenstity in the blob (does not include background)
-- $ {\theta\_x, \theta\_y} $: Location of blob center
-- $ \theta_n $: Integrated intenstity in the blob (does not include background)
-- $ \theta_b $: Background counts per pixel
-- $ \sigma\_x, \sigma\_y $: Width of Gaussian blob   
-- $ i,j $: Pixel location (column major)
-
-The models differ by how they treat $\sigma_x$ and $\sigma_y$.  
-
-| Symbol | $\theta^\top$ | $\sigma_x, \sigma_y$ |
-|--------|----------|---------------------|
-|:xynb   | $\{x,y,n,b\}$ | $\sigma_x = \sigma_y$ = $\sigma$_PSF |
-|:xynbs   | $\{x,y,n,b,\sigma\_\mathrm{PSF}\}$ | $\sigma_x = \sigma_y = \theta_{\sigma\_\mathrm{PSF}}$|
-|:xynbsxsy | $\{x,y,n,b,\sigma\_\mathrm{x},\sigma\_\mathrm{y}\}$ | $\sigma_x = \theta_{\sigma\_\mathrm{x}}, \sigma_y = \theta_{\sigma\_\mathrm{y}}$|
-|:xynbz | $\{x,y,n,b,z\}$ | $\sigma_x = \sigma\_\mathrm{x}(\theta_z) , \sigma_y = \sigma\_\mathrm{y}(\theta_z)$|
-
-## Usage
-
-### Basic Usage
-
-A basic example that demonstrates how to use `GaussFit.fitstack` to fit Gaussian blobs in a stack of 2D image boxes:
+## Installation
 
 ```julia
-using GaussMLE
-using Statistics 
-
-# Simulate a stack of boxes with Poisson noise
-T = Float32 # Data type
-boxsz = 7 # Box size
-nboxes = Int(1e5) # Number of boxes
-modeltype = :xynb # Fit model type 
-out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
-
-# Fit all boxes in the stack
-θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, modeltype, args);
-
+using Pkg
+Pkg.add("GaussMLE")
 ```
+
+## Quick Start
+
+```@example
+using GaussMLE
+
+# Generate synthetic data
+boxsz = 7
+nboxes = 100
+out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; poissonnoise=true)
+
+# Fit the data
+θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args)
+
+# Display first result
+println("First fit result: x=$(θ_found[1].x), y=$(θ_found[1].y)")
+```
+
+## Overview
+
+GaussMLE.jl implements Maximum Likelihood Estimation for Gaussian blob parameters in 2D images under Poisson noise. The package is designed for Single Molecule Localization Microscopy (SMLM) applications where thousands of small image regions need to be fitted efficiently.
+
+### Key Features
+
+- **Fast fitting**: Optimized Newton-Raphson solver for small image regions
+- **Multiple models**: Support for different Gaussian models (fixed/variable PSF width)
+- **GPU acceleration**: CUDA support for large datasets (when available)
+- **sCMOS support**: Variance-weighted fitting for scientific CMOS cameras
+- **Uncertainty estimation**: Cramér-Rao Lower Bound uncertainties
+
+### Supported Models
+
+| Model | Parameters | Description |
+|-------|------------|-------------|
+| `GaussXyNb` | x, y, intensity, background | Fixed PSF width |
+| `GaussXyNbS` | x, y, intensity, background, PSF width | Variable PSF width |
+
+## Mathematical Foundation
+
+The Gaussian expectation model is:
+
+$$\mu(\theta)_{i,j} = \theta_b + \theta_n \int_{i-0.5}^{i+0.5} \int_{j-0.5}^{j+0.5} 
+\mathcal{N}(\theta_x - x, \sigma^2)
+\mathcal{N}(\theta_y - y, \sigma^2) \, dx \, dy$$
+
+Where:
+- $\theta_n$: Integrated intensity (photons)
+- $\theta_x, \theta_y$: Blob center position (pixels)
+- $\theta_b$: Background counts per pixel
+- $\sigma$: PSF width (pixels)
+- $i, j$: Pixel coordinates
+
+The fitting process uses Newton-Raphson optimization to find maximum likelihood parameter estimates under Poisson noise assumptions.
 
 
 
