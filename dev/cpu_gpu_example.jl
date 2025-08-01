@@ -1,4 +1,6 @@
-#!/usr/bin/env julia
+using Pkg
+Pkg.activate("dev")
+
 #
 # High-level example demonstrating CPU and GPU usage in GaussMLE.jl
 #
@@ -8,13 +10,20 @@
 # 3. Fit using GPU backend (if available)
 # 4. Compare results and performance
 
-using Pkg
-Pkg.instantiate()
-
 using GaussMLE
 using Random
 using Statistics
 using Printf
+
+# Parameters (adjust these as needed)
+n_rois = 10_000  # Number of ROIs to fit
+roi_size = 7     # Size of each ROI (7x7 pixels)
+seed = 42        # Random seed
+verbose = true   # Print detailed results
+
+# Output directory
+output_dir = joinpath(@__DIR__, "output")
+mkpath(output_dir)  # Create if it doesn't exist
 
 # Check if CUDA is available
 const has_cuda = try
@@ -24,15 +33,11 @@ catch
     false
 end
 
-println("GaussMLE CPU/GPU Example")
-println("=" ^ 50)
+println("=== GaussMLE CPU/GPU Development Example ===")
+println("This example compares CPU and GPU backend performance")
+println("Parameters: n_rois=$n_rois, roi_size=$roi_size, seed=$seed")
 println("CUDA available: ", has_cuda ? "Yes" : "No")
 println()
-
-# Parameters
-const n_rois = 10_000  # Number of ROIs to fit
-const roi_size = 7     # Size of each ROI (7x7 pixels)
-const model = GaussXyNb()  # Basic Gaussian model
 
 # Generate synthetic data
 println("Generating synthetic data...")

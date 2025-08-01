@@ -1,4 +1,6 @@
-#!/usr/bin/env julia
+using Pkg
+Pkg.activate("dev")
+
 #
 # Simple CPU/GPU example for GaussMLE.jl
 # Using the correct API
@@ -8,6 +10,21 @@ using GaussMLE: fitstack_gpu, CUDABackend, CPUBackend
 using Random
 using Statistics
 using Printf
+
+# Parameters (adjust these as needed)
+n_rois = 1000     # Number of ROIs to fit
+roi_size = 7      # Size of each ROI (7x7 pixels)
+seed = 42         # Random seed
+verbose = true    # Print detailed results
+
+# Output directory
+output_dir = joinpath(@__DIR__, "output")
+mkpath(output_dir)  # Create if it doesn't exist
+
+println("=== Simple CPU/GPU Development Example ===")
+println("This example tests basic CPU/GPU functionality")
+println("Parameters: n_rois=$n_rois, roi_size=$roi_size")
+println()
 
 # Check if CUDA is available and has memory
 cuda_status = try

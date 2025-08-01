@@ -1,4 +1,6 @@
-#!/usr/bin/env julia
+using Pkg
+Pkg.activate("dev")
+
 #
 # Debug coordinate system and initialization
 
@@ -6,11 +8,20 @@ using GaussMLE
 using CUDA
 using Printf
 
-println("Coordinate System Debug")
+# Parameters (adjust these as needed)
+roi_size = 7      # Size of ROI to debug
+verbose = true    # Print detailed output
+
+# Output directory
+output_dir = joinpath(@__DIR__, "output")
+mkpath(output_dir)  # Create if it doesn't exist
+
+println("=== Coordinate System Debug ===")
+println("This script debugs coordinate system and initialization")
+println("Parameters: roi_size=$roi_size")
 println("=" ^ 50)
 
 # Test simple center of mass calculation
-roi_size = 7
 roi = zeros(Float32, roi_size, roi_size)
 
 # Place a single bright pixel at known location
