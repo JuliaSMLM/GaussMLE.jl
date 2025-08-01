@@ -88,8 +88,12 @@ function fit_batch(backend::CUDABackend, data::AbstractArray{T,3},
                   modeltype::Type, 
                   variance::Union{Nothing,AbstractArray{T,3}}) where T
     
+    # Get PSF width from model args (temporary approach)
+    args = genargs(modeltype; T=T)
+    σ_PSF = hasproperty(args, :σ_PSF) ? args.σ_PSF : T(1.3)
+    
     # This will be implemented in cuda_kernels.jl
-    return cuda_fit_batch(backend, data, modeltype, variance)
+    return cuda_fit_batch(backend, data, modeltype, variance, σ_PSF)
 end
 
 # Metal backend implementation (placeholder)
