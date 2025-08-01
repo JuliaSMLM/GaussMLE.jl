@@ -7,6 +7,7 @@ using Printf
 using Dates
 
 # Example parameters (users can adjust these)
+use_gpu = false    # Set to true to attempt GPU fitting
 n_boxes = Int(1e4)  # Number of boxes to simulate and fit
 boxsz = 7          # Box size
 σ_PSF_init = 1.3   # Initial PSF width for fitting
@@ -18,7 +19,25 @@ mkpath(output_dir)  # Create if it doesn't exist
 
 println("=== Example: Gaussian Fitting with PSF Width ===")
 println("This example demonstrates fitting with variable PSF width (GaussXyNbS model)")
-println("Parameters: n_boxes=$n_boxes, boxsz=$boxsz, σ_PSF_init=$σ_PSF_init")
+println("Parameters: n_boxes=$n_boxes, boxsz=$boxsz, σ_PSF_init=$σ_PSF_init, use_gpu=$use_gpu")
+
+# Check GPU availability if requested
+gpu_available = false
+if use_gpu
+    try
+        using CUDA
+        global gpu_available = CUDA.functional()
+        if gpu_available
+            @info "GPU is available and will be used for fitting"
+        else
+            @warn "GPU was requested but CUDA is not functional. Falling back to CPU."
+        end
+    catch e
+        @warn "GPU was requested but CUDA.jl is not installed. Falling back to CPU." * 
+              "\nTo install CUDA support, run: ] add CUDA"
+    end
+end
+
 println()
 
 # Step 1: Generate synthetic data with variable PSF width
@@ -34,13 +53,26 @@ args = GaussMLE.GaussModel.Args_xynbs(T(σ_PSF_init))
 println("Using initial PSF width σ=$σ_PSF_init for fitting")
 
 # Step 3: Fit the data
-println("Fitting data using GaussXyNbS model (includes PSF width as free parameter)...")
+backend_str = use_gpu && gpu_available ? "GPU" : "CPU"
+println("Fitting data using GaussXyNbS model on $backend_str (includes PSF width as free parameter)...")
 t = @elapsed begin
-    θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args)
+    if use_gpu && gpu_available
+        # Use GPU backend if available
+        θ_found, Σ_found = GaussMLE.GaussFit.fitstack_gpu(out, :xynbs, args)
+    else
+        # Use CPU backend
+        θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args)
+    end
 end
 fits_per_sec = n_boxes / t
-println("Fitting complete! Processing speed: $(@sprintf("%.0f", fits_per_sec)) fits/second")
+
+# Report performance prominently
 println()
+println("═" ^ 50)
+println("PERFORMANCE: $(@sprintf("%.0f", fits_per_sec)) fits/second ($backend_str)")
+println("═" ^ 50)
+println()
+println("Fitting complete!")
 
 # Step 4: Analyze results
 println("Analyzing fitting results...")
@@ -90,6 +122,7 @@ open(results_file, "w") do io
     println(io, "Number of boxes: $n_boxes")
     println(io, "Box size: $boxsz × $boxsz pixels")
     println(io, "Initial PSF width: $σ_PSF_init")
+    println(io, "Backend used: $backend_str")
     println(io, "Processing speed: $(@sprintf("%.0f", fits_per_sec)) fits/second")
     println(io, "")
     println(io, "Parameter Statistics:")

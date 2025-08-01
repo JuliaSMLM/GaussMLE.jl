@@ -1,13 +1,14 @@
 Basic Gaussian Fitting Example Results
 =====================================
-Generated on: 2025-08-01T13:21:30.838
+Generated on: 2025-08-01T13:33:28.274
 Number of boxes: 10000
 Box size: 7 × 7 pixels
-Processing speed: 3667 fits/second
+Backend used: CPU
+Processing speed: 3620 fits/second
 
 Parameter Statistics:
 Parameter | Mean (MC) | Std Dev (MC) | Reported Std Dev √(CRLB)
-x        | 3.500224 | 0.072280 | 0.072007
-y        | 3.499686 | 0.071747 | 0.072009
-n        | 500.782990 | 27.805737 | 27.926857
-bg       | 1.982188 | 0.386199 | 0.384203
+x        | 3.500410 | 0.072333 | 0.072064
+y        | 3.501105 | 0.071239 | 0.072061
+n        | 500.195190 | 27.708483 | 27.918293
+bg       | 1.984986 | 0.387365 | 0.384346
