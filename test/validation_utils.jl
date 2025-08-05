@@ -110,17 +110,18 @@ end
 """
     generate_pixel_value(i, j, x, y, n, bg, sigma_x, sigma_y)
 
-Generate expected pixel value for a Gaussian PSF
+Generate expected pixel value for an integrated Gaussian PSF
 """
 function generate_pixel_value(i, j, x, y, n, bg, sigma_x, sigma_y)
-    # Simple Gaussian model (not integrated)
+    # Integrated Gaussian model (matches fitting code)
     dx = Float32(i) - x
     dy = Float32(j) - y
     
-    gaussian = exp(-0.5f0 * ((dx/sigma_x)^2 + (dy/sigma_y)^2))
-    normalization = 2π * sigma_x * sigma_y
+    # Use the same integrated Gaussian as in fitting (from GaussLib)
+    psf_x = GaussMLE.GaussLib.integral_gaussian_1d(i, x, sigma_x)
+    psf_y = GaussMLE.GaussLib.integral_gaussian_1d(j, y, sigma_y)
     
-    return bg + n * gaussian / normalization
+    return bg + n * psf_x * psf_y
 end
 
 """

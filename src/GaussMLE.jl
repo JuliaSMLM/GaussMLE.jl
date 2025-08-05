@@ -7,10 +7,18 @@ using LinearAlgebra
 using Statistics
 using SpecialFunctions
 
-# Core modules
+# Constants
+include("constants.jl")
+
+# Original modules needed for GaussLib
+include("gausslib/GaussLib.jl")
+using .GaussLib
+
+# Core modules for refactored API
 include("devices.jl")
 include("camera_models.jl")
 include("psf_models.jl")
+include("psf_derivatives.jl")
 include("constraints.jl")
 include("kernels.jl")
 include("results.jl")

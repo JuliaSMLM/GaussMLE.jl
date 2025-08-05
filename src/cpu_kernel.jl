@@ -22,14 +22,14 @@ function cpu_fit_single_roi!(
     θ = Vector(initialize_parameters(roi, psf_model))
     N = length(psf_model)
     
-    # Allocate working arrays
-    ∇L = zeros(T, N)  # Gradient
-    H = zeros(T, N, N) # Hessian
+    # Allocate working arrays for scalar Newton-Raphson
+    first_deriv = zeros(T, N)
+    second_deriv = zeros(T, N)
     
     # Newton-Raphson iterations
     for iter in 1:iterations
-        fill!(∇L, zero(T))
-        fill!(H, zero(T))
+        fill!(first_deriv, zero(T))
+        fill!(second_deriv, zero(T))
         
         # Compute derivatives over all pixels
         for j in 1:box_size, i in 1:box_size
@@ -44,28 +44,29 @@ function cpu_fit_single_roi!(
                 compute_likelihood_terms(data_ij, model, camera_model, i, j)
             end
             
-            # Accumulate gradient and Hessian
+            # Accumulate first and second derivatives for scalar updates
             for k in 1:N
-                ∇L[k] += dudt[k] * cf
-                for l in k:N
-                    H_kl = d2udt2[k,l] * cf - dudt[k] * dudt[l] * df
-                    H[k,l] += H_kl
-                    k != l && (H[l,k] += H_kl)  # Symmetric
-                end
+                first_deriv[k] += dudt[k] * cf
+                second_deriv[k] += d2udt2[k,k] * cf - dudt[k] * dudt[k] * df
             end
         end
         
-        # Newton-Raphson update with constraints
-        if det(H) > 1e-10
-            Δθ = H \ ∇L
-            θ_new = apply_constraints!(Params{N}(θ), Params{N}(Δθ), constraints)
-            θ = Vector(θ_new)
+        # Scalar Newton-Raphson updates for each parameter
+        Δθ = zeros(T, N)
+        for k in 1:N
+            if abs(second_deriv[k]) > 1e-10
+                Δθ[k] = first_deriv[k] / second_deriv[k]
+            end
         end
+        
+        # Apply constraints
+        θ_constrained = apply_constraints!(Params{N}(θ), Params{N}(Δθ), constraints)
+        θ = Vector(θ_constrained)
     end
     
     # Compute final log-likelihood and CRLB
     log_likelihood = zero(T)
-    fill!(H, zero(T))  # Reuse for Fisher matrix
+    fisher_diag = zeros(T, N)  # Only need diagonal of Fisher matrix for CRLB
     
     for j in 1:box_size, i in 1:box_size
         model, dudt, _ = compute_pixel_derivatives(i, j, Params{N}(θ), psf_model)
@@ -78,24 +79,21 @@ function cpu_fit_single_roi!(
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
         end
         
-        # Fisher Information Matrix (for CRLB)
+        # Fisher Information diagonal elements (for CRLB)
         if model > zero(T)
-            for k in 1:N, l in k:N
-                F_kl = dudt[k] * dudt[l] / model
-                H[k,l] += F_kl
-                k != l && (H[l,k] += F_kl)
+            for k in 1:N
+                fisher_diag[k] += dudt[k] * dudt[k] / model
             end
         end
     end
     
-    # Invert Fisher matrix for uncertainties (CRLB)
-    if det(H) > 1e-10
-        H_inv = inv(H)
-        for k in 1:N
-            uncertainty_out[k] = sqrt(max(zero(T), H_inv[k,k]))
+    # Compute uncertainties from Fisher diagonal (CRLB)
+    for k in 1:N
+        if fisher_diag[k] > 1e-10
+            uncertainty_out[k] = sqrt(one(T) / fisher_diag[k])
+        else
+            uncertainty_out[k] = T(Inf)
         end
-    else
-        fill!(uncertainty_out, T(Inf))
     end
     
     # Store results

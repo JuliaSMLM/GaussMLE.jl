@@ -42,35 +42,32 @@ const Params{N} = SVector{N, Float32}
 Base.length(::Type{<:PSFModel{N}}) where N = N
 Base.length(::PSFModel{N}) where N = N
 
-# Efficient 1D integrated Gaussian
-@inline function integrated_gaussian_1d(x::T, σ::T) where T
-    norm = one(T) / (sqrt(T(2)) * σ)
-    return T(0.5) * (erf((x + one(T)) * norm) - erf(x * norm))
-end
+# Use the GaussLib implementation for consistency
+using .GaussLib: integral_gaussian_1d
 
 # PSF evaluation interface
 
 # Fixed sigma model
 @inline function evaluate_psf(psf::GaussianXYNB, i, j, θ::Params{4})
     x, y, N, bg = θ
-    psf_x = integrated_gaussian_1d(Float32(i) - x, psf.σ)
-    psf_y = integrated_gaussian_1d(Float32(j) - y, psf.σ)
+    psf_x = integral_gaussian_1d(i, x, psf.σ)
+    psf_y = integral_gaussian_1d(j, y, psf.σ)
     return bg + N * psf_x * psf_y
 end
 
 # Variable sigma model
 @inline function evaluate_psf(::GaussianXYNBS, i, j, θ::Params{5})
     x, y, N, bg, σ = θ
-    psf_x = integrated_gaussian_1d(Float32(i) - x, σ)
-    psf_y = integrated_gaussian_1d(Float32(j) - y, σ)
+    psf_x = integral_gaussian_1d(i, x, σ)
+    psf_y = integral_gaussian_1d(j, y, σ)
     return bg + N * psf_x * psf_y
 end
 
 # Anisotropic model
 @inline function evaluate_psf(::GaussianXYNBSXSY, i, j, θ::Params{6})
     x, y, N, bg, σx, σy = θ
-    psf_x = integrated_gaussian_1d(Float32(i) - x, σx)
-    psf_y = integrated_gaussian_1d(Float32(j) - y, σy)
+    psf_x = integral_gaussian_1d(i, x, σx)
+    psf_y = integral_gaussian_1d(j, y, σy)
     return bg + N * psf_x * psf_y
 end
 
@@ -78,28 +75,16 @@ end
 @inline function evaluate_psf(psf::AstigmaticXYZNB, i, j, θ::Params{5})
     x, y, z, N, bg = θ
     
-    # Width calculation based on z position
-    σx = psf.σx₀ * sqrt(one(Float32) + ((z - psf.γ) / psf.d)^2 + psf.Ax * ((z - psf.γ) / psf.d)^3 + psf.Bx * ((z - psf.γ) / psf.d)^4)
-    σy = psf.σy₀ * sqrt(one(Float32) + ((z + psf.γ) / psf.d)^2 + psf.Ay * ((z + psf.γ) / psf.d)^3 + psf.By * ((z + psf.γ) / psf.d)^4)
+    # Width calculation based on z position using GaussLib
+    σx = psf.σx₀ * sqrt(GaussLib.compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d))
+    σy = psf.σy₀ * sqrt(GaussLib.compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d))
     
-    psf_x = integrated_gaussian_1d(Float32(i) - x, σx)
-    psf_y = integrated_gaussian_1d(Float32(j) - y, σy)
+    psf_x = integral_gaussian_1d(i, x, σx)
+    psf_y = integral_gaussian_1d(j, y, σy)
     return bg + N * psf_x * psf_y
 end
 
-# Compute pixel derivatives for Newton-Raphson
-@inline function compute_pixel_derivatives(i, j, θ, psf_model::PSFModel{N}) where N
-    # Use automatic differentiation or analytical derivatives
-    # For now, we'll implement analytical derivatives for each model
-    
-    model_val = evaluate_psf(psf_model, i, j, θ)
-    
-    # Placeholder for derivatives - would implement analytical forms
-    dudt = @SVector zeros(Float32, N)
-    d2udt2 = @SMatrix zeros(Float32, N, N)
-    
-    return model_val, dudt, d2udt2
-end
+# Note: compute_pixel_derivatives is implemented in psf_derivatives.jl for each model type
 
 # Parameter initialization based on data
 function initialize_parameters(roi::AbstractMatrix{T}, psf::GaussianXYNB) where T

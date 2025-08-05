@@ -6,8 +6,7 @@ using KernelAbstractions
 using StaticArrays
 using LinearAlgebra
 
-# Include analytical derivatives for PSF models
-include("psf_derivatives.jl")
+# Analytical derivatives are included in main module
 
 @kernel function gaussian_mle_kernel!(
     results::AbstractArray{T,2},
