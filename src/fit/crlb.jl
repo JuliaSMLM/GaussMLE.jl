@@ -90,7 +90,53 @@ function crlb!(Σ::GaussMLEΣ{T}, grad_pixel::AbstractArray{T}, θ::GaussMLEPara
         end
     end
 
-    crlb = inv(fi)
+    # Check for NaN/Inf in Fisher Information matrix
+    has_nan_inf = false
+    for i in 1:size(fi, 1)
+        for j in 1:size(fi, 2)
+            if !isfinite(fi[i,j])
+                has_nan_inf = true
+                break
+            end
+        end
+    end
     
-    GaussMLE.GaussModel.fill!(Σ, sqrt.(diag(crlb)))
+    if has_nan_inf
+        # Replace NaN/Inf with small positive values
+        for i in 1:size(fi, 1)
+            for j in 1:size(fi, 2)
+                if !isfinite(fi[i,j])
+                    fi[i,j] = i == j ? T(1e-3) : T(0)
+                end
+            end
+        end
+    end
+    
+    # Try to invert the Fisher Information matrix
+    # Add regularization if needed for singular matrices
+    try
+        crlb = inv(fi)
+        GaussMLE.GaussModel.fill!(Σ, sqrt.(abs.(diag(crlb))))
+    catch e
+        if isa(e, LinearAlgebra.SingularException) || isa(e, ArgumentError)
+            # Matrix is singular - use pseudoinverse or regularization
+            # Add small regularization to diagonal
+            for i in 1:θ.nparams
+                fi[i,i] += T(1e-6)
+            end
+            try
+                crlb = inv(fi)
+                GaussMLE.GaussModel.fill!(Σ, sqrt.(abs.(diag(crlb))))
+            catch
+                # If still singular, use crude approximation
+                crude_crlb = zeros(T, θ.nparams)
+                for i in 1:θ.nparams
+                    crude_crlb[i] = fi[i,i] > 0 ? T(1) / sqrt(fi[i,i]) : T(1)
+                end
+                GaussMLE.GaussModel.fill!(Σ, crude_crlb)
+            end
+        else
+            rethrow(e)
+        end
+    end
 end

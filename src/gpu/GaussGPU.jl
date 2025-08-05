@@ -10,7 +10,7 @@ using CUDA
 using LinearAlgebra
 using GaussMLE.GaussModel
 using GaussMLE.GaussModel: MODEL_MAP, genargs, genθ, genΣ, compute_all!, update!
-using GaussMLE.GaussModel: θ_xynb, θ_xynbs, Σ_xynb, Σ_xynbs, GaussMLEParams, GaussMLEΣ, GaussMLEArgs
+using GaussMLE.GaussModel: θ_xynb, θ_xynbs, θ_xynbsxsy, θ_xynbz, Σ_xynb, Σ_xynbs, Σ_xynbsxsy, Σ_xynbz, AstigmaticCalibration, GaussMLEParams, GaussMLEΣ, GaussMLEArgs
 using GaussMLE.GaussModel: initialize_parameters!, model
 using GaussMLE.GaussLib
 using GaussMLE.GaussFit
@@ -81,7 +81,8 @@ function fitstack_gpu(data::AbstractArray{T,3}, modelsymbol::Symbol,
                      backend::FittingBackend=select_backend();
                      batch_config::Union{Nothing,BatchConfig}=nothing,
                      variance::Union{Nothing,AbstractArray{T,3}}=nothing,
-                     verbose::Bool=false) where T
+                     verbose::Bool=false,
+                     calib::Union{Nothing,AstigmaticCalibration}=nothing) where T
     
     # Default batch configuration
     if batch_config === nothing
@@ -89,7 +90,7 @@ function fitstack_gpu(data::AbstractArray{T,3}, modelsymbol::Symbol,
     end
     
     # Dispatch to backend-specific implementation
-    return fit_batched(backend, data, modelsymbol, batch_config, variance, verbose)
+    return fit_batched(backend, data, modelsymbol, batch_config, variance, verbose, calib)
 end
 
 # Convenience function for checking Metal availability

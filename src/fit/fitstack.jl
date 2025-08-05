@@ -26,7 +26,7 @@ Fit Gaussian models to each box in a stack of 2D "boxes" of data.
 fitstack(stack, :xynb, args; varimage=myvarimage, boxcorners=myboxcorners)
 ```
 """
-function fitstack_old(stack::AbstractArray{T}, modelsymbol::Symbol, args::GaussMLEArgs{T};
+function fitstack_cpu(stack::AbstractArray{T}, modelsymbol::Symbol, args::GaussMLEArgs{T};
     varimage::Union{T,AbstractArray{T}}=T(0),
     boxcorners::Union{T,AbstractArray{T}}=T(0)) where {T<:Real}
 

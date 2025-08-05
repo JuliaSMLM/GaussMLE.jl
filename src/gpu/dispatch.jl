@@ -6,7 +6,8 @@ Dispatch system for routing fitting calls to appropriate backends
 function fit_batched(backend::FittingBackend, data::AbstractArray{T,3}, 
                     modelsymbol::Symbol, config::BatchConfig,
                     variance::Union{Nothing,AbstractArray{T,3}},
-                    verbose::Bool) where T
+                    verbose::Bool,
+                    calib::Union{Nothing,AstigmaticCalibration}=nothing) where T
     
     # Get model type
     modeltype = get(MODEL_MAP, modelsymbol, nothing)
@@ -43,7 +44,7 @@ function fit_batched(backend::FittingBackend, data::AbstractArray{T,3},
         
         # Fit batch
         batch_params, batch_uncert = fit_batch(backend, batch_data, modeltype, 
-                                              batch_variance)
+                                              batch_variance, calib)
         
         # Store results
         add_batch_results!(results, batch_params, batch_uncert, start_idx)
@@ -61,15 +62,20 @@ end
 # CPU backend implementation
 function fit_batch(backend::CPUBackend, data::AbstractArray{T,3}, 
                   modeltype::Type, 
-                  variance::Union{Nothing,AbstractArray{T,3}}) where T
+                  variance::Union{Nothing,AbstractArray{T,3}},
+                  calib::Union{Nothing,AstigmaticCalibration}=nothing) where T
     
     # Create model arguments
-    args = genargs(modeltype; T=T)
+    args = if modeltype == θ_xynbz && calib !== nothing
+        genargs(modeltype; T=T, calib=calib)
+    else
+        genargs(modeltype; T=T)
+    end
     
     # Prepare for parallel execution
     n_rois = size(data, 3)
-    params = Vector{modeltype}(undef, n_rois)
-    uncerts = Vector{crlb_struct(modeltype)}(undef, n_rois)
+    params = Vector{modeltype{T}}(undef, n_rois)
+    uncerts = Vector{crlb_struct(modeltype){T}}(undef, n_rois)
     
     # Use threading for CPU parallelism
     Threads.@threads for i in 1:n_rois
@@ -83,23 +89,34 @@ function fit_batch(backend::CPUBackend, data::AbstractArray{T,3},
     return params, uncerts
 end
 
-# CUDA backend implementation (placeholder)
+# CUDA backend implementation
 function fit_batch(backend::CUDABackend, data::AbstractArray{T,3}, 
                   modeltype::Type, 
-                  variance::Union{Nothing,AbstractArray{T,3}}) where T
+                  variance::Union{Nothing,AbstractArray{T,3}},
+                  calib::Union{Nothing,AstigmaticCalibration}=nothing) where T
     
-    # Get PSF width from model args (temporary approach)
-    args = genargs(modeltype; T=T)
+    # Get model-specific arguments
+    args = if modeltype == θ_xynbz && calib !== nothing
+        genargs(modeltype; T=T, calib=calib)
+    else
+        genargs(modeltype; T=T)
+    end
     σ_PSF = hasproperty(args, :σ_PSF) ? args.σ_PSF : T(1.3)
     
+    # Extract calibration for z-model if applicable
+    if modeltype == θ_xynbz && hasproperty(args, :calib)
+        calib = args.calib
+    end
+    
     # This will be implemented in cuda_kernels.jl
-    return cuda_fit_batch(backend, data, modeltype, variance, σ_PSF)
+    return cuda_fit_batch(backend, data, modeltype, variance, σ_PSF, calib)
 end
 
 # Metal backend implementation (placeholder)
 function fit_batch(backend::MetalBackend, data::AbstractArray{T,3}, 
                   modeltype::Type, 
-                  variance::Union{Nothing,AbstractArray{T,3}}) where T
+                  variance::Union{Nothing,AbstractArray{T,3}},
+                  calib::Union{Nothing,AstigmaticCalibration}=nothing) where T
     
     # This will be implemented in metal_kernels.jl
     error("Metal backend not yet implemented")
@@ -172,6 +189,10 @@ function crlb_struct(modeltype::Type)
         return Σ_xynb
     elseif modeltype == θ_xynbs
         return Σ_xynbs
+    elseif modeltype == θ_xynbsxsy
+        return Σ_xynbsxsy
+    elseif modeltype == θ_xynbz
+        return Σ_xynbz
     else
         error("Unknown CRLB struct for model type $modeltype")
     end

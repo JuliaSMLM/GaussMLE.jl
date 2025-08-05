@@ -39,6 +39,6 @@ include("fitstack_unified.jl")
 
 # Export the new unified fitstack from fitstack_unified.jl
 export fitstack
-# The old fitstack is now fitstack_old for internal use
+# The CPU-only fitstack is now fitstack_cpu for internal use
 
 end

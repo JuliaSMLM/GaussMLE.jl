@@ -1,12 +1,13 @@
 """
     fitstack(roi_stack::AbstractArray{T,3}, model::Symbol; 
-             σ_PSF=1.3, backend=:cpu, variance=nothing, verbose=false) where T
+             σ_PSF=1.3, backend=:cpu, variance=nothing, verbose=false,
+             calib=nothing) where T
 
 Unified interface for fitting Gaussian models to a stack of ROIs.
 
 # Arguments
 - `roi_stack`: 3D array of ROIs (height × width × n_rois)
-- `model`: Model type (:xynb, :xynbs, etc.)
+- `model`: Model type (:xynb, :xynbs, :xynbsxsy, :xynbz)
 
 # Keyword Arguments
 - `σ_PSF`: PSF width in pixels (default: 1.3)
@@ -16,6 +17,7 @@ Unified interface for fitting Gaussian models to a stack of ROIs.
   - `:auto`: Use GPU if available, otherwise CPU
 - `variance`: Variance image for sCMOS cameras (optional)
 - `verbose`: Print progress information
+- `calib`: Calibration parameters for z-model (AstigmaticCalibration struct)
 
 # Returns
 - `θ_found`: Array of fitted parameters
@@ -31,13 +33,18 @@ Unified interface for fitting Gaussian models to a stack of ROIs.
 
 # With variance map for sCMOS
 θ, Σ = fitstack(roi_stack, :xynb; σ_PSF=1.3, variance=var_map)
+
+# With astigmatic calibration for z-model
+calib = AstigmaticCalibration{Float32}(1.5, 1.5, 0.4, 0.4, 0.0, 0.0, 0.0, 0.0)
+θ, Σ = fitstack(roi_stack, :xynbz; calib=calib)
 ```
 """
 function fitstack(roi_stack::AbstractArray{T,3}, model::Symbol; 
                   σ_PSF::Real=1.3,
                   backend::Symbol=:cpu,
                   variance::Union{Nothing,AbstractArray{T,3}}=nothing,
-                  verbose::Bool=false) where T <: Real
+                  verbose::Bool=false,
+                  calib::Union{Nothing,GaussMLE.GaussModel.AstigmaticCalibration}=nothing) where T <: Real
     
     # Validate backend choice
     if !(backend in [:auto, :cpu, :gpu])
@@ -82,19 +89,29 @@ function fitstack(roi_stack::AbstractArray{T,3}, model::Symbol;
         GaussMLE.GaussModel.Args_xynb(T(σ_PSF))
     elseif model == :xynbs
         GaussMLE.GaussModel.Args_xynbs(T(σ_PSF))
+    elseif model == :xynbsxsy
+        GaussMLE.GaussModel.Args_xynbsxsy{T}()  # Asymmetric PSF model doesn't use fixed σ_PSF
+    elseif model == :xynbz
+        # Use provided calibration or default
+        if calib !== nothing
+            GaussMLE.GaussModel.Args_xynbz{T}(calib)
+        else
+            GaussMLE.GaussModel.Args_xynbz{T}()  # Uses default calibration
+        end
     else
         error("Unknown model type: $model")
     end
     
     # Call appropriate backend
     if use_gpu
-        # GPU path - fitstack_gpu doesn't use args directly
+        # GPU path - pass calibration if provided
         return GaussMLE.GaussGPU.fitstack_gpu(roi_stack, model;
                                              variance=variance,
-                                             verbose=verbose)
+                                             verbose=verbose,
+                                             calib=calib)
     else
         # CPU path - use traditional fitstack
-        return fitstack_old(roi_stack, model, args;
+        return fitstack_cpu(roi_stack, model, args;
                            varimage=isnothing(variance) ? T(0) : variance)
     end
 end
