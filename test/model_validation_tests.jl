@@ -95,13 +95,14 @@ Tests that fitted values and uncertainties match expectations within tolerance
     end
     
     @testset "Astigmatic 3D Model (xynbz)" begin
-        # Simple calibration for testing
+        # Proper astigmatic calibration for testing
+        # Need opposite behavior in x and y to encode z information
         psf_model = GaussMLE.AstigmaticXYZNB{Float32}(
-            1.3f0, 1.3f0,  # σx₀, σy₀
-            0.0f0, 0.0f0,  # Ax, Ay
-            0.0f0, 0.0f0,  # Bx, By
-            0.0f0,         # γ
-            500.0f0        # d
+            1.3f0, 1.3f0,  # σx₀, σy₀ - base PSF widths
+            0.5f0, -0.5f0,  # Ax, Ay - opposite cubic terms for astigmatism
+            0.1f0, -0.1f0,  # Bx, By - opposite quartic terms
+            0.0f0,         # γ - no astigmatism offset
+            500.0f0        # d - depth scale
         )
         
         @testset "CPU Backend" begin

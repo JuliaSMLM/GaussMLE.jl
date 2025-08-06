@@ -81,8 +81,15 @@ function cpu_fit_single_roi!(
         
         # Fisher Information diagonal elements (for CRLB)
         if model > zero(T)
+            # For sCMOS, variance includes readout noise
+            variance = if camera_model isa SCMOSCamera
+                model + camera_model.variance_map[i, j]
+            else
+                model  # Poisson variance only
+            end
+            
             for k in 1:N
-                fisher_diag[k] += dudt[k] * dudt[k] / model
+                fisher_diag[k] += dudt[k] * dudt[k] / variance
             end
         end
     end

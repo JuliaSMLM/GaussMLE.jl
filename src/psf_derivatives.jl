@@ -134,12 +134,17 @@ end
     dudt_x, d2udt2_x = derivative_integral_gaussian_1d(i, x, σx, N, psf_y)
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(j, y, σy, N, psf_x)
     
-    # Z derivative using GaussLib
-    dudt_z, d2udt2_z = derivative_integral_gaussian_2d_z(
-        i, j, x, y, zx, zy, 
-        psf.σx₀, psf.σy₀, psf.Ax, psf.Ay, psf.Bx, psf.By, psf.d, 
-        N, psf_x, psf_y
+    # Z derivative using GaussLib - needs theta parameter vector
+    theta = @SVector [x, y, N, bg, z]
+    dudt_arr = zeros(5)
+    d2udt2_arr = zeros(5)
+    derivative_integral_gaussian_2d_z(
+        i, j, theta, 
+        psf.σx₀, psf.σy₀, psf.Ax, psf.Ay, psf.Bx, psf.By, psf.γ, psf.d, 
+        dudt_arr, d2udt2_arr
     )
+    dudt_z = dudt_arr[5]
+    d2udt2_z = d2udt2_arr[5]
     
     # Model value
     model = bg + N * psf_x * psf_y
