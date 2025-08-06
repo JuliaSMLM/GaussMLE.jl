@@ -9,13 +9,15 @@
 
 **GaussMLE.jl** is a Julia package for performing Maximum Likelihood Estimation (MLE) of Gaussian blob parameters in 2D images under a Poisson noise model. 
 
-The main functionality is provided through the exported `fitstack` function, which takes a stack of 2D image boxes and returns the estimated Gaussian parameters for each box along with the uncertainties for each parameter.  Uncertainties are calculated using the Cramér-Rao Lower Bound.
+The package provides a modern, flexible API through the `GaussMLEFitter` type, which supports multiple PSF models, camera noise models, and automatic GPU acceleration. Parameter uncertainties are calculated using the Cramér-Rao Lower Bound.
 
 ### Features
 
-- Fast MLE of Gaussian blob parameters
-- Supports different forms of Gaussian expectation models
-- Easy-to-use API
+- Fast MLE of Gaussian blob parameters with multiple PSF models
+- Automatic GPU acceleration with CPU fallback
+- Support for ideal and sCMOS camera noise models
+- Flexible parameter constraints
+- Type-stable, high-performance implementation using KernelAbstractions.jl
 
 ## Installation
 
@@ -28,22 +30,78 @@ Pkg.add("GaussMLE")
 
 ## Basic Usage
 
-A basic example that demonstrates how to use `GaussFit.fitstack` to fit Gaussian blobs in a stack of 2D image boxes:
+Here's a basic example demonstrating how to fit Gaussian blobs in a stack of 2D image boxes:
 
 ```julia
 using GaussMLE
-using Statistics 
+using Random
+using Distributions
 
-# Simulate a stack of boxes with Poisson noise
-T = Float32 # Data type
-boxsz = 7 # Box size
-nboxes = Int(1e5) # Number of boxes
-modeltype = :xynb # Fit model type 
-out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; T=T, poissonnoise=true)
+# Generate sample data (7x7 boxes, 1000 samples)
+function generate_sample_data(n_samples=1000, roi_size=7)
+    data = zeros(Float32, roi_size, roi_size, n_samples)
+    true_params = Float32[4.0, 4.0, 1000.0, 10.0]  # x, y, photons, background
+    
+    for k in 1:n_samples
+        # Add some position variation
+        x = true_params[1] + 0.1f0 * randn(Float32)
+        y = true_params[2] + 0.1f0 * randn(Float32)
+        
+        for j in 1:roi_size, i in 1:roi_size
+            dx = Float32(i) - x
+            dy = Float32(j) - y
+            gaussian = true_params[3] * exp(-(dx^2 + dy^2)/(2*1.3f0^2))
+            expected = true_params[4] + gaussian / (2π * 1.3f0^2)
+            data[i, j, k] = rand(Poisson(expected))
+        end
+    end
+    return data
+end
 
-# Fit all boxes in the stack
-θ_found, Σ_found = fitstack(out, modeltype, args);
+# Generate data
+data = generate_sample_data()
 
+# Create fitter with automatic GPU detection
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNB(1.3f0),  # Fixed sigma Gaussian
+    iterations = 20
+)
+
+# Perform fitting
+results = fit(fitter, data)
+
+# Access results
+println("Found $(results.n_fits) localizations")
+println("Mean x position: $(mean(results.x)) ± $(mean(results.x_error))")
+println("Mean photons: $(mean(results.photons)) ± $(mean(results.photons_error))")
+```
+
+### Advanced Usage
+
+```julia
+# Use sCMOS camera with variance map
+variance_map = 2.0f0 * ones(Float32, 7, 7)  # Readout noise variance
+camera = SCMOSCamera(variance_map)
+
+# Variable sigma model with custom constraints
+psf_model = GaussianXYNBS()  # 5 parameters: x, y, N, bg, σ
+constraints = ParameterConstraints{5}(
+    SVector{5,Float32}(0.5, 0.5, 10.0, 0.0, 0.5),      # lower bounds
+    SVector{5,Float32}(7.5, 7.5, 1e5, 100.0, 3.0),    # upper bounds
+    SVector{5,Float32}(1.0, 1.0, Inf32, Inf32, 0.5)   # max step
+)
+
+# Create fitter with specific configuration
+fitter = GaussMLEFitter(
+    psf_model = psf_model,
+    camera_model = camera,
+    device = :gpu,  # Force GPU (will fallback to CPU if unavailable)
+    constraints = constraints,
+    iterations = 30,
+    batch_size = 5000  # Process in batches of 5000
+)
+
+results = fit(fitter, data)
 ```
 
 For more details and advanced usage, check out the [docs](https://JuliaSMLM.github.io/GaussMLE.jl/dev/).

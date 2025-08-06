@@ -229,14 +229,14 @@ function run_model_validation(
     
     # Define tolerances for each parameter
     tolerances = Dict(
-        :x => (bias_tol=0.05f0, std_tol=0.3f0),
-        :y => (bias_tol=0.05f0, std_tol=0.3f0),
+        :x => (bias_tol=0.05f0, std_tol=0.25f0),  # Allow 25% tolerance for std/CRLB ratio
+        :y => (bias_tol=0.05f0, std_tol=0.25f0),
         :z => (bias_tol=30.0f0, std_tol=3.0f0),  # Very lenient for z - needs more work
-        :photons => (bias_tol=100.0f0, std_tol=3.0f0),  # More lenient for z model
-        :background => (bias_tol=2.0f0, std_tol=3.0f0),  # More lenient for z model
-        :sigma => (bias_tol=0.05f0, std_tol=0.3f0),
-        :sigma_x => (bias_tol=0.05f0, std_tol=0.3f0),
-        :sigma_y => (bias_tol=0.05f0, std_tol=0.3f0),
+        :photons => (bias_tol=100.0f0, std_tol=0.25f0),  # 25% tolerance
+        :background => (bias_tol=2.0f0, std_tol=0.25f0),
+        :sigma => (bias_tol=0.05f0, std_tol=0.25f0),
+        :sigma_x => (bias_tol=0.05f0, std_tol=0.25f0),
+        :sigma_y => (bias_tol=0.05f0, std_tol=0.25f0),
     )
     
     if verbose

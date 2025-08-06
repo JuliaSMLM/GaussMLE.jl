@@ -26,3 +26,6 @@ Manifest.toml
 .vscode/*
 
 /.claude/local_memory/
+
+# Example outputs
+examples/output/

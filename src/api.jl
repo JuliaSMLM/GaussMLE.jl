@@ -26,6 +26,16 @@ function GaussMLEFitter(;
     constraints = nothing,
     batch_size = 10_000
 )
+    # Handle symbol device specification
+    device = if device == :cpu
+        CPU()
+    elseif device == :gpu
+        GPU()
+    elseif device == :auto || isnothing(device)
+        auto_device()
+    else
+        device  # Already a ComputeDevice
+    end
     device = select_device(device)
     
     # Default constraints based on typical box size

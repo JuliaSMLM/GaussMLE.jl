@@ -24,9 +24,6 @@ include("kernels.jl")
 include("results.jl")
 include("api.jl")
 
-# Legacy compatibility layer (can be removed later)
-include("legacy_compat.jl")
-
 # Main exports
 
 # Device management
