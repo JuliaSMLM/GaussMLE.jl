@@ -8,7 +8,8 @@ using LinearAlgebra
 # Include validation utilities
 include("validation_utils.jl")
 
-# Main test suite - Model validation only
+# Main test suite
 @testset "GaussMLE.jl" begin
     include("model_validation_tests.jl")
+    include("comprehensive_cpu_tests.jl")
 end

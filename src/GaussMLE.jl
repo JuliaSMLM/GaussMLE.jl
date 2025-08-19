@@ -22,6 +22,7 @@ include("psf_derivatives.jl")
 include("constraints.jl")
 include("kernels.jl")
 include("results.jl")
+include("simulator.jl")
 include("api.jl")
 
 # Main exports
@@ -41,5 +42,8 @@ export GaussMLEFitter, fit, GaussMLEResults
 
 # Convenience exports
 export ParameterConstraints, default_constraints
+
+# Simulator exports
+export SimulatedSpot, generate_spots_data, generate_random_spots
 
 end # module

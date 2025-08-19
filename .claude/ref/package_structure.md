@@ -113,6 +113,12 @@ end
 # Parameter type aliases
 const Params{N} = SVector{N, Float32}
 
+# Efficient small matrix inversion using LU decomposition
+@inline function invert_small_matrix(M::SMatrix{N,N,T}) where {N,T}
+    # For small matrices (N ≤ 6), LU decomposition is optimal
+    return inv(lu(M))
+end
+
 # Efficient 1D integrated Gaussian
 @inline function integrated_gaussian_1d(x::T, σ::T) where T
     norm = one(T) / (sqrt(T(2)) * σ)
@@ -186,13 +192,16 @@ end
     
     # Allocate small working arrays
     N = length(θ)
-    ∇L = @MVector zeros(T, N)  # Gradient
-    H = @MMatrix zeros(T, N, N) # Hessian
+    ∇L = @MVector zeros(T, N)  # Gradient (numerator)
+    H_diag = @MVector zeros(T, N)  # Diagonal Hessian (denominator) for NR
+    H = @MMatrix zeros(T, N, N) # Full matrix for Fisher Information later
     
     # Newton-Raphson iterations
+    # Note: This uses diagonal Newton-Raphson updates (element-wise division)
+    # rather than full Newton method (matrix inversion) for stability
     for iter in 1:iterations
         fill!(∇L, zero(T))
-        fill!(H, zero(T))
+        fill!(H_diag, zero(T))
         
         # Compute derivatives over all pixels
         for j in 1:box_size, i in 1:box_size
@@ -203,25 +212,29 @@ end
             data_ij = roi[i, j]
             cf, df = compute_likelihood_terms(data_ij, model, camera_model, i, j)
             
-            # Accumulate gradient and Hessian
+            # Accumulate gradient and diagonal Hessian for Newton-Raphson
             for k in 1:N
                 ∇L[k] += dudt[k] * cf
-                for l in k:N
-                    H_kl = d2udt2[k,l] * cf - dudt[k] * dudt[l] * df
-                    H[k,l] += H_kl
-                    k != l && (H[l,k] += H_kl)  # Symmetric
-                end
+                H_diag[k] += d2udt2[k,k] * cf - dudt[k] * dudt[k] * df
             end
         end
         
-        # Newton-Raphson update with constraints
-        Δθ = H \ ∇L  # Small matrix, direct solve is fine
-        θ = apply_constraints!(θ, Δθ, constraints)
+        # Newton-Raphson update (element-wise, not full Newton)
+        θ_new = @MVector zeros(T, N)
+        for k in 1:N
+            if abs(H_diag[k]) > eps(T)
+                Δθ_k = ∇L[k] / H_diag[k]
+                θ_new[k] = θ[k] - clamp(Δθ_k, -constraints.max_step[k], constraints.max_step[k])
+            else
+                θ_new[k] = θ[k]
+            end
+        end
+        θ = clamp.(θ_new, constraints.lower, constraints.upper)
     end
     
     # Compute final log-likelihood and CRLB
     log_likelihood = zero(T)
-    fill!(H, zero(T))  # Reuse for Fisher matrix
+    fill!(H, zero(T))  # Now compute full Fisher matrix
     
     for j in 1:box_size, i in 1:box_size
         model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
@@ -230,16 +243,17 @@ end
         # Log-likelihood contribution
         log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
         
-        # Fisher Information Matrix
+        # Fisher Information Matrix (full matrix needed for CRLB)
         for k in 1:N, l in k:N
             F_kl = dudt[k] * dudt[l] / model
             H[k,l] += F_kl
-            k != l && (H[l,k] += F_kl)
+            k != l && (H[l,k] += F_kl)  # Symmetric
         end
     end
     
-    # Invert Fisher matrix for uncertainties (CRLB)
-    H_inv = inv(H)
+    # Invert Fisher matrix for uncertainties (CRLB) using LU decomposition
+    # For small matrices (4-6 params), LU is efficient and stable
+    H_inv = invert_small_matrix(SMatrix{N,N}(H))
     
     # Store results
     @inbounds results[:, idx] = θ

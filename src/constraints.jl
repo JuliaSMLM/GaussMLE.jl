@@ -19,7 +19,7 @@ function default_constraints(::GaussianXYNB, box_size)
     return ParameterConstraints{4}(
         Params{4}(-2.0f0, -2.0f0, 1.0f0, 0.01f0),        # lower bounds
         Params{4}(box_size+2, box_size+2, Inf32, Inf32), # upper bounds
-        Params{4}(1.0f0, 1.0f0, Inf32, Inf32)            # max step
+        Params{4}(1.0f0, 1.0f0, 100.0f0, 2.0f0)          # max step
     )
 end
 
@@ -27,7 +27,7 @@ function default_constraints(::GaussianXYNBS, box_size)
     return ParameterConstraints{5}(
         Params{5}(-2.0f0, -2.0f0, 1.0f0, 0.01f0, 0.3f0),       # lower bounds
         Params{5}(box_size+2, box_size+2, Inf32, Inf32, 5.0f0), # upper bounds
-        Params{5}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0)           # max step
+        Params{5}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0)         # max step
     )
 end
 
@@ -35,7 +35,7 @@ function default_constraints(::GaussianXYNBSXSY, box_size)
     return ParameterConstraints{6}(
         Params{6}(-2.0f0, -2.0f0, 1.0f0, 0.01f0, 0.3f0, 0.3f0),       # lower bounds
         Params{6}(box_size+2, box_size+2, Inf32, Inf32, 5.0f0, 5.0f0), # upper bounds
-        Params{6}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0, 0.5f0)           # max step
+        Params{6}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0, 0.5f0)         # max step
     )
 end
 
@@ -43,7 +43,7 @@ function default_constraints(::AstigmaticXYZNB, box_size)
     return ParameterConstraints{5}(
         Params{5}(-2.0f0, -2.0f0, -1000.0f0, 1.0f0, 0.01f0),    # lower bounds
         Params{5}(box_size+2, box_size+2, 1000.0f0, Inf32, Inf32), # upper bounds
-        Params{5}(1.0f0, 1.0f0, 100.0f0, Inf32, Inf32)          # max step
+        Params{5}(1.0f0, 1.0f0, 100.0f0, 100.0f0, 2.0f0)        # max step
     )
 end
 

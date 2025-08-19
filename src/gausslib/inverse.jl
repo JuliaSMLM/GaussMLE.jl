@@ -68,16 +68,36 @@ function matrix_inverse(A)
     return A_inv
 end
 
-# Test the functions
-A = rand(3, 3)  # Random 3x3 matrix
-A_copy = copy(A)  # Keep a copy for verification
+"""
+    matrix_inverse!(A, A_inv, n)
 
-# Calculate the inverse
-A_inv = matrix_inverse(A)
+Calculate the inverse of a matrix `A` using LU decomposition and store result in `A_inv`.
+Returns true if successful, false if matrix is singular.
+"""
+function matrix_inverse!(A, A_inv, n)
+    try
+        # Initialize A_inv as identity matrix
+        fill!(A_inv, zero(eltype(A_inv)))
+        for i = 1:n
+            A_inv[i, i] = one(eltype(A_inv))
+        end
+        
+        # Make a copy of A for decomposition (don't modify original)
+        A_copy = copy(A)
+        
+        # Perform LU decomposition
+        lu_decomposition!(A_copy)
+        
+        # Solve for each column
+        for i = 1:n
+            b = A_inv[:, i]
+            A_inv[:, i] = back_substitution(A_copy, b)
+        end
+        
+        return true
+    catch
+        return false
+    end
+end
 
-# Verify the solution
-identity_approx = A_copy * A_inv
-
-println("A * A_inv should be approximately the identity matrix:")
-display(Array(identity_approx))
 

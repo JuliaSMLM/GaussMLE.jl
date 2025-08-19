@@ -42,3 +42,4 @@ GAUSSMLE_TEST_GPU=true julia --project test/gpu_tests.jl
 ## Architecture
 
 [Rest of the existing content remains unchanged]
+- smite ref code here: https://github.com/LidkeLab/smite/tree/main/MATLAB/source/cuda

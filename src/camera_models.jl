@@ -24,8 +24,18 @@ end
 # Noise model interface for likelihood calculations
 @inline function compute_likelihood_terms(data::T, model::T, ::IdealCamera) where T
     # Poisson noise only
-    cf = data / model - one(T)
-    df = data / (model * model)
+    # Cap values to prevent numerical instability (following SMITE)
+    # Note: SMITE uses 10e-3 = 0.01, not 1e-3 = 0.001
+    if model > T(0.01)
+        cf = data / model - one(T)
+        df = data / (model * model)
+        # Cap at 10^4 to prevent instability
+        cf = min(cf, T(1e4))
+        df = min(df, T(1e4))
+    else
+        cf = zero(T)
+        df = zero(T)
+    end
     return cf, df
 end
 
@@ -33,7 +43,7 @@ end
     # Total variance = Poisson variance + readout variance
     total_var = model + camera.variance_map[i, j]
     cf = (data - model) / total_var
-    df = (data + camera.variance_map[i, j]) / (total_var * total_var)
+    df = one(T) / total_var  # Corrected: ∂²L/∂model² = -1/variance, but we need positive for Hessian
     return cf, df
 end
 

@@ -32,10 +32,10 @@ using .GaussLib: integral_gaussian_1d, derivative_integral_gaussian_1d,
     
     # Second derivatives (diagonal only for scalar Newton-Raphson)
     d2udt2 = @SMatrix [
-        d2udt2_x   0         0   0;
-        0          d2udt2_y  0   0;
-        0          0         0   0;
-        0          0         0   0
+        d2udt2_x            0               0             0;
+        0                   d2udt2_y        0             0;
+        0                   0               zero(Float32) 0;
+        0                   0               0             zero(Float32)
     ]
     
     return model, dudt, d2udt2

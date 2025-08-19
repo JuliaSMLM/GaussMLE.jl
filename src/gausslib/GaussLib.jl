@@ -9,6 +9,7 @@ using LinearAlgebra
 using SpecialFunctions
 
 include("baselibrary.jl")
+include("inverse.jl")
 
 import GaussMLE.MAXPARAMS
 

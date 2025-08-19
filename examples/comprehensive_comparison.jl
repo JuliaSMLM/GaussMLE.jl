@@ -40,36 +40,61 @@ end
 function generate_data(n_samples, roi_size, psf_model)
     Random.seed!(42)
     data = zeros(Float32, roi_size, roi_size, n_samples)
+    true_params = Dict{Symbol, Vector{Float32}}()
     
     for k in 1:n_samples
-        x = true_x + 0.1f0 * randn(Float32)
-        y = true_y + 0.1f0 * randn(Float32)
+        # Generate with small variations to test precision
+        x = true_x + 0.5f0 * randn(Float32)  # Match validation test variation
+        y = true_y + 0.5f0 * randn(Float32)
+        photons = true_photons * (0.8f0 + 0.4f0 * rand(Float32))  # ±20% variation
+        bg = true_bg * (0.8f0 + 0.4f0 * rand(Float32))
         
-        # Adjust sigma for asymmetric models
+        # Store actual true values for each spot
+        push!(get!(true_params, :x, Float32[]), x)
+        push!(get!(true_params, :y, Float32[]), y)
+        push!(get!(true_params, :photons, Float32[]), photons)
+        push!(get!(true_params, :background, Float32[]), bg)
+        
+        # Adjust sigma for different models
         sigma_x = true_sigma
         sigma_y = true_sigma
-        if psf_model isa GaussMLE.GaussianXYNBSXSY
-            sigma_x *= 1.1f0  # Make slightly asymmetric for testing
-            sigma_y *= 0.9f0
+        if psf_model isa GaussMLE.GaussianXYNBS
+            sigma_actual = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
+            sigma_x = sigma_y = sigma_actual
+            push!(get!(true_params, :sigma, Float32[]), sigma_actual)
+        elseif psf_model isa GaussMLE.GaussianXYNBSXSY
+            sigma_x = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
+            sigma_y = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
+            push!(get!(true_params, :sigma_x, Float32[]), sigma_x)
+            push!(get!(true_params, :sigma_y, Float32[]), sigma_y)
+        elseif psf_model isa GaussMLE.AstigmaticXYZNB
+            z = 200.0f0 * randn(Float32)  # Z variation
+            push!(get!(true_params, :z, Float32[]), z)
+            # Compute PSF widths based on z (matching validation test calibration)
+            z_norm = z / 500.0f0
+            alpha_x = 1.0f0 + z_norm^2 + 0.5f0 * z_norm^3 + 0.1f0 * z_norm^4
+            alpha_y = 1.0f0 + z_norm^2 - 0.5f0 * z_norm^3 - 0.1f0 * z_norm^4
+            sigma_x = true_sigma * sqrt(alpha_x)
+            sigma_y = true_sigma * sqrt(alpha_y)
         end
         
         for j in 1:roi_size, i in 1:roi_size
-            dx = Float32(i) - x
-            dy = Float32(j) - y
-            gaussian = true_photons * exp(-(dx^2/(2*sigma_x^2) + dy^2/(2*sigma_y^2)))
-            expected = true_bg + gaussian / (2π * sigma_x * sigma_y)
+            # Use the SAME integrated Gaussian model that the fitter uses
+            psf_x = GaussMLE.GaussLib.integral_gaussian_1d(i, x, sigma_x)
+            psf_y = GaussMLE.GaussLib.integral_gaussian_1d(j, y, sigma_y)
+            expected = bg + photons * psf_x * psf_y
             
             # Poisson noise
             data[i, j, k] = expected > 0 ? rand(Poisson(expected)) : 0
         end
     end
     
-    return data
+    return data, true_params
 end
 
 function run_single_benchmark(psf_model, device, camera_type)
-    # Generate data
-    data = generate_data(n_samples, roi_size, psf_model)
+    # Generate data with true parameters
+    data, true_params = generate_data(n_samples, roi_size, psf_model)
     
     # Setup variance map for sCMOS
     variance_map = if camera_type == :scmos
@@ -106,29 +131,36 @@ function run_single_benchmark(psf_model, device, camera_type)
         params = results.parameters
         uncertainties = results.uncertainties
         
-        # Parameter names and true values
-        param_info = if psf_model isa GaussMLE.GaussianXYNB
-            [(:x, true_x), (:y, true_y), (:photons, true_photons), (:background, true_bg)]
+        # Parameter names based on model
+        param_names = if psf_model isa GaussMLE.GaussianXYNB
+            [:x, :y, :photons, :background]
         elseif psf_model isa GaussMLE.GaussianXYNBS
-            [(:x, true_x), (:y, true_y), (:photons, true_photons), (:background, true_bg), (:sigma, true_sigma)]
+            [:x, :y, :photons, :background, :sigma]
         elseif psf_model isa GaussMLE.GaussianXYNBSXSY
-            [(:x, true_x), (:y, true_y), (:photons, true_photons), (:background, true_bg), 
-             (:sigma_x, true_sigma * 1.1f0), (:sigma_y, true_sigma * 0.9f0)]
+            [:x, :y, :photons, :background, :sigma_x, :sigma_y]
         elseif psf_model isa GaussMLE.AstigmaticXYZNB
-            [(:x, true_x), (:y, true_y), (:photons, true_photons), (:background, true_bg), (:z, 0.0f0)]
+            [:x, :y, :photons, :background, :z]
         end
         
-        # Calculate statistics
+        # Calculate statistics using actual true values
         param_stats = Dict{Symbol, NamedTuple}()
-        for (i, (name, true_val)) in enumerate(param_info)
+        for (i, name) in enumerate(param_names)
             fitted = params[i, :]
             uncertainty = uncertainties[i, :]
+            true_vals = get(true_params, name, nothing)
             
-            bias = mean(fitted) - true_val
-            std_dev = std(fitted)
-            mean_crlb = mean(uncertainty)
-            
-            param_stats[name] = (bias=bias, std=std_dev, crlb=mean_crlb)
+            if true_vals !== nothing
+                # Calculate errors relative to actual true values
+                errors = fitted .- true_vals
+                bias = mean(errors)
+                std_dev = std(errors)  # This is the correct empirical uncertainty
+                mean_crlb = mean(uncertainty)
+                
+                param_stats[name] = (bias=bias, std=std_dev, crlb=mean_crlb)
+            else
+                # Fallback for parameters not in true_params (shouldn't happen)
+                param_stats[name] = (bias=0.0f0, std=0.0f0, crlb=mean(uncertainty))
+            end
         end
         
         model_name = split(string(typeof(psf_model)), ".")[end]
