@@ -66,7 +66,7 @@ function cpu_fit_single_roi!(
     
     # Compute final log-likelihood and CRLB
     log_likelihood = zero(T)
-    fisher_diag = zeros(T, N)  # Only need diagonal of Fisher matrix for CRLB
+    H = zeros(T, N, N)  # Fisher Information matrix for CRLB
     
     for j in 1:box_size, i in 1:box_size
         model, dudt, _ = compute_pixel_derivatives(i, j, Params{N}(θ), psf_model)
@@ -79,26 +79,25 @@ function cpu_fit_single_roi!(
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
         end
         
-        # Fisher Information diagonal elements (for CRLB)
+        # Fisher Information Matrix (for CRLB)
         if model > zero(T)
-            # For sCMOS, variance includes readout noise
-            variance = if camera_model isa SCMOSCamera
-                model + camera_model.variance_map[i, j]
-            else
-                model  # Poisson variance only
-            end
-            
-            for k in 1:N
-                fisher_diag[k] += dudt[k] * dudt[k] / variance
+            for k in 1:N, l in k:N
+                F_kl = dudt[k] * dudt[l] / model
+                H[k,l] += F_kl
+                k != l && (H[l,k] += F_kl)
             end
         end
     end
     
-    # Compute uncertainties from Fisher diagonal (CRLB)
-    for k in 1:N
-        if fisher_diag[k] > 1e-10
-            uncertainty_out[k] = sqrt(one(T) / fisher_diag[k])
-        else
+    # Compute uncertainties from Fisher Information inverse (CRLB)
+    det_H = det(H)
+    if abs(det_H) > 1e-10
+        H_inv = inv(H)
+        for k in 1:N
+            uncertainty_out[k] = sqrt(max(zero(T), H_inv[k,k]))
+        end
+    else
+        for k in 1:N
             uncertainty_out[k] = T(Inf)
         end
     end

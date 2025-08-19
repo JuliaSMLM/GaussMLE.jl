@@ -12,7 +12,7 @@ psf_model = GaussMLE.GaussianXYNB(1.3f0)      # Can also use GaussianXYNBS(), As
 device = :cpu                                  # :cpu, :gpu, or :auto
 camera_type = :ideal                          # :ideal or :scmos
 roi_size = 7
-n_samples = 100_000
+n_samples = 10_000
 verbose = true
 
 # Output directory
@@ -23,7 +23,7 @@ mkpath(output_dir)  # Create if it doesn't exist
 nominal_x = 4.0f0
 nominal_y = 4.0f0  
 nominal_photons = 1000.0f0
-nominal_bg = 10.0f0
+nominal_bg = 5.0f0  # Optimal background level for unbiased estimation
 
 println("=== Example: Single Configuration Benchmark ===")
 println("This example demonstrates benchmarking GaussMLE fitting performance")
@@ -31,42 +31,33 @@ println("Parameters: n_samples=$n_samples, device=$device, camera=$camera_type")
 println()
 
 function generate_data_with_truth(n_samples, roi_size)
-    Random.seed!(42)
-    data = zeros(Float32, roi_size, roi_size, n_samples)
+    # Generate random spots using the simulator
+    spots = GaussMLE.generate_random_spots(
+        n_samples, 
+        roi_size;
+        x_mean = nominal_x,
+        y_mean = nominal_y,
+        x_std = 0.1f0,
+        y_std = 0.1f0,
+        photons_mean = nominal_photons,
+        photons_std = 0.0f0,  # No variation for benchmark
+        background_mean = nominal_bg,
+        background_std = 0.0f0,  # No variation for benchmark
+        model_type = :xynb,
+        seed = 42
+    )
     
-    # Store actual true values for each spot
-    true_positions = Dict{Symbol, Vector{Float32}}()
-    true_positions[:x] = zeros(Float32, n_samples)
-    true_positions[:y] = zeros(Float32, n_samples)
-    true_positions[:photons] = fill(nominal_photons, n_samples)
-    true_positions[:background] = fill(nominal_bg, n_samples)
-    
-    for k in 1:n_samples
-        # Add small variation to positions
-        x = nominal_x + 0.1f0 * randn(Float32)
-        y = nominal_y + 0.1f0 * randn(Float32)
-        
-        # Store true values
-        true_positions[:x][k] = x
-        true_positions[:y][k] = y
-        
-        for j in 1:roi_size, i in 1:roi_size
-            dx = Float32(i) - x
-            dy = Float32(j) - y
-            gaussian = nominal_photons * exp(-(dx^2 + dy^2) / (2 * 1.3f0^2))
-            expected = nominal_bg + gaussian / (2π * 1.3f0^2)
-            
-            # Poisson noise for both camera types (sCMOS adds variance later)
-            data[i, j, k] = expected > 0 ? rand(Poisson(expected)) : 0
-        end
-    end
+    # Generate data using the simulator with integrated Gaussians
+    data, true_positions = GaussMLE.generate_spots_data(
+        psf_model,
+        spots,
+        roi_size;
+        camera_model = camera_model,
+        seed = 42
+    )
     
     return data, true_positions
 end
-
-# Generate synthetic data with ground truth tracking
-verbose && println("Generating $(n_samples) ROIs...")
-data, true_positions = generate_data_with_truth(n_samples, roi_size)
 
 # Setup variance map for sCMOS
 variance_map = if camera_type == :scmos
@@ -81,6 +72,10 @@ camera_model = if camera_type == :ideal
 else
     GaussMLE.SCMOSCamera(variance_map)
 end
+
+# Generate synthetic data with ground truth tracking
+verbose && println("Generating $(n_samples) ROIs...")
+data, true_positions = generate_data_with_truth(n_samples, roi_size)
 
 # Create fitter object
 verbose && println("Creating fitter with $(typeof(psf_model))...")

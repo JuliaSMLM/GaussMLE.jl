@@ -73,7 +73,7 @@ using LinearAlgebra
     
     # Compute final log-likelihood and CRLB
     log_likelihood = zero(T)
-    fill!(H, zero(T))  # Reuse for Fisher matrix
+    fill!(H, zero(T))  # Reuse for Fisher Information matrix
     
     for j in 1:box_size, i in 1:box_size
         model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
