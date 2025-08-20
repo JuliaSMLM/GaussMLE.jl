@@ -7,7 +7,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     
     # Test configuration
     n_test_spots = 1000  # Use 1000 spots for reasonable statistics
-    box_size = 11
+    box_size = 11  # Keep larger box for all tests (especially important for astigmatic)
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
     @testset "Fixed Sigma Model (xynb)" begin
@@ -139,7 +139,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 n_photons = 200.0f0,
-                background = 5.0f0,
+                background = 5.0f0,  # Realistic background level
                 sigma = 1.3f0,
                 verbose = verbose
             )
