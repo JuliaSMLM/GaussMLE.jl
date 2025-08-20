@@ -176,27 +176,33 @@ end
 
 
 function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T, PSFSigma_y::T, Ax::T, Ay::T, Bx::T, By::T, gamma::T, d::T, dudt, d2udt2) where T <: Real
-    z = theta[5]
+    # Changed: Now expects theta in order [x, y, z, N, bg] to match our standard
+    x = theta[1]
+    y = theta[2] 
+    z = theta[3]  # Changed from theta[5]
+    N = theta[4]  # Changed from theta[3]
+    bg = theta[5] # Changed from theta[4]
+    
     alphax = compute_alpha(z - gamma, Ax, Bx, d)
     alphay = compute_alpha(z + gamma, Ay, By, d)
 
     Sx = PSFSigma_x * sqrt(alphax)
     Sy = PSFSigma_y * sqrt(alphay)
 
-    PSFx = integral_gaussian_1d(i, theta[1], Sx)
-    PSFy = integral_gaussian_1d(j, theta[2], Sy)
+    PSFx = integral_gaussian_1d(i, x, Sx)
+    PSFy = integral_gaussian_1d(j, y, Sy)
 
-    (dudt[1], d2udt2[1]) = derivative_integral_gaussian_1d(i, theta[1], Sx, theta[3], PSFy)
-    (dudt[2], d2udt2[2]) = derivative_integral_gaussian_1d(j, theta[2], Sy, theta[3], PSFx)
-    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(i, theta[1], Sx, theta[3], PSFy)
-    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(j, theta[2], Sy, theta[3], PSFx)
+    (dudt[1], d2udt2[1]) = derivative_integral_gaussian_1d(i, x, Sx, N, PSFy)
+    (dudt[2], d2udt2[2]) = derivative_integral_gaussian_1d(j, y, Sy, N, PSFx)
+    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(i, x, Sx, N, PSFy)
+    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(j, y, Sy, N, PSFx)
 
     dSdalpha_x = PSFSigma_x / T(2) / sqrt(alphax)
     dSdalpha_y = PSFSigma_y / T(2) / sqrt(alphay)
 
     dSdzx = dSdalpha_x * derivative_alpha_z(z - gamma, Ax, Bx, d)
     dSdzy = dSdalpha_y * derivative_alpha_z(z + gamma, Ay, By, d)
-    dudt[5] = dSx * dSdzx + dSy * dSdzy
+    dudt[3] = dSx * dSdzx + dSy * dSdzy  # Changed from dudt[5] to dudt[3] for z position
 
     d2Sdalpha2_x = -PSFSigma_x / T(4) / alphax^T(1.5)
     d2Sdalpha2_y = -PSFSigma_y / T(4) / alphay^T(1.5)
@@ -204,8 +210,8 @@ function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T,
     ddSddzx = d2Sdalpha2_x * derivative_alpha_z(z - gamma, Ax, Bx, d)^2 + dSdalpha_x * second_derivative_alpha_z(z - gamma, Ax, Bx, d)
     ddSddzy = d2Sdalpha2_y * derivative_alpha_z(z + gamma, Ay, By, d)^2 + dSdalpha_y * second_derivative_alpha_z(z + gamma, Ay, By, d)
 
-    d2udt2[5] = ddSx * (dSdzx * dSdzx) + dSx * ddSddzx +
-                ddSy * (dSdzy * dSdzy) + dSy * ddSddzy
+    d2udt2[3] = ddSx * (dSdzx * dSdzx) + dSx * ddSddzx +
+                ddSy * (dSdzy * dSdzy) + dSy * ddSddzy  # Changed from d2udt2[5] to d2udt2[3]
 
     return (PSFx, PSFy)
 end

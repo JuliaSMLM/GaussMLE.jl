@@ -76,8 +76,11 @@ end
     x, y, z, N, bg = θ
     
     # Width calculation based on z position using GaussLib
-    σx = psf.σx₀ * sqrt(GaussLib.compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d))
-    σy = psf.σy₀ * sqrt(GaussLib.compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d))
+    # Ensure alpha is positive to avoid domain errors
+    αx = max(0.1f0, GaussLib.compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d))
+    αy = max(0.1f0, GaussLib.compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d))
+    σx = psf.σx₀ * sqrt(αx)
+    σy = psf.σy₀ * sqrt(αy)
     
     psf_x = integral_gaussian_1d(i, x, σx)
     psf_y = integral_gaussian_1d(j, y, σy)
@@ -147,7 +150,10 @@ function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) whe
     x = sum((1:box_size) .* sum(signal, dims=2)[:]) / sum(signal)
     y = sum((1:box_size) .* sum(signal, dims=1)[:]) / sum(signal)
     N = sum(signal)
-    z = T(0)  # Start at focal plane
+    
+    # Initialize z to zero - with proper gamma parameter, this is not a local minimum
+    # The focal planes are separated by 2γ, so z=0 is a good starting point
+    z = T(0)
     
     return Params{5}(T(x), T(y), z, T(N), T(bg))
 end

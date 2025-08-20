@@ -120,50 +120,38 @@ end
 @inline function compute_pixel_derivatives(i, j, θ::Params{5}, psf::AstigmaticXYZNB)
     x, y, z, N, bg = θ
     
-    # Compute widths using GaussLib
-    zx = z - psf.γ
-    zy = z + psf.γ
-    σx = psf.σx₀ * sqrt(compute_alpha(zx, psf.Ax, psf.Bx, psf.d))
-    σy = psf.σy₀ * sqrt(compute_alpha(zy, psf.Ay, psf.By, psf.d))
-    
-    # Compute PSF values
-    psf_x = integral_gaussian_1d(i, x, σx)
-    psf_y = integral_gaussian_1d(j, y, σy)
-    
-    # Get derivatives using GaussLib functions
-    dudt_x, d2udt2_x = derivative_integral_gaussian_1d(i, x, σx, N, psf_y)
-    dudt_y, d2udt2_y = derivative_integral_gaussian_1d(j, y, σy, N, psf_x)
-    
-    # Z derivative using GaussLib - needs theta parameter vector
-    theta = @SVector [x, y, N, bg, z]
+    # Use GaussLib function which computes all derivatives consistently
+    # GaussLib now expects same parameter order as us: [x, y, z, N, bg]
     dudt_arr = zeros(5)
     d2udt2_arr = zeros(5)
-    derivative_integral_gaussian_2d_z(
-        i, j, theta, 
+    
+    # This function computes PSF and all derivatives accounting for z-dependent widths
+    PSFx, PSFy = derivative_integral_gaussian_2d_z(
+        i, j, θ,  # Pass θ directly - same order now!
         psf.σx₀, psf.σy₀, psf.Ax, psf.Ay, psf.Bx, psf.By, psf.γ, psf.d, 
         dudt_arr, d2udt2_arr
     )
-    dudt_z = dudt_arr[5]
-    d2udt2_z = d2udt2_arr[5]
     
     # Model value
-    model = bg + N * psf_x * psf_y
+    model = bg + N * PSFx * PSFy
     
+    # GaussLib now returns derivatives in our standard order [x,y,z,N,bg]
+    # But it only computes x,y,z derivatives. N and bg we compute here.
     dudt = @SVector [
-        dudt_x,
-        dudt_y,
-        dudt_z,
-        psf_x * psf_y,
-        one(Float32)
+        dudt_arr[1],          # ∂/∂x (from GaussLib)
+        dudt_arr[2],          # ∂/∂y (from GaussLib)
+        dudt_arr[3],          # ∂/∂z (from GaussLib) - now in position 3!
+        PSFx * PSFy,          # ∂/∂N
+        one(Float32)          # ∂/∂bg
     ]
     
     # Diagonal second derivatives only
     d2udt2 = @SMatrix [
-        d2udt2_x  0         0         0  0;
-        0         d2udt2_y  0         0  0;
-        0         0         d2udt2_z  0  0;
-        0         0         0         0  0;
-        0         0         0         0  0
+        d2udt2_arr[1]  0               0               0  0;
+        0              d2udt2_arr[2]   0               0  0;
+        0              0               d2udt2_arr[3]   0  0;  # z is now position 3!
+        0              0               0               0  0;
+        0              0               0               0  0
     ]
     
     return model, dudt, d2udt2
