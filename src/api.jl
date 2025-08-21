@@ -3,6 +3,7 @@ High-level API for Gaussian MLE fitting
 """
 
 using KernelAbstractions
+using CUDA
 
 # Include CPU kernel
 include("cpu_kernel.jl")
@@ -30,7 +31,12 @@ function GaussMLEFitter(;
     device = if device == :cpu
         CPU()
     elseif device == :gpu
-        GPU()
+        if !CUDA.functional()
+            @warn "GPU requested but CUDA is not available, falling back to CPU"
+            CPU()
+        else
+            GPU()
+        end
     elseif device == :auto || isnothing(device)
         auto_device()
     else
@@ -71,16 +77,18 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
     
-    # Use CPU or GPU kernel based on device
+    # Use unified kernel for both CPU and GPU
     if fitter.device isa CPU
-        # Use CPU kernel
-        cpu_fit_batch!(
-            results, uncertainties, log_likelihoods,
-            data_f32, fitter.psf_model, camera,
-            fitter.constraints, fitter.iterations
-        )
+        # Use unified kernel on CPU
+        backend = KernelAbstractions.CPU()
+        kernel = unified_gaussian_mle_kernel!(backend)
+        kernel(results, uncertainties, log_likelihoods,
+               data_f32, fitter.psf_model, camera,
+               fitter.constraints, fitter.iterations,
+               ndrange=n_fits)
+        KernelAbstractions.synchronize(backend)
     else
-        # Use GPU kernel (KernelAbstractions)
+        # Use unified kernel on GPU
         # Process in batches for memory efficiency
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
@@ -90,28 +98,28 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             batch_data = data_f32[:, :, batch_start:batch_end]
             
             # Move batch to device using KernelAbstractions adapt
-            d_batch_data = KernelAbstractions.allocate(backend(fitter.device), Float32, size(batch_data))
+            d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
             
             # Allocate device arrays for results
-            d_results = KernelAbstractions.allocate(backend(fitter.device), Float32, (n_params, batch_size))
-            d_uncertainties = KernelAbstractions.allocate(backend(fitter.device), Float32, (n_params, batch_size))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(fitter.device), Float32, batch_size)
+            d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
+            d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
+            d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size)
             
-            # Launch kernel
-            kernel = gaussian_mle_kernel!(backend(fitter.device))
+            # Launch unified kernel (works on GPU!)
+            kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
                    d_batch_data, fitter.psf_model, camera, 
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size)
             
             # Wait for kernel completion
-            KernelAbstractions.synchronize(backend(fitter.device))
+            KernelAbstractions.synchronize(GaussMLE.backend(fitter.device))
             
-            # Copy results back
-            copyto!(view(results, :, batch_start:batch_end), d_results)
-            copyto!(view(uncertainties, :, batch_start:batch_end), d_uncertainties)
-            copyto!(view(log_likelihoods, batch_start:batch_end), d_log_likelihoods)
+            # Copy results back (need to copy to host arrays first)
+            results[:, batch_start:batch_end] = Array(d_results)
+            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
         end
     end
     

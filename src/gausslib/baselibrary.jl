@@ -183,8 +183,8 @@ function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T,
     N = theta[4]  # Changed from theta[3]
     bg = theta[5] # Changed from theta[4]
     
-    alphax = compute_alpha(z - gamma, Ax, Bx, d)
-    alphay = compute_alpha(z + gamma, Ay, By, d)
+    alphax = max(T(0.1), compute_alpha(z - gamma, Ax, Bx, d))
+    alphay = max(T(0.1), compute_alpha(z + gamma, Ay, By, d))
 
     Sx = PSFSigma_x * sqrt(alphax)
     Sy = PSFSigma_y * sqrt(alphay)
@@ -197,8 +197,8 @@ function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T,
     (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(i, x, Sx, N, PSFy)
     (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(j, y, Sy, N, PSFx)
 
-    dSdalpha_x = PSFSigma_x / T(2) / sqrt(alphax)
-    dSdalpha_y = PSFSigma_y / T(2) / sqrt(alphay)
+    dSdalpha_x = PSFSigma_x / T(2) / sqrt(max(T(0.1), alphax))
+    dSdalpha_y = PSFSigma_y / T(2) / sqrt(max(T(0.1), alphay))
 
     dSdzx = dSdalpha_x * derivative_alpha_z(z - gamma, Ax, Bx, d)
     dSdzy = dSdalpha_y * derivative_alpha_z(z + gamma, Ay, By, d)

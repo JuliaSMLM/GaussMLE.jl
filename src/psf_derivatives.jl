@@ -122,8 +122,8 @@ end
     
     # Use GaussLib function which computes all derivatives consistently
     # GaussLib now expects same parameter order as us: [x, y, z, N, bg]
-    dudt_arr = zeros(5)
-    d2udt2_arr = zeros(5)
+    dudt_arr = @MVector zeros(Float32, 5)
+    d2udt2_arr = @MVector zeros(Float32, 5)
     
     # This function computes PSF and all derivatives accounting for z-dependent widths
     PSFx, PSFy = derivative_integral_gaussian_2d_z(

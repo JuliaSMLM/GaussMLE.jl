@@ -21,6 +21,7 @@ include("psf_models.jl")
 include("psf_derivatives.jl")
 include("constraints.jl")
 include("kernels.jl")
+include("unified_kernel.jl")  # New unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
 include("api.jl")
