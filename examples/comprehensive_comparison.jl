@@ -49,7 +49,7 @@ function generate_data(n_samples, roi_size, psf_model)
         photons = true_photons * (0.8f0 + 0.4f0 * rand(Float32))  # ±20% variation
         bg = true_bg * (0.8f0 + 0.4f0 * rand(Float32))
         
-        # Store actual true values for each spot
+        # Store actual true values for each blob
         push!(get!(true_params, :x, Float32[]), x)
         push!(get!(true_params, :y, Float32[]), y)
         push!(get!(true_params, :photons, Float32[]), photons)

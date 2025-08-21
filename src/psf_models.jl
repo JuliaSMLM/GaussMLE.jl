@@ -6,21 +6,27 @@ using StaticArrays
 using SpecialFunctions: erf
 
 # PSF Models with compile-time known parameter counts
-abstract type PSFModel{NParams} end
+abstract type PSFModel{NParams,T} end
 
 # Fixed sigma Gaussian (x, y, N, background)
-struct GaussianXYNB{T} <: PSFModel{4}
+struct GaussianXYNB{T} <: PSFModel{4,T}
     σ::T
 end
 
 # Variable sigma Gaussian (x, y, N, background, σ)
-struct GaussianXYNBS <: PSFModel{5} end
+struct GaussianXYNBS{T} <: PSFModel{5,T} end
+
+# Default constructor for GaussianXYNBS
+GaussianXYNBS() = GaussianXYNBS{Float32}()
 
 # Anisotropic Gaussian (x, y, N, background, σx, σy)
-struct GaussianXYNBSXSY <: PSFModel{6} end
+struct GaussianXYNBSXSY{T} <: PSFModel{6,T} end
+
+# Default constructor for GaussianXYNBSXSY
+GaussianXYNBSXSY() = GaussianXYNBSXSY{Float32}()
 
 # Astigmatic 3D PSF (x, y, z, N, background)
-struct AstigmaticXYZNB{T} <: PSFModel{5}
+struct AstigmaticXYZNB{T} <: PSFModel{5,T}
     σx₀::T
     σy₀::T
     Ax::T
@@ -39,8 +45,8 @@ end
 const Params{N} = SVector{N, Float32}
 
 # Get parameter count for a model
-Base.length(::Type{<:PSFModel{N}}) where N = N
-Base.length(::PSFModel{N}) where N = N
+Base.length(::Type{<:PSFModel{N,T}}) where {N,T} = N
+Base.length(::PSFModel{N,T}) where {N,T} = N
 
 # Use the GaussLib implementation for consistency
 using .GaussLib: integral_gaussian_1d

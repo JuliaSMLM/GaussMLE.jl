@@ -5,7 +5,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
 @testset "Comprehensive CPU Model Tests" begin
     
     # Test configuration
-    n_test_spots = 500  # Reduced for faster testing
+    n_test_blobs = 500  # Reduced for faster testing
     box_size = 11
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
@@ -18,7 +18,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
-                :xynb, psf_model, n_test_spots;
+                :xynb, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -38,7 +38,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "sCMOS Camera" begin
             # Generate data with sCMOS noise
-            data, true_params = generate_test_data(:xynb, n_test_spots, box_size; sigma=1.3f0)
+            data, true_params = generate_test_data(:xynb, n_test_blobs, box_size; sigma=1.3f0)
             
             # Add readout noise
             for k in 1:size(data, 3)
@@ -83,7 +83,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
-                :xynbs, psf_model, n_test_spots;
+                :xynbs, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -105,7 +105,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "sCMOS Camera" begin
             # Generate data with sCMOS noise
-            data, true_params = generate_test_data(:xynbs, n_test_spots, box_size; sigma=1.3f0)
+            data, true_params = generate_test_data(:xynbs, n_test_blobs, box_size; sigma=1.3f0)
             
             # Add readout noise
             for k in 1:size(data, 3)
@@ -140,7 +140,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
-                :xynbsxsy, psf_model, n_test_spots;
+                :xynbsxsy, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -164,7 +164,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         
         @testset "sCMOS Camera" begin
             # Generate data with sCMOS noise
-            data, true_params = generate_test_data(:xynbsxsy, n_test_spots, box_size; sigma=1.3f0)
+            data, true_params = generate_test_data(:xynbsxsy, n_test_blobs, box_size; sigma=1.3f0)
             
             # Add readout noise
             for k in 1:size(data, 3)

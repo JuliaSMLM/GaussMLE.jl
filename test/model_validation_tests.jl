@@ -6,7 +6,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
 @testset "Model Validation Tests" begin
     
     # Test configuration
-    n_test_spots = 1000  # Use 1000 spots for reasonable statistics
+    n_test_blobs = 1000  # Use 1000 blobs for reasonable statistics
     box_size = 11  # Keep larger box for all tests (especially important for astigmatic)
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
@@ -15,7 +15,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
-                :xynb, psf_model, n_test_spots;
+                :xynb, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -41,7 +41,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
-                :xynbs, psf_model, n_test_spots;
+                :xynbs, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -69,7 +69,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
-                :xynbsxsy, psf_model, n_test_spots;
+                :xynbsxsy, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,
@@ -107,7 +107,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
-                :xynbz, psf_model, n_test_spots;
+                :xynbz, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 sigma = 1.3f0,

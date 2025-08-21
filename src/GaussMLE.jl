@@ -44,6 +44,6 @@ export GaussMLEFitter, fit, GaussMLEResults
 export ParameterConstraints, default_constraints
 
 # Simulator exports
-export SimulatedSpot, generate_spots_data, generate_random_spots
+export SimulatedBlob, generate_blobs_data, generate_random_blobs
 
 end # module

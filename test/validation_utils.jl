@@ -7,13 +7,13 @@ using Statistics
 using Distributions
 
 """
-    generate_test_data(model_type, n_spots, box_size; kwargs...)
+    generate_test_data(model_type, n_blobs, box_size; kwargs...)
 
 Generate synthetic data with known ground truth for testing
 """
 function generate_test_data(
     model_type::Symbol,
-    n_spots::Int,
+    n_blobs::Int,
     box_size::Int;
     n_photons::Float32 = 1000.0f0,
     background::Float32 = 5.0f0,  # Optimal background for unbiased estimation
@@ -24,13 +24,13 @@ function generate_test_data(
     Random.seed!(seed)
     
     # Initialize data array
-    data = zeros(Float32, box_size, box_size, n_spots)
+    data = zeros(Float32, box_size, box_size, n_blobs)
     
     # Store true parameters
     true_params = Dict{Symbol, Vector{Float32}}()
     
-    # Generate spots
-    for k in 1:n_spots
+    # Generate blobs
+    for k in 1:n_blobs
         # True parameters with small variations
         x_true = Float32(box_size/2 + position_std * randn())
         y_true = Float32(box_size/2 + position_std * randn())
@@ -184,21 +184,21 @@ function validate_fitting_results(
 end
 
 """
-    run_model_validation(model_type, psf_model, n_spots; kwargs...)
+    run_model_validation(model_type, psf_model, n_blobs; kwargs...)
 
 Run complete validation for a model configuration
 """
 function run_model_validation(
     model_type::Symbol,
     psf_model::GaussMLE.PSFModel,
-    n_spots::Int = 1000;
+    n_blobs::Int = 1000;
     box_size::Int = 11,
     device = GaussMLE.CPU(),
     verbose::Bool = false,
     kwargs...
 )
     # Generate test data
-    data, true_params = generate_test_data(model_type, n_spots, box_size; kwargs...)
+    data, true_params = generate_test_data(model_type, n_blobs, box_size; kwargs...)
     
     # Create fitter
     fitter = GaussMLE.GaussMLEFitter(
@@ -243,7 +243,7 @@ function run_model_validation(
         println("\n" * "="^60)
         println("Model Validation: $model_type")
         println("Device: $(typeof(device))")
-        println("Number of spots: $n_spots")
+        println("Number of blobs: $n_blobs")
         println("="^60)
     end
     

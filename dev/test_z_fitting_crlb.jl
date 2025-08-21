@@ -12,7 +12,7 @@ box_size = 9  # Larger box for astigmatic PSFs
 n_photons_levels = [500.0f0, 1000.0f0, 2000.0f0, 5000.0f0]
 background = 5.0f0  # More realistic background level
 z_test_positions = Float32[-400, -200, -100, 0, 100, 200, 400]  # nm
-n_realizations = 200  # Number of spots per condition
+n_realizations = 200  # Number of blobs per condition
 iterations = 50  # Fitting iterations
 seed = 42
 plot_size = (1200, 900)
@@ -60,9 +60,9 @@ for n_photons in n_photons_levels
         println(@sprintf("\nZ = %6.0f nm:", z_true))
         
         # Generate multiple realizations
-        spots = GaussMLE.SimulatedSpot{Float32}[]
+        blobs = GaussMLE.SimulatedBlob{Float32}[]
         for i in 1:n_realizations
-            push!(spots, GaussMLE.SimulatedSpot{Float32}(
+            push!(blobs, GaussMLE.SimulatedBlob{Float32}(
                 Float32(box_size/2 + 0.5),  # Center x
                 Float32(box_size/2 + 0.5),  # Center y
                 n_photons,
@@ -74,9 +74,9 @@ for n_photons in n_photons_levels
         
         # Generate data
         Random.seed!(seed)
-        data, true_params = GaussMLE.generate_spots_data(
+        data, true_params = GaussMLE.generate_blobs_data(
             psf_model,
-            spots,
+            blobs,
             box_size
         )
         

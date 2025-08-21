@@ -31,8 +31,8 @@ println("Parameters: n_samples=$n_samples, device=$device, camera=$camera_type")
 println()
 
 function generate_data_with_truth(n_samples, roi_size)
-    # Generate random spots using the simulator
-    spots = GaussMLE.generate_random_spots(
+    # Generate random blobs using the simulator
+    blobs = GaussMLE.generate_random_blobs(
         n_samples, 
         roi_size;
         x_mean = nominal_x,
@@ -48,9 +48,9 @@ function generate_data_with_truth(n_samples, roi_size)
     )
     
     # Generate data using the simulator with integrated Gaussians
-    data, true_positions = GaussMLE.generate_spots_data(
+    data, true_positions = GaussMLE.generate_blobs_data(
         psf_model,
-        spots,
+        blobs,
         roi_size;
         camera_model = camera_model,
         seed = 42
