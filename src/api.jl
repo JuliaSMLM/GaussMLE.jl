@@ -6,17 +6,12 @@ using KernelAbstractions
 using CUDA
 using SMLMData
 
-# Include CPU kernel
-include("cpu_kernel.jl")
-
-# Include ROI-aware kernel for sCMOS
-include("roi_aware_kernel.jl")
-
 # Main fitter type
-struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C<:CameraModel, PC<:ParameterConstraints}
+# Note: C can be either CameraModel or SCMOSCamera from SMLMData
+struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C, PC<:ParameterConstraints}
     device::D
     psf_model::P
-    camera_model::C
+    camera_model::C  # Can be CameraModel or SMLMData.SCMOSCamera
     iterations::Int
     constraints::PC
     batch_size::Int
@@ -166,72 +161,26 @@ end
 # Fit method for ROIBatch with SCMOSCamera
 function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SCMOSCamera}) where {T,N,A}
     
-    n_fits = length(roi_batch)
-    n_params = length(fitter.psf_model)
-    box_size = roi_batch.roi_size
+    # Create a new fitter with the SCMOSCamera from the ROIBatch
+    fitter_with_camera = GaussMLEFitter(
+        fitter.device,
+        fitter.psf_model,
+        roi_batch.camera,  # Use the SCMOSCamera from ROIBatch
+        fitter.iterations,
+        fitter.constraints,
+        fitter.batch_size
+    )
     
-    # Get variance map from the SCMOSCamera
-    variance_map = roi_batch.camera.readnoise_variance
-    
-    # Convert data to Float32 if needed
-    data_f32 = convert(Array{Float32,3}, roi_batch.data)
-    
-    # Allocate result arrays
-    results = Matrix{Float32}(undef, n_params, n_fits)
-    uncertainties = Matrix{Float32}(undef, n_params, n_fits)
-    log_likelihoods = Vector{Float32}(undef, n_fits)
-    
-    # Process with ROI-aware kernel
-    if fitter.device isa CPU
-        # Use ROI-aware CPU kernel
-        backend = KernelAbstractions.CPU()
-        kernel = roi_aware_gaussian_mle_kernel!(backend)
-        kernel(results, uncertainties, log_likelihoods,
-               data_f32, roi_batch.corners,
-               variance_map, fitter.psf_model,
-               fitter.constraints, fitter.iterations,
-               ndrange=n_fits)
-        KernelAbstractions.synchronize(backend)
-    else
-        # Use ROI-aware GPU kernel with batching
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size = batch_end - batch_start + 1
-            
-            # Get batch data and corners
-            batch_data = data_f32[:, :, batch_start:batch_end]
-            batch_corners = roi_batch.corners[:, batch_start:batch_end]
-            
-            # Move to GPU
-            backend = KernelAbstractions.CUDABackend()
-            d_batch_data = adapt(backend, batch_data)
-            d_batch_corners = adapt(backend, batch_corners)
-            d_variance_map = adapt(backend, variance_map)
-            
-            # Allocate device arrays for results
-            d_results = similar(d_batch_data, n_params, batch_size)
-            d_uncertainties = similar(d_results)
-            d_log_likelihoods = similar(d_batch_data, batch_size)
-            
-            # Launch kernel with ROI corners
-            kernel = roi_aware_gaussian_mle_kernel!(backend)
-            kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, d_batch_corners, d_variance_map,
-                   fitter.psf_model, fitter.constraints, fitter.iterations,
-                   ndrange=batch_size)
-            KernelAbstractions.synchronize(backend)
-            
-            # Copy results back
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Use standard fit with the updated fitter
+    results = fit(fitter_with_camera, roi_batch.data)
     
     # Return LocalizationResult with camera coordinates
     return create_localization_result(
-        results, uncertainties, log_likelihoods,
-        roi_batch, fitter.psf_model
+        results.parameters,
+        results.uncertainties,
+        results.log_likelihoods,
+        roi_batch, 
+        fitter.psf_model
     )
 end
 

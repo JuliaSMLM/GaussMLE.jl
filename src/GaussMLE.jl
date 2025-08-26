@@ -17,14 +17,13 @@ using .GaussLib
 
 # Core modules for refactored API
 include("devices.jl")
+include("smld_camera.jl")  # SCMOSCamera extending SMLMData (must be before camera_models.jl)
 include("camera_models.jl")
-include("smld_camera.jl")  # SCMOSCamera extending SMLMData
 include("psf_models.jl")
 include("psf_derivatives.jl")
 include("constraints.jl")
 include("roi_batch.jl")  # ROI batch data structure
-include("kernels.jl")
-include("unified_kernel.jl")  # New unified GPU/CPU kernel
+include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
 include("api.jl")
