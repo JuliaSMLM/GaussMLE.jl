@@ -9,11 +9,12 @@ abstract type CameraModel end
 struct IdealCamera <: CameraModel end
 
 # sCMOS camera with Poisson noise + pixel-dependent readout noise
-struct SCMOSCamera{T} <: CameraModel
+# Internal type for fitting - renamed to avoid conflict with SMLMData-compatible version
+struct SCMOSCameraInternal{T} <: CameraModel
     variance_map::T  # Pixel-wise variance (readout noise²)
     gain_map::T      # Optional pixel-wise gain calibration
     
-    function SCMOSCamera(variance_map::T, gain_map=nothing) where T
+    function SCMOSCameraInternal(variance_map::T, gain_map=nothing) where T
         if isnothing(gain_map)
             gain_map = ones(eltype(variance_map), size(variance_map))
         end
@@ -39,7 +40,7 @@ end
     return cf, df
 end
 
-@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCamera, i, j) where T
+@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
     # Total variance = Poisson variance + readout variance
     total_var = model + camera.variance_map[i, j]
     cf = (data - model) / total_var
@@ -57,7 +58,7 @@ end
     end
 end
 
-@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCamera, i, j) where T
+@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
     # Gaussian approximation for sCMOS noise
     total_var = model + camera.variance_map[i, j]
     if total_var > zero(T)
@@ -69,5 +70,5 @@ end
 end
 
 # Export types and functions
-export CameraModel, IdealCamera, SCMOSCamera
+export CameraModel, IdealCamera, SCMOSCameraInternal
 export compute_likelihood_terms, compute_log_likelihood

@@ -9,7 +9,7 @@ using Distributions
 
 # Example parameters (users can adjust these)
 psf_model = GaussMLE.GaussianXYNB(1.3f0)      # Can also use GaussianXYNBS(), AstigmaticXYZNB(), etc.
-device = :cpu                                  # :cpu, :gpu, or :auto
+device = :gpu                                  # :cpu, :gpu, or :auto
 camera_type = :ideal                          # :ideal or :scmos
 roi_size = 7
 n_samples = 10_000

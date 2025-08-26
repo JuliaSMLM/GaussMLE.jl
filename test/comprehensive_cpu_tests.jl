@@ -11,7 +11,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
     
     # Create sCMOS variance map (readout noise)
     variance_map = ones(Float32, box_size, box_size) * 25.0f0  # 5 e- readout noise
-    scmos_camera = GaussMLE.SCMOSCamera(variance_map)
+    scmos_camera = GaussMLE.SCMOSCameraInternal(variance_map)
     
     @testset "Fixed Sigma Model (xynb)" begin
         psf_model = GaussMLE.GaussianXYNB(1.3f0)

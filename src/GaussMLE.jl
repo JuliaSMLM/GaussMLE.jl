@@ -6,6 +6,7 @@ using StaticArrays
 using LinearAlgebra
 using Statistics
 using SpecialFunctions
+using SMLMData
 
 # Constants
 include("constants.jl")
@@ -17,9 +18,11 @@ using .GaussLib
 # Core modules for refactored API
 include("devices.jl")
 include("camera_models.jl")
+include("smld_camera.jl")  # SCMOSCamera extending SMLMData
 include("psf_models.jl")
 include("psf_derivatives.jl")
 include("constraints.jl")
+include("roi_batch.jl")  # ROI batch data structure
 include("kernels.jl")
 include("unified_kernel.jl")  # New unified GPU/CPU kernel
 include("results.jl")
@@ -32,8 +35,9 @@ include("api.jl")
 export ComputeDevice, CPU, GPU
 export auto_device, select_device
 
-# Camera models
-export CameraModel, IdealCamera, SCMOSCamera
+# Camera models (our internal ones and SMLMData-compatible)
+export CameraModel, IdealCamera
+export SCMOSCamera  # The SMLMData-compatible version
 
 # PSF models
 export PSFModel, GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
@@ -45,6 +49,11 @@ export GaussMLEFitter, fit, GaussMLEResults
 export ParameterConstraints, default_constraints
 
 # Simulator exports
-export SimulatedBlob, generate_blobs_data, generate_random_blobs
+export generate_roi_batch
+
+# ROI batch exports
+export ROIBatch, SingleROI, LocalizationResult
+export roi_to_camera_coords, create_localization_result
+export to_emitter2dfit, to_smld
 
 end # module

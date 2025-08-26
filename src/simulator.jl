@@ -1,258 +1,323 @@
 """
-Data simulator for generating synthetic blobs with integrated Gaussian PSFs
-Provides consistent data generation for tests and examples
+Camera-aware simulator with PSF-specific defaults
+Generates ROIBatch with appropriate noise models based on camera type
 """
 
 using Random
 using Distributions
+using SMLMData
+using StaticArrays
 using .GaussLib: integral_gaussian_1d, compute_alpha
 
-"""
-    SimulatedBlob
-
-Parameters for a single simulated blob
-"""
-struct SimulatedBlob{T}
-    x::T
-    y::T
-    photons::T
-    background::T
-    # Optional parameters for different models
-    sigma::Union{T, Nothing}
-    sigma_x::Union{T, Nothing}
-    sigma_y::Union{T, Nothing}
-    z::Union{T, Nothing}
-end
-
-# Convenience constructors
-function SimulatedBlob(x::T, y::T, photons::T, background::T) where T
-    SimulatedBlob{T}(x, y, photons, background, nothing, nothing, nothing, nothing)
-end
-
-function SimulatedBlob(x::T, y::T, photons::T, background::T, sigma::T) where T
-    SimulatedBlob{T}(x, y, photons, background, sigma, nothing, nothing, nothing)
-end
+# PSF-specific default parameters
+get_default_params(::GaussianXYNB) = Float32[6.0, 6.0, 1000.0, 10.0]
+get_default_params(::GaussianXYNBS) = Float32[6.0, 6.0, 1000.0, 10.0, 1.3]
+get_default_params(::GaussianXYNBSXSY) = Float32[6.0, 6.0, 1000.0, 10.0, 1.3, 1.3]
+get_default_params(::AstigmaticXYZNB) = Float32[6.0, 6.0, 0.0, 1000.0, 10.0]
 
 """
-    generate_blobs_data(psf_model, blobs, roi_size; camera_model=IdealCamera(), seed=nothing)
+    generate_roi_batch(camera, psf_model; kwargs...) → ROIBatch
 
-Generate synthetic blob data using integrated Gaussian PSFs
+Generate synthetic ROI data with camera-appropriate noise.
 
 # Arguments
-- `psf_model`: PSF model to use for generation (must match fitting model)
-- `blobs`: Vector of SimulatedBlob or single blob parameters
-- `roi_size`: Size of each ROI (roi_size × roi_size pixels)
-- `camera_model`: Camera noise model (IdealCamera or SCMOSCamera)
-- `seed`: Random seed for reproducibility
+- `camera::AbstractCamera`: Camera model (IdealCamera or SCMOSCamera)
+- `psf_model::PSFModel`: PSF model determining parameter structure
+
+# Keywords
+- `n_rois::Int = 100`: Number of ROIs to generate
+- `roi_size::Int = 11`: Size of each ROI (square)
+- `true_params::Union{Nothing, Matrix} = nothing`: Parameters or use PSF defaults
+- `corners::Union{Nothing, Matrix{Int32}} = nothing`: ROI corners or auto-generate
+- `frame_indices::Union{Nothing, Vector{Int32}} = nothing`: Frame indices or all frame 1
+- `xy_variation::Float32 = 1.0`: Position variation (±pixels) when using defaults
+- `corner_mode::Symbol = :random`: Corner generation mode (:random, :grid, :clustered)
+- `min_spacing::Int = 20`: Minimum pixel spacing between ROIs
+- `seed::Union{Nothing, Int} = nothing`: Random seed for reproducibility
 
 # Returns
-- `data`: Array of size (roi_size, roi_size, n_blobs) with synthetic data
-- `true_params`: Dictionary with true parameter values for validation
+- `ROIBatch`: Complete ROI batch with camera attached, ready for fitting
 """
-function generate_blobs_data(
-    psf_model::PSFModel,
-    blobs::Vector{<:SimulatedBlob},
-    roi_size::Int;
-    camera_model::CameraModel = IdealCamera(),
-    seed::Union{Int, Nothing} = nothing
+function generate_roi_batch(
+    camera::SMLMData.AbstractCamera,
+    psf_model::PSFModel;
+    n_rois::Int = 100,
+    roi_size::Int = 11,
+    true_params::Union{Nothing, Matrix} = nothing,
+    corners::Union{Nothing, Matrix{Int32}} = nothing,
+    frame_indices::Union{Nothing, Vector{Int32}} = nothing,
+    xy_variation::Float32 = 1.0f0,
+    corner_mode::Symbol = :random,
+    min_spacing::Int = 20,
+    seed::Union{Nothing, Int} = nothing
 )
+    # Set random seed if provided
     !isnothing(seed) && Random.seed!(seed)
     
-    n_blobs = length(blobs)
-    T = eltype(blobs[1].x)
-    data = zeros(T, roi_size, roi_size, n_blobs)
-    
-    # Store true parameters for validation
-    true_params = Dict{Symbol, Vector{T}}()
-    true_params[:x] = [s.x for s in blobs]
-    true_params[:y] = [s.y for s in blobs]
-    true_params[:photons] = [s.photons for s in blobs]
-    true_params[:background] = [s.background for s in blobs]
-    
-    # Add model-specific parameters
-    if psf_model isa GaussianXYNBS
-        true_params[:sigma] = [s.sigma for s in blobs]
-    elseif psf_model isa GaussianXYNBSXSY
-        true_params[:sigma_x] = [s.sigma_x for s in blobs]
-        true_params[:sigma_y] = [s.sigma_y for s in blobs]
-    elseif psf_model isa AstigmaticXYZNB
-        true_params[:z] = [s.z for s in blobs]
-    end
-    
-    # Generate data for each blob
-    for (k, blob) in enumerate(blobs)
-        roi = @view data[:, :, k]
-        generate_single_blob!(roi, psf_model, blob, camera_model)
-    end
-    
-    return data, true_params
-end
-
-"""
-    generate_single_blob!(roi, psf_model, blob, camera_model)
-
-Generate data for a single blob into a pre-allocated ROI
-"""
-function generate_single_blob!(
-    roi::AbstractMatrix{T},
-    psf_model::GaussianXYNB,
-    blob::SimulatedBlob{T},
-    camera_model::CameraModel
-) where T
-    roi_size = size(roi, 1)
-    
-    for j in 1:roi_size, i in 1:roi_size
-        # Integrated Gaussian PSF
-        psf_x = integral_gaussian_1d(i, blob.x, psf_model.σ)
-        psf_y = integral_gaussian_1d(j, blob.y, psf_model.σ)
-        
-        # Expected photon count
-        mu = blob.background + blob.photons * psf_x * psf_y
-        
-        # Generate noisy data based on camera model
-        roi[i, j] = generate_pixel_value(mu, camera_model, i, j)
-    end
-end
-
-function generate_single_blob!(
-    roi::AbstractMatrix{T},
-    psf_model::GaussianXYNBS,
-    blob::SimulatedBlob{T},
-    camera_model::CameraModel
-) where T
-    roi_size = size(roi, 1)
-    sigma = isnothing(blob.sigma) ? T(1.3) : blob.sigma
-    
-    for j in 1:roi_size, i in 1:roi_size
-        psf_x = integral_gaussian_1d(i, blob.x, sigma)
-        psf_y = integral_gaussian_1d(j, blob.y, sigma)
-        mu = blob.background + blob.photons * psf_x * psf_y
-        roi[i, j] = generate_pixel_value(mu, camera_model, i, j)
-    end
-end
-
-function generate_single_blob!(
-    roi::AbstractMatrix{T},
-    psf_model::GaussianXYNBSXSY,
-    blob::SimulatedBlob{T},
-    camera_model::CameraModel
-) where T
-    roi_size = size(roi, 1)
-    sigma_x = isnothing(blob.sigma_x) ? T(1.3) : blob.sigma_x
-    sigma_y = isnothing(blob.sigma_y) ? T(1.3) : blob.sigma_y
-    
-    for j in 1:roi_size, i in 1:roi_size
-        psf_x = integral_gaussian_1d(i, blob.x, sigma_x)
-        psf_y = integral_gaussian_1d(j, blob.y, sigma_y)
-        mu = blob.background + blob.photons * psf_x * psf_y
-        roi[i, j] = generate_pixel_value(mu, camera_model, i, j)
-    end
-end
-
-function generate_single_blob!(
-    roi::AbstractMatrix{T},
-    psf_model::AstigmaticXYZNB,
-    blob::SimulatedBlob{T},
-    camera_model::CameraModel
-) where T
-    roi_size = size(roi, 1)
-    z = isnothing(blob.z) ? zero(T) : blob.z
-    
-    # Compute z-dependent sigmas
-    zx = z - psf_model.γ
-    zy = z + psf_model.γ
-    σx = psf_model.σx₀ * sqrt(compute_alpha(zx, psf_model.Ax, psf_model.Bx, psf_model.d))
-    σy = psf_model.σy₀ * sqrt(compute_alpha(zy, psf_model.Ay, psf_model.By, psf_model.d))
-    
-    for j in 1:roi_size, i in 1:roi_size
-        psf_x = integral_gaussian_1d(i, blob.x, σx)
-        psf_y = integral_gaussian_1d(j, blob.y, σy)
-        mu = blob.background + blob.photons * psf_x * psf_y
-        roi[i, j] = generate_pixel_value(mu, camera_model, i, j)
-    end
-end
-
-"""
-    generate_pixel_value(mu, camera_model, i, j)
-
-Generate a pixel value based on expected photons and camera noise model
-"""
-function generate_pixel_value(mu::T, ::IdealCamera, i, j) where T
-    # Poisson noise only
-    return mu > 0 ? T(rand(Poisson(mu))) : zero(T)
-end
-
-function generate_pixel_value(mu::T, camera::SCMOSCamera, i, j) where T
-    # Poisson noise + Gaussian readout noise
-    if mu > 0
-        poisson_value = T(rand(Poisson(mu)))
-        readout_std = sqrt(camera.variance_map[i, j])
-        return poisson_value + randn(T) * readout_std
+    # Generate or validate parameters
+    if isnothing(true_params)
+        true_params = _generate_default_params(psf_model, n_rois, xy_variation)
     else
-        return randn(T) * sqrt(camera.variance_map[i, j])
-    end
-end
-
-"""
-    generate_random_blobs(n_blobs, roi_size; kwargs...)
-
-Generate random blobs with variations for testing
-
-# Keyword arguments
-- `x_range`: Range for x positions (default: centered with 0.5 pixel std)
-- `y_range`: Range for y positions (default: centered with 0.5 pixel std)
-- `photons_range`: Range for photon counts (default: 800-1200)
-- `background_range`: Range for background (default: 8-12)
-- `sigma_range`: Range for PSF width (for variable sigma models)
-- `z_range`: Range for z position (for 3D models)
-- `seed`: Random seed
-"""
-function generate_random_blobs(
-    n_blobs::Int,
-    roi_size::Int;
-    x_mean = roi_size/2 + 0.5,
-    y_mean = roi_size/2 + 0.5,
-    x_std = 0.5f0,
-    y_std = 0.5f0,
-    photons_mean = 1000.0f0,
-    photons_std = 100.0f0,
-    background_mean = 10.0f0,
-    background_std = 1.0f0,
-    sigma_mean = 1.3f0,
-    sigma_std = 0.1f0,
-    z_mean = 0.0f0,
-    z_std = 200.0f0,
-    model_type = :xynb,
-    seed = nothing
-)
-    !isnothing(seed) && Random.seed!(seed)
-    
-    T = Float32
-    blobs = SimulatedBlob{T}[]
-    
-    for k in 1:n_blobs
-        x = T(x_mean + x_std * randn())
-        y = T(y_mean + y_std * randn())
-        photons = T(max(100, photons_mean + photons_std * randn()))
-        background = T(max(0, background_mean + background_std * randn()))
-        
-        if model_type == :xynb
-            push!(blobs, SimulatedBlob(x, y, photons, background))
-        elseif model_type == :xynbs
-            sigma = T(max(0.5, sigma_mean + sigma_std * randn()))
-            push!(blobs, SimulatedBlob{T}(x, y, photons, background, sigma, nothing, nothing, nothing))
-        elseif model_type == :xynbsxsy
-            sigma_x = T(max(0.5, sigma_mean + sigma_std * randn()))
-            sigma_y = T(max(0.5, sigma_mean + sigma_std * randn()))
-            push!(blobs, SimulatedBlob{T}(x, y, photons, background, nothing, sigma_x, sigma_y, nothing))
-        elseif model_type == :xynbz
-            z = T(z_mean + z_std * randn())
-            push!(blobs, SimulatedBlob{T}(x, y, photons, background, nothing, nothing, nothing, z))
+        actual_n_rois = size(true_params, 2)
+        if actual_n_rois != n_rois
+            n_rois = actual_n_rois  # Use actual count from params
         end
     end
     
-    return blobs
+    # Generate or validate corners
+    if isnothing(corners)
+        camera_size = (
+            length(camera.pixel_edges_x) - 1,
+            length(camera.pixel_edges_y) - 1
+        )
+        corners = _generate_corners(n_rois, camera_size, roi_size, corner_mode, min_spacing)
+    else
+        @assert size(corners) == (2, n_rois) "Corners must be 2×n_rois"
+    end
+    
+    # Generate or validate frame indices
+    if isnothing(frame_indices)
+        frame_indices = ones(Int32, n_rois)
+    else
+        @assert length(frame_indices) == n_rois "Must have one frame index per ROI"
+    end
+    
+    # Generate the ROI data with appropriate noise
+    data = _generate_roi_data(camera, psf_model, true_params, corners, roi_size)
+    
+    # Create and return ROIBatch
+    ROIBatch(data, corners, frame_indices, camera)
 end
 
-# Export functions
-export SimulatedBlob, generate_blobs_data, generate_single_blob!, generate_random_blobs, generate_pixel_value
+"""
+Generate default parameters with PSF-specific values and position variation
+"""
+function _generate_default_params(psf_model::PSFModel, n_rois::Int, xy_variation::Float32)
+    base_params = get_default_params(psf_model)
+    n_params = length(base_params)
+    
+    # Replicate for all ROIs
+    params = Matrix{Float32}(undef, n_params, n_rois)
+    for i in 1:n_rois
+        params[:, i] = base_params
+        
+        # Add position variation only to x,y (first two parameters)
+        if xy_variation > 0
+            params[1, i] += (rand() - 0.5f0) * 2.0f0 * xy_variation  # x variation
+            params[2, i] += (rand() - 0.5f0) * 2.0f0 * xy_variation  # y variation
+        end
+    end
+    
+    return params
+end
+
+"""
+Generate corners based on specified mode
+"""
+function _generate_corners(n_rois::Int, camera_size::Tuple{Int,Int}, roi_size::Int,
+                          mode::Symbol, min_spacing::Int)
+    nx, ny = camera_size
+    corners = Matrix{Int32}(undef, 2, n_rois)
+    
+    # Ensure ROIs fit within camera
+    max_x = nx - roi_size + 1
+    max_y = ny - roi_size + 1
+    
+    if mode == :random
+        # Random placement with minimum spacing
+        placed = Vector{Tuple{Int,Int}}()
+        attempts = 0
+        max_attempts = n_rois * 100
+        
+        for i in 1:n_rois
+            valid = false
+            while !valid && attempts < max_attempts
+                attempts += 1
+                x = rand(1:max_x)
+                y = rand(1:max_y)
+                
+                # Check minimum spacing
+                valid = true
+                for (px, py) in placed
+                    if abs(x - px) < min_spacing && abs(y - py) < min_spacing
+                        valid = false
+                        break
+                    end
+                end
+                
+                if valid
+                    corners[1, i] = x
+                    corners[2, i] = y
+                    push!(placed, (x, y))
+                end
+            end
+            
+            # Fallback if spacing constraint too strict
+            if !valid
+                corners[1, i] = rand(1:max_x)
+                corners[2, i] = rand(1:max_y)
+            end
+        end
+        
+    elseif mode == :grid
+        # Regular grid pattern
+        n_grid = ceil(Int, sqrt(n_rois))
+        spacing_x = max(min_spacing, (max_x - 1) ÷ n_grid)
+        spacing_y = max(min_spacing, (max_y - 1) ÷ n_grid)
+        
+        idx = 1
+        for j in 1:spacing_y:max_y
+            for i in 1:spacing_x:max_x
+                if idx <= n_rois
+                    corners[1, idx] = i
+                    corners[2, idx] = j
+                    idx += 1
+                end
+            end
+        end
+        
+    elseif mode == :clustered
+        # Clusters of ROIs (simulating multi-emitter regions)
+        n_clusters = max(1, n_rois ÷ 10)
+        rois_per_cluster = n_rois ÷ n_clusters
+        
+        idx = 1
+        for c in 1:n_clusters
+            # Random cluster center
+            cx = rand(roi_size:max_x-roi_size)
+            cy = rand(roi_size:max_y-roi_size)
+            
+            # Place ROIs around cluster center
+            for _ in 1:min(rois_per_cluster, n_rois - idx + 1)
+                offset_x = rand(-min_spacing:min_spacing)
+                offset_y = rand(-min_spacing:min_spacing)
+                
+                corners[1, idx] = clamp(cx + offset_x, 1, max_x)
+                corners[2, idx] = clamp(cy + offset_y, 1, max_y)
+                idx += 1
+            end
+        end
+    else
+        error("Unknown corner_mode: $mode. Use :random, :grid, or :clustered")
+    end
+    
+    return corners
+end
+
+"""
+Generate ROI data with camera-specific noise - dispatches on camera type
+"""
+function _generate_roi_data(camera::SMLMData.IdealCamera, psf_model::PSFModel,
+                           true_params::Matrix, corners::Matrix{Int32}, roi_size::Int)
+    n_rois = size(true_params, 2)
+    data = zeros(Float32, roi_size, roi_size, n_rois)
+    
+    for k in 1:n_rois
+        roi = @view data[:, :, k]
+        params = @view true_params[:, k]
+        _generate_single_roi!(roi, psf_model, params, camera, corners[:, k])
+    end
+    
+    return data
+end
+
+function _generate_roi_data(camera::SCMOSCamera, psf_model::PSFModel,
+                           true_params::Matrix, corners::Matrix{Int32}, roi_size::Int)
+    n_rois = size(true_params, 2)
+    data = zeros(Float32, roi_size, roi_size, n_rois)
+    
+    for k in 1:n_rois
+        roi = @view data[:, :, k]
+        params = @view true_params[:, k]
+        _generate_single_roi!(roi, psf_model, params, camera, corners[:, k])
+    end
+    
+    return data
+end
+
+"""
+Generate single ROI with IdealCamera (Poisson noise only)
+"""
+function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
+                              params::AbstractVector, ::SMLMData.IdealCamera,
+                              corner::AbstractVector)
+    roi_size = size(roi, 1)
+    
+    # Generate expected signal for each pixel
+    for j in 1:roi_size, i in 1:roi_size
+        expected = _evaluate_psf_pixel(psf_model, i, j, params)
+        
+        # Poisson noise
+        if expected > 0
+            roi[i, j] = rand(Poisson(expected))
+        else
+            roi[i, j] = 0
+        end
+    end
+end
+
+"""
+Generate single ROI with SCMOSCamera (Poisson + readout noise)
+"""
+function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
+                              params::AbstractVector, camera::SCMOSCamera,
+                              corner::AbstractVector)
+    roi_size = size(roi, 1)
+    x_corner, y_corner = corner
+    
+    # Generate expected signal for each pixel
+    for j in 1:roi_size, i in 1:roi_size
+        expected = _evaluate_psf_pixel(psf_model, i, j, params)
+        
+        # Poisson noise
+        signal = expected > 0 ? Float32(rand(Poisson(expected))) : 0.0f0
+        
+        # Add readout noise from variance map at correct camera position
+        cam_i = i + x_corner - 1
+        cam_j = j + y_corner - 1
+        readout_std = sqrt(camera.readnoise_variance[cam_i, cam_j])
+        
+        roi[i, j] = signal + randn() * readout_std
+    end
+end
+
+"""
+Evaluate PSF at a single pixel - dispatches on PSF model type
+"""
+function _evaluate_psf_pixel(psf::GaussianXYNB, i::Int, j::Int, params::AbstractVector)
+    x, y, photons, bg = params
+    psf_x = integral_gaussian_1d(i, x, psf.σ)
+    psf_y = integral_gaussian_1d(j, y, psf.σ)
+    return bg + photons * psf_x * psf_y
+end
+
+function _evaluate_psf_pixel(::GaussianXYNBS, i::Int, j::Int, params::AbstractVector)
+    x, y, photons, bg, σ = params
+    psf_x = integral_gaussian_1d(i, x, σ)
+    psf_y = integral_gaussian_1d(j, y, σ)
+    return bg + photons * psf_x * psf_y
+end
+
+function _evaluate_psf_pixel(::GaussianXYNBSXSY, i::Int, j::Int, params::AbstractVector)
+    x, y, photons, bg, σx, σy = params
+    psf_x = integral_gaussian_1d(i, x, σx)
+    psf_y = integral_gaussian_1d(j, y, σy)
+    return bg + photons * psf_x * psf_y
+end
+
+function _evaluate_psf_pixel(psf::AstigmaticXYZNB, i::Int, j::Int, params::AbstractVector)
+    x, y, z, photons, bg = params
+    
+    # Width calculation based on z position
+    αx = max(0.1f0, compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d))
+    αy = max(0.1f0, compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d))
+    σx = psf.σx₀ * sqrt(αx)
+    σy = psf.σy₀ * sqrt(αy)
+    
+    psf_x = integral_gaussian_1d(i, x, σx)
+    psf_y = integral_gaussian_1d(j, y, σy)
+    return bg + photons * psf_x * psf_y
+end
+
+# Export the main function
+export generate_roi_batch

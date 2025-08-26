@@ -98,34 +98,52 @@ end
 
 # Simple GPU-compatible parameter initialization
 @inline function simple_initialize(roi, box_size::Int, ::Val{N}, ::Type{T}) where {N,T}
-    center = T((box_size + 1) / 2)
+    # Calculate background (use 20th percentile or edges for robustness)
+    edge_sum = zero(T)
+    edge_count = 0
+    @inbounds for j in 1:box_size, i in 1:box_size
+        if i == 1 || i == box_size || j == 1 || j == box_size
+            edge_sum += roi[i,j]
+            edge_count += 1
+        end
+    end
+    bg = edge_sum / edge_count  # Use edge average as background estimate
     
-    # Calculate total and minimum in a single pass
-    total = zero(T)
-    min_val = T(Inf)
+    # Calculate center of mass for better position initialization
+    total_signal = zero(T)
+    x_weighted = zero(T)
+    y_weighted = zero(T)
     
     @inbounds for j in 1:box_size, i in 1:box_size
-        val = roi[i,j]
-        total += val
-        min_val = min(min_val, val)
+        signal = max(zero(T), roi[i,j] - bg)  # Background-subtracted signal
+        total_signal += signal
+        x_weighted += signal * T(i)
+        y_weighted += signal * T(j)
     end
     
-    # Estimate background and signal
-    bg = min_val
-    signal_total = total - bg * box_size * box_size
-    photons = max(signal_total, T(100))  # Ensure positive photons
+    # Use center of mass if there's signal, otherwise use center
+    center = T((box_size + 1) / 2)
+    x_init = total_signal > T(10) ? x_weighted / total_signal : center
+    y_init = total_signal > T(10) ? y_weighted / total_signal : center
+    
+    # Ensure positions are within bounds
+    x_init = clamp(x_init, T(1.5), T(box_size - 0.5))
+    y_init = clamp(y_init, T(1.5), T(box_size - 0.5))
+    
+    # Estimate photons from total signal
+    photons = max(total_signal, T(100))  # Ensure positive photons
     
     # Return appropriate parameter vector based on model
     if N == 4  # GaussianXYNB
-        return MVector{4,T}(center, center, photons, bg)
+        return MVector{4,T}(x_init, y_init, photons, bg)
     elseif N == 5  # GaussianXYNBS or AstigmaticXYZNB
         # Note: This simple initialization works for both models
         # For AstigmaticXYZNB: x, y, z=0, photons, bg
         # For GaussianXYNBS: x, y, photons, bg, sigma
         # The proper initialization should be done based on model type
-        return MVector{5,T}(center, center, photons, bg, T(1.3))
+        return MVector{5,T}(x_init, y_init, photons, bg, T(1.3))
     else  # N == 6, GaussianXYNBSXSY
-        return MVector{6,T}(center, center, photons, bg, T(1.3), T(1.3))
+        return MVector{6,T}(x_init, y_init, photons, bg, T(1.3), T(1.3))
     end
 end
 

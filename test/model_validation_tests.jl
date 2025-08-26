@@ -206,7 +206,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         
         # Create variance map (readout noise)
         variance_map = ones(Float32, box_size, box_size) * 25.0f0  # 5 e- readout noise
-        camera_model = GaussMLE.SCMOSCamera(variance_map)
+        camera_model = GaussMLE.SCMOSCameraInternal(variance_map)
         
         # Generate test data with sCMOS noise
         data, true_params = generate_test_data(:xynb, 500, box_size; sigma=1.3f0)

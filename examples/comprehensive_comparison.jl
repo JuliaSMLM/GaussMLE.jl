@@ -1,28 +1,21 @@
 using Pkg
-Pkg.activate("examples")
+Pkg.activate(".")
 
 using GaussMLE
+using SMLMData
 using Random
 using Statistics
 using Printf
-using Distributions
 
 # Example parameters (users can adjust these)
-roi_size = 7
-n_samples = 1_000  # Smaller for comprehensive testing
-true_sigma = 1.3f0
+roi_size = 11
+n_samples = 500  # Moderate size for comprehensive testing
 verbose = true
 output_format = "txt"
 
 # Output directory
 output_dir = joinpath(@__DIR__, "output")
 mkpath(output_dir)  # Create if it doesn't exist
-
-# Fixed ground truth parameters for all tests
-true_x = 4.0f0
-true_y = 4.0f0
-true_photons = 1000.0f0
-true_bg = 10.0f0
 
 println("=== Example: Comprehensive Model Comparison ===")
 println("This example demonstrates comparing all PSF models and configurations")
@@ -35,96 +28,60 @@ struct BenchmarkResult
     camera::Symbol
     fits_per_second::Float64
     param_stats::Dict{Symbol, NamedTuple{(:bias, :std, :crlb), Tuple{Float32, Float32, Float32}}}
-end
-
-function generate_data(n_samples, roi_size, psf_model)
-    Random.seed!(42)
-    data = zeros(Float32, roi_size, roi_size, n_samples)
-    true_params = Dict{Symbol, Vector{Float32}}()
-    
-    for k in 1:n_samples
-        # Generate with small variations to test precision
-        x = true_x + 0.5f0 * randn(Float32)  # Match validation test variation
-        y = true_y + 0.5f0 * randn(Float32)
-        photons = true_photons * (0.8f0 + 0.4f0 * rand(Float32))  # ±20% variation
-        bg = true_bg * (0.8f0 + 0.4f0 * rand(Float32))
-        
-        # Store actual true values for each blob
-        push!(get!(true_params, :x, Float32[]), x)
-        push!(get!(true_params, :y, Float32[]), y)
-        push!(get!(true_params, :photons, Float32[]), photons)
-        push!(get!(true_params, :background, Float32[]), bg)
-        
-        # Adjust sigma for different models
-        sigma_x = true_sigma
-        sigma_y = true_sigma
-        if psf_model isa GaussMLE.GaussianXYNBS
-            sigma_actual = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
-            sigma_x = sigma_y = sigma_actual
-            push!(get!(true_params, :sigma, Float32[]), sigma_actual)
-        elseif psf_model isa GaussMLE.GaussianXYNBSXSY
-            sigma_x = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
-            sigma_y = true_sigma * (0.8f0 + 0.4f0 * rand(Float32))
-            push!(get!(true_params, :sigma_x, Float32[]), sigma_x)
-            push!(get!(true_params, :sigma_y, Float32[]), sigma_y)
-        elseif psf_model isa GaussMLE.AstigmaticXYZNB
-            z = 200.0f0 * randn(Float32)  # Z variation
-            push!(get!(true_params, :z, Float32[]), z)
-            # Compute PSF widths based on z (matching validation test calibration)
-            z_norm = z / 500.0f0
-            alpha_x = 1.0f0 + z_norm^2 + 0.5f0 * z_norm^3 + 0.1f0 * z_norm^4
-            alpha_y = 1.0f0 + z_norm^2 - 0.5f0 * z_norm^3 - 0.1f0 * z_norm^4
-            sigma_x = true_sigma * sqrt(alpha_x)
-            sigma_y = true_sigma * sqrt(alpha_y)
-        end
-        
-        for j in 1:roi_size, i in 1:roi_size
-            # Use the SAME integrated Gaussian model that the fitter uses
-            psf_x = GaussMLE.GaussLib.integral_gaussian_1d(i, x, sigma_x)
-            psf_y = GaussMLE.GaussLib.integral_gaussian_1d(j, y, sigma_y)
-            expected = bg + photons * psf_x * psf_y
-            
-            # Poisson noise
-            data[i, j, k] = expected > 0 ? rand(Poisson(expected)) : 0
-        end
-    end
-    
-    return data, true_params
+    convergence_rate::Float64
 end
 
 function run_single_benchmark(psf_model, device, camera_type)
-    # Generate data with true parameters
-    data, true_params = generate_data(n_samples, roi_size, psf_model)
-    
-    # Setup variance map for sCMOS
-    variance_map = if camera_type == :scmos
-        2.0f0 * ones(Float32, roi_size, roi_size)
-    else
-        nothing
-    end
-    
-    # Setup camera model
-    camera_model = if camera_type == :ideal
-        GaussMLE.IdealCamera()
-    else
-        GaussMLE.SCMOSCamera(variance_map)
-    end
-    
-    # Create fitter
-    fitter = GaussMLE.GaussMLEFitter(
-        psf_model = psf_model,
-        camera_model = camera_model,
-        device = device,
-        iterations = 20,
-        batch_size = n_samples  # Process all at once for consistency
-    )
-    
-    # Run fitting
-    t_start = time()
-    
     try
-        results = GaussMLE.fit(fitter, data; variance_map=variance_map)
+        # Create camera
+        camera = if camera_type == :ideal
+            SMLMData.IdealCamera(512, 512, 0.1)
+        else  # :scmos
+            variance_map = ones(Float32, 256, 256) * 25.0f0  # 5e- readout noise
+            GaussMLE.SCMOSCamera(256, 256, 0.1f0, variance_map)
+        end
         
+        # Generate known true parameters with some variation
+        Random.seed!(42)
+        true_params = Float32[
+            6.0 .+ 0.5f0 * randn(Float32, n_samples)';  # x
+            6.0 .+ 0.5f0 * randn(Float32, n_samples)';  # y
+            1000.0 .+ 200.0f0 * randn(Float32, n_samples)';  # photons
+            10.0 .+ 2.0f0 * randn(Float32, n_samples)'   # background
+        ]
+        
+        # Add model-specific parameters
+        if psf_model isa GaussMLE.GaussianXYNBS
+            sigma_vals = 1.3f0 .+ 0.2f0 * randn(Float32, n_samples)'
+            true_params = vcat(true_params, sigma_vals)
+        elseif psf_model isa GaussMLE.GaussianXYNBSXSY
+            sigma_x_vals = 1.3f0 .+ 0.15f0 * randn(Float32, n_samples)'
+            sigma_y_vals = 1.3f0 .+ 0.15f0 * randn(Float32, n_samples)'
+            true_params = vcat(true_params, sigma_x_vals, sigma_y_vals)
+        elseif psf_model isa GaussMLE.AstigmaticXYZNB
+            z_vals = 200.0f0 * randn(Float32, n_samples)'
+            # Insert z after y (x, y, z, photons, background)
+            true_params = vcat(true_params[1:2, :], z_vals, true_params[3:4, :])
+        end
+        
+        # Generate ROI batch using new simulator
+        batch = GaussMLE.generate_roi_batch(camera, psf_model; 
+                                           n_rois=n_samples,
+                                           roi_size=roi_size,
+                                           true_params=true_params,
+                                           seed=42)
+        
+        # Create fitter
+        device_obj = device == :cpu ? GaussMLE.CPU() : GaussMLE.GPU()
+        fitter = GaussMLE.GaussMLEFitter(
+            psf_model = psf_model,
+            device = device_obj,
+            iterations = 20
+        )
+        
+        # Run fitting with timing
+        t_start = time()
+        results = GaussMLE.fit(fitter, batch)
         t_elapsed = time() - t_start
         
         # Extract and analyze results
@@ -139,32 +96,31 @@ function run_single_benchmark(psf_model, device, camera_type)
         elseif psf_model isa GaussMLE.GaussianXYNBSXSY
             [:x, :y, :photons, :background, :sigma_x, :sigma_y]
         elseif psf_model isa GaussMLE.AstigmaticXYZNB
-            [:x, :y, :photons, :background, :z]
+            [:x, :y, :z, :photons, :background]
         end
         
-        # Calculate statistics using actual true values
+        # Calculate statistics
         param_stats = Dict{Symbol, NamedTuple}()
         for (i, name) in enumerate(param_names)
             fitted = params[i, :]
             uncertainty = uncertainties[i, :]
-            true_vals = get(true_params, name, nothing)
+            true_vals = true_params[i, :]
             
-            if true_vals !== nothing
-                # Calculate errors relative to actual true values
-                errors = fitted .- true_vals
-                bias = mean(errors)
-                std_dev = std(errors)  # This is the correct empirical uncertainty
-                mean_crlb = mean(uncertainty)
-                
-                param_stats[name] = (bias=bias, std=std_dev, crlb=mean_crlb)
-            else
-                # Fallback for parameters not in true_params (shouldn't happen)
-                param_stats[name] = (bias=0.0f0, std=0.0f0, crlb=mean(uncertainty))
-            end
+            # Calculate errors
+            errors = fitted .- true_vals
+            bias = mean(errors)
+            std_dev = std(errors)  # Empirical uncertainty
+            mean_crlb = mean(uncertainty)  # Theoretical uncertainty
+            
+            param_stats[name] = (bias=bias, std=std_dev, crlb=mean_crlb)
         end
         
+        # Calculate convergence rate (no infinite uncertainties)
+        n_converged = sum(isfinite.(uncertainties[1, :]))
+        convergence_rate = n_converged / n_samples
+        
         model_name = split(string(typeof(psf_model)), ".")[end]
-        return BenchmarkResult(model_name, device, camera_type, n_samples/t_elapsed, param_stats)
+        return BenchmarkResult(model_name, device, camera_type, n_samples/t_elapsed, param_stats, convergence_rate)
         
     catch e
         # Return nothing if benchmark fails
@@ -175,10 +131,16 @@ end
 
 # Define test configurations
 psf_models = [
-    GaussMLE.GaussianXYNB(true_sigma),
+    GaussMLE.GaussianXYNB(1.3f0),
     GaussMLE.GaussianXYNBS(),
     GaussMLE.GaussianXYNBSXSY(),
-    GaussMLE.AstigmaticXYZNB{Float32}(true_sigma, true_sigma, 0.5f0, -0.5f0, 0.1f0, -0.1f0, 0.0f0, 500.0f0)
+    GaussMLE.AstigmaticXYZNB{Float32}(
+        1.3f0, 1.3f0,    # σx₀, σy₀
+        0.0f0, 0.0f0,    # Ax, Ay
+        0.0f0, 0.0f0,    # Bx, By
+        250.0f0,         # γ
+        400.0f0          # d
+    )
 ]
 
 devices = [:cpu]  # Add :gpu if available
@@ -187,7 +149,7 @@ cameras = [:ideal, :scmos]
 results = BenchmarkResult[]
 
 println("Running comprehensive comparison...")
-println("Models: ", length(psf_models))
+println("Models: ", [split(string(typeof(p)), ".")[end] for p in psf_models])
 println("Devices: ", join(devices, ", "))
 println("Cameras: ", join(cameras, ", "))
 println("\nProgress:")
@@ -205,9 +167,9 @@ for psf_model in psf_models
             result = run_single_benchmark(psf_model, device, camera)
             if result !== nothing
                 push!(results, result)
-                println("✓ ($(round(Int, result.fits_per_second)) fits/s)")
+                println("✓ ($(round(Int, result.fits_per_second)) fits/s, $(round(result.convergence_rate*100, digits=1))% converged)")
             else
-                println("✗ (skipped)")
+                println("✗ (failed)")
             end
         end
     end
@@ -217,13 +179,13 @@ end
 output_lines = String[]
 
 # Summary table
-push!(output_lines, "\n" * "="^120)
+push!(output_lines, "\n" * "="^130)
 push!(output_lines, "COMPREHENSIVE COMPARISON RESULTS")
-push!(output_lines, "="^120)
-push!(output_lines, @sprintf("%-25s %-7s %-6s %10s | %-20s %-20s %-20s", 
-                "Model", "Device", "Camera", "Fits/s", 
+push!(output_lines, "="^130)
+push!(output_lines, @sprintf("%-20s %-7s %-6s %10s %8s | %-20s %-20s %-20s", 
+                "Model", "Device", "Camera", "Fits/s", "Conv%", 
                 "X (bias/std/crlb)", "Y (bias/std/crlb)", "Photons (bias/std/crlb)"))
-push!(output_lines, "-"^120)
+push!(output_lines, "-"^130)
 
 for r in results
     x_stats = get(r.param_stats, :x, (bias=NaN32, std=NaN32, crlb=NaN32))
@@ -234,29 +196,82 @@ for r in results
     y_str = @sprintf("%5.3f/%5.3f/%5.3f", y_stats.bias, y_stats.std, y_stats.crlb)
     n_str = @sprintf("%5.1f/%5.1f/%5.1f", n_stats.bias, n_stats.std, n_stats.crlb)
     
-    push!(output_lines, @sprintf("%-25s %-7s %-6s %10d | %-20s %-20s %-20s",
+    push!(output_lines, @sprintf("%-20s %-7s %-6s %10d %7.1f%% | %-20s %-20s %-20s",
                     r.psf_model, r.device, r.camera, round(Int, r.fits_per_second),
-                    x_str, y_str, n_str))
+                    r.convergence_rate*100, x_str, y_str, n_str))
 end
 
-push!(output_lines, "="^120)
+push!(output_lines, "="^130)
 
 # Additional parameter table for models with extra parameters
 push!(output_lines, "\nAdditional Parameters:")
-push!(output_lines, "-"^80)
+push!(output_lines, "-"^100)
+push!(output_lines, @sprintf("%-20s %-7s %-6s | %-12s %12s %12s %12s %12s", 
+                    "Model", "Device", "Camera", "Parameter", "Bias", "Emp.STD", "CRLB", "Ratio"))
+push!(output_lines, "-"^100)
 
 for r in results
     extra_params = setdiff(keys(r.param_stats), [:x, :y, :photons, :background])
     if !isempty(extra_params)
         for param in extra_params
             stats = r.param_stats[param]
-            push!(output_lines, @sprintf("%-25s %-7s %-6s | %-12s: bias=%6.3f  std=%6.3f  crlb=%6.3f",
-                            r.psf_model, r.device, r.camera, param, stats.bias, stats.std, stats.crlb))
+            ratio = stats.std / stats.crlb
+            push!(output_lines, @sprintf("%-20s %-7s %-6s | %-12s %12.4f %12.4f %12.4f %12.3f",
+                            r.psf_model, r.device, r.camera, param, 
+                            stats.bias, stats.std, stats.crlb, ratio))
         end
     end
 end
 
-push!(output_lines, "="^80)
+push!(output_lines, "="^100)
+
+# Analysis section
+push!(output_lines, "\nPERFORMANCE ANALYSIS:")
+push!(output_lines, "-"^50)
+
+# Find best and worst performers
+if !isempty(results)
+    # Speed analysis
+    speed_sorted = sort(results, by=r->r.fits_per_second, rev=true)
+    push!(output_lines, @sprintf("Fastest: %s-%s-%s (%.0f fits/s)", 
+                        speed_sorted[1].psf_model, speed_sorted[1].device, speed_sorted[1].camera,
+                        speed_sorted[1].fits_per_second))
+    push!(output_lines, @sprintf("Slowest: %s-%s-%s (%.0f fits/s)", 
+                        speed_sorted[end].psf_model, speed_sorted[end].device, speed_sorted[end].camera,
+                        speed_sorted[end].fits_per_second))
+    
+    # Accuracy analysis (X position bias)
+    accuracy_sorted = sort(results, by=r->abs(get(r.param_stats, :x, (bias=Inf32,)).bias))
+    push!(output_lines, @sprintf("Most accurate (X bias): %s-%s-%s (%.4f pixels)", 
+                        accuracy_sorted[1].psf_model, accuracy_sorted[1].device, accuracy_sorted[1].camera,
+                        get(accuracy_sorted[1].param_stats, :x, (bias=NaN32,)).bias))
+    
+    # Precision analysis (X position empirical std)
+    precision_sorted = sort(results, by=r->get(r.param_stats, :x, (std=Inf32,)).std)
+    push!(output_lines, @sprintf("Most precise (X std): %s-%s-%s (%.4f pixels)", 
+                        precision_sorted[1].psf_model, precision_sorted[1].device, precision_sorted[1].camera,
+                        get(precision_sorted[1].param_stats, :x, (std=NaN32,)).std))
+    
+    # CRLB matching analysis
+    crlb_ratios = []
+    for r in results
+        x_stats = get(r.param_stats, :x, nothing)
+        if x_stats !== nothing && isfinite(x_stats.std) && isfinite(x_stats.crlb) && x_stats.crlb > 0
+            push!(crlb_ratios, (abs(1.0 - x_stats.std/x_stats.crlb), r))
+        end
+    end
+    
+    if !isempty(crlb_ratios)
+        sort!(crlb_ratios)
+        best_crlb = crlb_ratios[1][2]
+        x_stats = get(best_crlb.param_stats, :x, (std=NaN32, crlb=NaN32))
+        push!(output_lines, @sprintf("Best CRLB match (X): %s-%s-%s (ratio=%.3f)", 
+                            best_crlb.psf_model, best_crlb.device, best_crlb.camera,
+                            x_stats.std/x_stats.crlb))
+    end
+end
+
+push!(output_lines, "="^50)
 
 # Print to console
 for line in output_lines
@@ -270,4 +285,6 @@ open(output_file, "w") do io
         println(io, line)
     end
 end
-verbose && println("\nResults saved to $output_file")
+
+println("\nResults saved to $output_file")
+println("✓ Comprehensive comparison complete!")
