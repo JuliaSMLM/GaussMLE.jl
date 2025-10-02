@@ -5,14 +5,94 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 using KernelAbstractions
 using StaticArrays
 
-# GPU-compatible LU decomposition for small static matrices
+# GPU-compatible Cholesky decomposition for symmetric positive definite matrices
+# This is more robust than LU for Fisher Information matrices
+@inline function static_cholesky_decomposition!(A::MMatrix{N,N,T}) where {N,T}
+    # Cholesky: A = L * L^T where L is lower triangular
+    @inbounds for j = 1:N
+        for i = j:N
+            sum_val = A[i, j]
+            for k = 1:j-1
+                sum_val -= A[i, k] * A[j, k]
+            end
+
+            if i == j
+                # Diagonal element
+                if sum_val <= zero(T)
+                    return false  # Not positive definite
+                end
+                A[i, i] = sqrt(sum_val)
+            else
+                # Off-diagonal element
+                A[i, j] = sum_val / A[j, j]
+            end
+        end
+    end
+    return true
+end
+
+# Invert a Cholesky-decomposed matrix (A = L * L^T)
+@inline function static_cholesky_inverse!(A_inv::MMatrix{N,N,T}, L::MMatrix{N,N,T}) where {N,T}
+    # First invert L (lower triangular)
+    L_inv = MMatrix{N,N,T}(undef)
+    @inbounds for j = 1:N
+        L_inv[j, j] = one(T) / L[j, j]
+        for i = j+1:N
+            sum_val = zero(T)
+            for k = j:i-1
+                sum_val += L[i, k] * L_inv[k, j]
+            end
+            L_inv[i, j] = -sum_val / L[i, i]
+        end
+    end
+
+    # A_inv = L_inv^T * L_inv
+    @inbounds for i = 1:N
+        for j = i:N  # Symmetric, only compute upper triangle
+            sum_val = zero(T)
+            for k = j:N  # Sum from max(i,j) to N
+                sum_val += L_inv[k, i] * L_inv[k, j]
+            end
+            A_inv[i, j] = sum_val
+            if i != j
+                A_inv[j, i] = sum_val  # Fill lower triangle by symmetry
+            end
+        end
+    end
+    return true
+end
+
+# GPU-compatible LU decomposition with partial pivoting for small static matrices
 @inline function static_lu_decomposition!(A::MMatrix{N,N,T}) where {N,T}
+    # LU decomposition with partial pivoting for numerical stability
+    # This is critical for poorly-conditioned Fisher Information matrices
+    tol = T(1e-10) * maximum(abs, A)  # Relative tolerance based on matrix scale
+
     @inbounds for k = 1:N
-        # Check for zero pivot
-        if abs(A[k, k]) < eps(T)
+        # Find pivot (largest element in column k, rows k:N)
+        pivot_val = abs(A[k, k])
+        pivot_row = k
+        for i = k+1:N
+            val = abs(A[i, k])
+            if val > pivot_val
+                pivot_val = val
+                pivot_row = i
+            end
+        end
+
+        # Check if pivot is too small (singular matrix)
+        if pivot_val < tol
             return false
         end
-        
+
+        # Swap rows if needed
+        if pivot_row != k
+            for j = 1:N
+                A[k, j], A[pivot_row, j] = A[pivot_row, j], A[k, j]
+            end
+        end
+
+        # Gaussian elimination
         for i = k+1:N
             A[i, k] /= A[k, k]
             for j = k+1:N
@@ -265,16 +345,36 @@ end
     end
     
     # Invert Fisher matrix for uncertainties (CRLB)
-    if static_matrix_inverse!(H_inv, H)
+    # Fisher matrices should be symmetric positive definite
+    # Add minimal regularization to diagonal for numerical stability
+    # Use very small value to not bias uncertainty estimates
+    reg = T(1e-10) * maximum(abs, H)
+    @inbounds for k in 1:N
+        H[k,k] += reg
+    end
+
+    # Make a copy for Cholesky decomposition
+    H_chol = MMatrix{N,N,T}(H)
+
+    # Try Cholesky decomposition (for symmetric positive definite matrices)
+    if static_cholesky_decomposition!(H_chol) && static_cholesky_inverse!(H_inv, H_chol)
         @inbounds for k in 1:N
             results[k, idx] = θ[k]
             uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
         end
     else
-        # Singular matrix - set large uncertainties
-        @inbounds for k in 1:N
-            results[k, idx] = θ[k]
-            uncertainties[k, idx] = T(Inf)
+        # Fallback: use LU decomposition
+        if static_matrix_inverse!(H_inv, H)
+            @inbounds for k in 1:N
+                results[k, idx] = θ[k]
+                uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
+            end
+        else
+            # Singular matrix - set large uncertainties
+            @inbounds for k in 1:N
+                results[k, idx] = θ[k]
+                uncertainties[k, idx] = T(Inf)
+            end
         end
     end
     
