@@ -7,7 +7,7 @@ using Statistics
 using Distributions
 
 """
-    generate_test_data(model_type, n_blobs, box_size; kwargs...)
+    generate_test_data(model_type, n_blobs, box_size; psf_model=nothing, kwargs...)
 
 Generate synthetic data with known ground truth for testing
 """
@@ -15,6 +15,7 @@ function generate_test_data(
     model_type::Symbol,
     n_blobs::Int,
     box_size::Int;
+    psf_model::Union{Nothing, GaussMLE.PSFModel} = nothing,
     n_photons::Float32 = 1000.0f0,
     background::Float32 = 5.0f0,  # Optimal background for unbiased estimation
     sigma::Float32 = 1.3f0,
@@ -84,23 +85,24 @@ function generate_test_data(
             end
             
         elseif model_type == :xynbz
-            # Astigmatic 3D model
+            # Astigmatic 3D model - use actual PSF model for data generation
+            @assert !isnothing(psf_model) "psf_model required for :xynbz model type"
+            @assert psf_model isa GaussMLE.AstigmaticXYZNB "psf_model must be AstigmaticXYZNB for :xynbz"
+
             z_true = Float32(200.0 * randn())  # Z position in nm
-            
+
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:z] = push!(get(true_params, :z, Float32[]), z_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
             true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
-            
-            # Proper astigmatic PSF widths - opposite behavior in x and y
-            # Matches the calibration in model_validation_tests.jl
-            z_norm = z_true / 500.0f0
-            alpha_x = 1.0f0 + z_norm^2 + 0.5f0 * z_norm^3 + 0.1f0 * z_norm^4
-            alpha_y = 1.0f0 + z_norm^2 - 0.5f0 * z_norm^3 - 0.1f0 * z_norm^4
-            sigma_x_z = sigma * sqrt(alpha_x)
-            sigma_y_z = sigma * sqrt(alpha_y)
-            
+
+            # Use actual PSF model to compute widths (matches implementation exactly)
+            αx = GaussMLE.GaussLib.compute_alpha((z_true - psf_model.γ), psf_model.Ax, psf_model.Bx, psf_model.d)
+            αy = GaussMLE.GaussLib.compute_alpha((z_true + psf_model.γ), psf_model.Ay, psf_model.By, psf_model.d)
+            sigma_x_z = psf_model.σx₀ * sqrt(αx)
+            sigma_y_z = psf_model.σy₀ * sqrt(αy)
+
             for j in 1:box_size, i in 1:box_size
                 mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_x_z, sigma_y_z)
                 data[i, j, k] = Float32(rand(Poisson(mu)))
@@ -197,8 +199,8 @@ function run_model_validation(
     verbose::Bool = false,
     kwargs...
 )
-    # Generate test data
-    data, true_params = generate_test_data(model_type, n_blobs, box_size; kwargs...)
+    # Generate test data (pass psf_model for astigmatic model)
+    data, true_params = generate_test_data(model_type, n_blobs, box_size; psf_model=psf_model, kwargs...)
     
     # Create fitter
     fitter = GaussMLE.GaussMLEFitter(

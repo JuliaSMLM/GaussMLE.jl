@@ -181,14 +181,13 @@ end
 # Astigmatic model
 @inline function evaluate_psf(psf::AstigmaticXYZNB, i, j, θ::Params{5})
     x, y, z, N, bg = θ
-    
+
     # Width calculation based on z position using GaussLib
-    # Ensure alpha is positive to avoid domain errors
-    αx = max(0.1f0, GaussLib.compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d))
-    αy = max(0.1f0, GaussLib.compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d))
+    αx = GaussLib.compute_alpha((z - psf.γ), psf.Ax, psf.Bx, psf.d)
+    αy = GaussLib.compute_alpha((z + psf.γ), psf.Ay, psf.By, psf.d)
     σx = psf.σx₀ * sqrt(αx)
     σy = psf.σy₀ * sqrt(αy)
-    
+
     psf_x = integral_gaussian_1d(i, x, σx)
     psf_y = integral_gaussian_1d(j, y, σy)
     return bg + N * psf_x * psf_y

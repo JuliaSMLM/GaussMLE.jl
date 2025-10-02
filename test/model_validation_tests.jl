@@ -95,14 +95,16 @@ Tests that fitted values and uncertainties match expectations within tolerance
     end
     
     @testset "Astigmatic 3D Model (xynbz)" begin
-        # Proper astigmatic calibration for testing
-        # Need opposite behavior in x and y to encode z information
+        # Realistic astigmatic calibration following Huang et al. (Science 2008)
+        # Higher-order terms (cubic/quartic) are necessary for real optical systems
+        # Opposite signs in Ax/Ay and Bx/By create the astigmatic behavior
+        # Conservative values ensure α > 0 for ±600nm range without clamping
         psf_model = GaussMLE.AstigmaticXYZNB{Float32}(
-            1.3f0, 1.3f0,  # σx₀, σy₀ - base PSF widths (symmetric)
-            0.0f0, 0.0f0,  # Ax, Ay - no cubic terms for symmetric behavior
-            0.0f0, 0.0f0,  # Bx, By - no quartic terms for pure quadratic
-            250.0f0,       # γ - focal plane offset (500nm total separation)
-            400.0f0        # d - depth scale (smaller = faster change)
+            1.3f0, 1.3f0,     # σx₀, σy₀ - diffraction-limited base width
+            0.3f0, -0.3f0,    # Ax, Ay - cubic aberrations (opposite signs for astigmatism)
+            0.05f0, -0.05f0,  # Bx, By - quartic aberrations (opposite signs)
+            0.0f0,            # γ = 0 (symmetric focal planes, asymmetry from A/B terms)
+            500.0f0           # d = 500nm (typical depth scale for ±600nm range)
         )
         
         @testset "CPU Backend" begin

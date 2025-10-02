@@ -96,9 +96,9 @@ end
     return det_val
 end
 
-# Simple GPU-compatible parameter initialization
-@inline function simple_initialize(roi, box_size::Int, ::Val{N}, ::Type{T}) where {N,T}
-    # Calculate background (use 20th percentile or edges for robustness)
+# Simple GPU-compatible parameter initialization - generic version
+@inline function simple_initialize_common(roi, box_size::Int, ::Type{T}) where T
+    # Calculate background (use edges for robustness)
     edge_sum = zero(T)
     edge_count = 0
     @inbounds for j in 1:box_size, i in 1:box_size
@@ -107,44 +107,52 @@ end
             edge_count += 1
         end
     end
-    bg = edge_sum / edge_count  # Use edge average as background estimate
-    
-    # Calculate center of mass for better position initialization
+    bg = edge_sum / edge_count
+
+    # Calculate center of mass
     total_signal = zero(T)
     x_weighted = zero(T)
     y_weighted = zero(T)
-    
+
     @inbounds for j in 1:box_size, i in 1:box_size
-        signal = max(zero(T), roi[i,j] - bg)  # Background-subtracted signal
+        signal = max(zero(T), roi[i,j] - bg)
         total_signal += signal
         x_weighted += signal * T(i)
         y_weighted += signal * T(j)
     end
-    
-    # Use center of mass if there's signal, otherwise use center
+
     center = T((box_size + 1) / 2)
     x_init = total_signal > T(10) ? x_weighted / total_signal : center
     y_init = total_signal > T(10) ? y_weighted / total_signal : center
-    
-    # Ensure positions are within bounds
+
     x_init = clamp(x_init, T(1.5), T(box_size - 0.5))
     y_init = clamp(y_init, T(1.5), T(box_size - 0.5))
-    
-    # Estimate photons from total signal
-    photons = max(total_signal, T(100))  # Ensure positive photons
-    
-    # Return appropriate parameter vector based on model
-    if N == 4  # GaussianXYNB
-        return MVector{4,T}(x_init, y_init, photons, bg)
-    elseif N == 5  # GaussianXYNBS or AstigmaticXYZNB
-        # Note: This simple initialization works for both models
-        # For AstigmaticXYZNB: x, y, z=0, photons, bg
-        # For GaussianXYNBS: x, y, photons, bg, sigma
-        # The proper initialization should be done based on model type
-        return MVector{5,T}(x_init, y_init, photons, bg, T(1.3))
-    else  # N == 6, GaussianXYNBSXSY
-        return MVector{6,T}(x_init, y_init, photons, bg, T(1.3), T(1.3))
-    end
+
+    photons = max(total_signal, T(100))
+
+    return (x_init, y_init, photons, bg)
+end
+
+# Model-specific initialization
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNB{T}) where T
+    (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
+    return MVector{4,T}(x, y, photons, bg)
+end
+
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBS{T}) where T
+    (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
+    return MVector{5,T}(x, y, photons, bg, T(1.3))
+end
+
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBSXSY{T}) where T
+    (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
+    return MVector{6,T}(x, y, photons, bg, T(1.3), T(1.3))
+end
+
+@inline function simple_initialize(roi, box_size::Int, ::AstigmaticXYZNB{T}) where T
+    (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
+    # Astigmatic model: [x, y, z, photons, bg]
+    return MVector{5,T}(x, y, T(0), photons, bg)  # z=0 initial guess
 end
 
 # Zero out a static array (more efficient than fill!)
@@ -178,7 +186,7 @@ end
     @inbounds roi = @view data[:, :, idx]
     
     # Stack-allocated working arrays (known size at compile time)
-    θ = simple_initialize(roi, box_size, Val(N), T)
+    θ = simple_initialize(roi, box_size, psf_model)
     ∇L = MVector{N,T}(undef)
     H_diag = MVector{N,T}(undef)  # Only diagonal elements for Newton-Raphson
     

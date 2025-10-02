@@ -66,7 +66,7 @@ Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNB}, s::Symbol) where T =
     getfield(r, s)
 
 # Convenient accessors for GaussianXYNBS (5 parameters)
-Base.getproperty(r::GaussMLEResults{T, GaussianXYNBS}, s::Symbol) where T = 
+Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBS}, s::Symbol) where T =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :photons ? r.parameters[3, :] :
@@ -80,7 +80,7 @@ Base.getproperty(r::GaussMLEResults{T, GaussianXYNBS}, s::Symbol) where T =
     getfield(r, s)
 
 # Convenient accessors for GaussianXYNBSXSY (6 parameters)
-Base.getproperty(r::GaussMLEResults{T, GaussianXYNBSXSY}, s::Symbol) where T = 
+Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBSXSY}, s::Symbol) where T =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :photons ? r.parameters[3, :] :
