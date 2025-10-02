@@ -202,24 +202,4 @@ using KernelAbstractions
         end
     end
     
-    @testset "API Integration" begin
-        data = generate_simple_test_data(10, box_size)  # Smaller for quick test
-        
-        if CUDA.functional()
-            # Test that the high-level API can use the unified kernel
-            fitter_gpu = GaussMLE.GaussMLEFitter(
-                psf_model = GaussMLE.GaussianXYNB(1.3f0),
-                device = :gpu,
-                iterations = iterations
-            )
-            
-            # This should use the unified kernel (once we update api.jl)
-            # For now, it will still use the broken kernel and fail
-            # We'll fix this in the next step
-            
-            @test_skip "API integration pending"
-        else
-            @test_skip "GPU not available"
-        end
-    end
 end
