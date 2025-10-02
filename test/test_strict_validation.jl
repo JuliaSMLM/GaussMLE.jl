@@ -45,17 +45,16 @@ Using the new camera-aware simulator for reliable test data generation
     end
     
     @testset "GaussianXYNB - Standard Conditions" begin
-        # Standard test conditions
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(1.3f0)
-        n_rois = 500  # Enough for good statistics
-        
-        # Generate ROIs with known parameters
+        n_rois = 500
+
+        Random.seed!(42)
         true_params = Float32[
-            6.0 .+ 0.5f0 * randn(Float32, n_rois)';  # x
-            6.0 .+ 0.5f0 * randn(Float32, n_rois)';  # y  
-            1000.0 .+ 200.0f0 * randn(Float32, n_rois)';  # photons
-            10.0 .+ 2.0f0 * randn(Float32, n_rois)'  # background
+            6.0 .+ 0.5f0 * randn(Float32, n_rois)';
+            6.0 .+ 0.5f0 * randn(Float32, n_rois)';
+            1000.0 .+ 200.0f0 * randn(Float32, n_rois)';
+            10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
         
         batch = GaussMLE.generate_roi_batch(camera, psf; 
@@ -90,13 +89,13 @@ Using the new camera-aware simulator for reliable test data generation
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(1.3f0)
         n_rois = 200
-        
-        # Low photon count
+
+        Random.seed!(43)
         true_params = Float32[
-            6.0 .+ 0.3f0 * randn(Float32, n_rois)';  # x (less variation)
-            6.0 .+ 0.3f0 * randn(Float32, n_rois)';  # y
-            200.0 .+ 50.0f0 * randn(Float32, n_rois)';  # low photons
-            20.0 .+ 5.0f0 * randn(Float32, n_rois)'  # higher background
+            6.0 .+ 0.3f0 * randn(Float32, n_rois)';
+            6.0 .+ 0.3f0 * randn(Float32, n_rois)';
+            200.0 .+ 50.0f0 * randn(Float32, n_rois)';
+            20.0 .+ 5.0f0 * randn(Float32, n_rois)'
         ]
         
         batch = GaussMLE.generate_roi_batch(camera, psf; 
@@ -174,8 +173,8 @@ Using the new camera-aware simulator for reliable test data generation
         scmos = GaussMLE.SCMOSCamera(256, 256, 0.1f0, variance_map)
         psf = GaussMLE.GaussianXYNB(1.3f0)
         n_rois = 300
-        
-        # Standard parameters
+
+        Random.seed!(45)
         true_params = Float32[
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
@@ -205,15 +204,15 @@ Using the new camera-aware simulator for reliable test data generation
     @testset "Different PSF Models" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         n_rois = 200
-        
-        # Test GaussianXYNBS (5 parameters)
+
+        Random.seed!(46)
         psf_nbs = GaussMLE.GaussianXYNBS()
         true_params_nbs = Float32[
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
             1000.0 .+ 200.0f0 * randn(Float32, n_rois)';
             10.0 .+ 2.0f0 * randn(Float32, n_rois)';
-            1.3f0 .+ 0.2f0 * randn(Float32, n_rois)'  # sigma
+            1.3f0 .+ 0.2f0 * randn(Float32, n_rois)'
         ]
         
         batch_nbs = GaussMLE.generate_roi_batch(camera, psf_nbs; 
@@ -225,24 +224,21 @@ Using the new camera-aware simulator for reliable test data generation
         results_nbs = GaussMLE.fit(fitter_nbs, batch_nbs)
         
         # Validate sigma parameter (more challenging than position/photons)
-        sigma_val = validate_fits(results_nbs, true_params_nbs, param_idx=5, 
+        sigma_val = validate_fits(results_nbs, true_params_nbs, param_idx=5,
                                   bias_tol=0.15f0, std_ratio_tol=0.60f0)
-        
+
         @test sigma_val.bias_pass
-        # Note: Sigma parameter uncertainty estimation can be challenging
-        # The test passes individually but occasionally fails in the full suite
-        # This is acceptable given the inherent difficulty of PSF width estimation
-        @test_skip sigma_val.std_pass  # Skip this specific test for stability
-        
-        # Test GaussianXYNBSXSY (6 parameters)
+        @test sigma_val.std_pass  # Known issue: can be flaky due to sigma parameter estimation difficulty
+
+        Random.seed!(47)
         psf_sxsy = GaussMLE.GaussianXYNBSXSY()
         true_params_sxsy = Float32[
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
             6.0 .+ 0.5f0 * randn(Float32, n_rois)';
             1000.0 .+ 200.0f0 * randn(Float32, n_rois)';
             10.0 .+ 2.0f0 * randn(Float32, n_rois)';
-            1.3f0 .+ 0.15f0 * randn(Float32, n_rois)';  # sigma_x
-            1.3f0 .+ 0.15f0 * randn(Float32, n_rois)'   # sigma_y
+            1.3f0 .+ 0.15f0 * randn(Float32, n_rois)';
+            1.3f0 .+ 0.15f0 * randn(Float32, n_rois)'
         ]
         
         batch_sxsy = GaussMLE.generate_roi_batch(camera, psf_sxsy; 

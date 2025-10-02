@@ -2,12 +2,22 @@
 
 This directory contains all tests for the package. Follow these conventions when writing or modifying tests.
 
+## Testing Philosophy
+
+**Core Principle**: Tests that fail indicate problems - never hide them.
+
+- **No test gating**: All tests run on every test invocation. Don't hide failures behind environment variables.
+- **No @test_skip**: If a test fails, that's important information. Either fix the code, fix the test, or understand why.
+- **Failing tests are valuable**: They immediately alert you to regressions, edge cases, or incorrect assumptions.
+- **CI/CD integrity**: Test suite pass/fail must reflect actual code quality, not what we chose to check.
+
 ## Test Structure
 
 ### runtests.jl Organization
 - **Only contains**: `using` statements and the overall test structure
 - **No test logic**: All actual tests are included from other files
 - **All imports here**: Any packages needed for testing must be imported at the top of runtests.jl
+- **All tests run**: No conditional inclusion except for hardware capabilities (e.g., GPU detection)
 
 ### Test File Organization
 1. **User-facing API tests** (e.g., `test_api.jl`)
@@ -25,6 +35,7 @@ This directory contains all tests for the package. Follow these conventions when
 - **Aim for simplicity** - Good coverage without bloating tests
 - **Avoid pedantic edge cases** - Focus on meaningful tests that aid development
 - **Maintainability first** - Tests should be easy to update as code evolves
+- **Never skip tests** - If a test fails, investigate and fix, don't hide it
 
 ## Running Tests
 
@@ -57,7 +68,11 @@ include("test/test_specific.jl")  # Only works if no using statements needed
 - Keep tests focused and independent
 
 ## GPU Testing
-To run GPU tests, set the environment variable:
-```bash
-GAUSSMLE_TEST_GPU=true julia --project test/gpu_tests.jl
+
+GPU tests run automatically when a CUDA GPU is detected. No configuration needed.
+
+If GPU tests don't run when expected:
+```julia
+using CUDA
+CUDA.functional()  # Should return true
 ```
