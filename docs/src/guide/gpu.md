@@ -110,8 +110,8 @@ For developers working on GPU features:
 # Set up development environment
 julia --project=dev
 
-# Enable GPU testing
-GAUSSMLE_TEST_GPU=true julia --project test/gpu_tests.jl
+# Run tests (GPU auto-detected)
+julia --project -e 'using Pkg; Pkg.test()'
 ```
 
 ### Contributing to GPU Development

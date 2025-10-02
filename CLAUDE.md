@@ -10,12 +10,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Testing
 ```bash
-# Run all tests
-julia --project test/runtests.jl
-
-# Using Pkg (from Julia REPL)
+# Run all tests (GPU auto-detected)
 julia --project -e 'using Pkg; Pkg.test()'
 ```
+
+GPU tests run automatically when a CUDA GPU is detected.
 
 ### Documentation
 ```bash
@@ -34,12 +33,30 @@ julia --project=dev
 # Run example fitting scripts
 julia --project=dev dev/basicfit.jl
 julia --project=dev dev/sigmafit.jl
-
-# Run GPU tests
-GAUSSMLE_TEST_GPU=true julia --project test/gpu_tests.jl
 ```
 
 ## Architecture
 
-[Rest of the existing content remains unchanged]
-- smite ref code here: https://github.com/LidkeLab/smite/tree/main/MATLAB/source/cuda
+### Core Implementation
+
+The package uses a unified kernel approach via KernelAbstractions.jl:
+- Single implementation works on both CPU and GPU
+- StaticArrays for stack allocation and performance
+- Custom GPU-compatible linear algebra (LU decomposition)
+- Scalar Newton-Raphson with diagonal Hessian for optimization
+- Full Fisher Information Matrix for CRLB uncertainty estimation
+
+### Source Structure
+
+- `src/unified_kernel.jl` - Main fitting kernel (CPU/GPU)
+- `src/api.jl` - High-level user API
+- `src/psf_models.jl` - PSF model definitions
+- `src/camera_models.jl` - Camera noise models
+- `src/devices.jl` - Device abstraction (CPU/GPU)
+- `src/results.jl` - Result types and conversions
+- `src/roi_batch.jl` - ROI batch data structures
+- `src/simulator.jl` - Data generation for testing
+
+### Reference Implementation
+
+Original MATLAB/CUDA implementation: https://github.com/LidkeLab/smite/tree/main/MATLAB/source/cuda

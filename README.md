@@ -5,6 +5,8 @@
 [![Build Status](https://github.com/JuliaSMLM/GaussMLE.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/JuliaSMLM/GaussMLE.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Coverage](https://codecov.io/gh/JuliaSMLM/GaussMLE.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/JuliaSMLM/GaussMLE.jl)
 
+> **GPU Support:** Automatic GPU acceleration with CPU fallback. GPU tests run automatically when a CUDA GPU is detected.
+
 ## Overview
 
 **GaussMLE.jl** is a Julia package for performing Maximum Likelihood Estimation (MLE) of Gaussian blob parameters in 2D images under a Poisson noise model. 
@@ -21,11 +23,29 @@ The package provides a modern, flexible API through the `GaussMLEFitter` type, w
 
 ## Installation
 
-To install GaussMLE.jl, start Julia and run:
+GaussMLE.jl depends on SMLMData.jl, which is not yet registered in the Julia General registry. You need to install SMLMData.jl first:
 
 ```julia
 using Pkg
+
+# Install SMLMData.jl from GitHub
+Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
+
+# Then install GaussMLE.jl
 Pkg.add("GaussMLE")
+```
+
+**Note:** Once GaussMLE.jl is registered in the Julia General registry, you can install with:
+```julia
+using Pkg
+Pkg.add("GaussMLE")
+```
+
+For development or to use the latest features:
+```julia
+using Pkg
+Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
+Pkg.add(url="https://github.com/JuliaSMLM/GaussMLE.jl")
 ```
 
 ## Basic Usage
