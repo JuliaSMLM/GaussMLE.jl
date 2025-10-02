@@ -30,15 +30,15 @@ using .GaussLib: integral_gaussian_1d, derivative_integral_gaussian_1d,
         one(Float32)          # ∂/∂bg
     ]
     
-    # Second derivatives (diagonal only for scalar Newton-Raphson)
-    d2udt2 = @SMatrix [
-        d2udt2_x            0               0             0;
-        0                   d2udt2_y        0             0;
-        0                   0               zero(Float32) 0;
-        0                   0               0             zero(Float32)
+    # Second derivatives - diagonal only (for scalar Newton-Raphson)
+    d2udt2_diag = @SVector [
+        d2udt2_x,
+        d2udt2_y,
+        zero(Float32),  # ∂²/∂N²
+        zero(Float32)   # ∂²/∂bg²
     ]
     
-    return model, dudt, d2udt2
+    return model, dudt, d2udt2_diag
 end
 
 # Variable sigma model derivatives
@@ -65,16 +65,16 @@ end
         dudt_s
     ]
     
-    # Diagonal second derivatives only
-    d2udt2 = @SMatrix [
-        d2udt2_x  0         0  0  0;
-        0         d2udt2_y  0  0  0;
-        0         0         0  0  0;
-        0         0         0  0  0;
-        0         0         0  0  d2udt2_s
+    # Second derivatives - diagonal only
+    d2udt2_diag = @SVector [
+        d2udt2_x,
+        d2udt2_y,
+        zero(Float32),  # ∂²/∂N²
+        zero(Float32),  # ∂²/∂bg²
+        d2udt2_s
     ]
     
-    return model, dudt, d2udt2
+    return model, dudt, d2udt2_diag
 end
 
 # Anisotropic model derivatives
@@ -103,17 +103,17 @@ end
         dudt_sy
     ]
     
-    # Diagonal second derivatives only
-    d2udt2 = @SMatrix [
-        d2udt2_x  0         0  0  0         0;
-        0         d2udt2_y  0  0  0         0;
-        0         0         0  0  0         0;
-        0         0         0  0  0         0;
-        0         0         0  0  d2udt2_sx 0;
-        0         0         0  0  0         d2udt2_sy
+    # Second derivatives - diagonal only
+    d2udt2_diag = @SVector [
+        d2udt2_x,
+        d2udt2_y,
+        zero(Float32),  # ∂²/∂N²
+        zero(Float32),  # ∂²/∂bg²
+        d2udt2_sx,
+        d2udt2_sy
     ]
     
-    return model, dudt, d2udt2
+    return model, dudt, d2udt2_diag
 end
 
 # Astigmatic model derivatives
@@ -145,16 +145,16 @@ end
         one(Float32)          # ∂/∂bg
     ]
     
-    # Diagonal second derivatives only
-    d2udt2 = @SMatrix [
-        d2udt2_arr[1]  0               0               0  0;
-        0              d2udt2_arr[2]   0               0  0;
-        0              0               d2udt2_arr[3]   0  0;  # z is now position 3!
-        0              0               0               0  0;
-        0              0               0               0  0
+    # Second derivatives - diagonal only
+    d2udt2_diag = @SVector [
+        d2udt2_arr[1],        # ∂²/∂x²
+        d2udt2_arr[2],        # ∂²/∂y²
+        d2udt2_arr[3],        # ∂²/∂z²
+        zero(Float32),        # ∂²/∂N²
+        zero(Float32)         # ∂²/∂bg²
     ]
     
-    return model, dudt, d2udt2
+    return model, dudt, d2udt2_diag
 end
 
 export compute_pixel_derivatives

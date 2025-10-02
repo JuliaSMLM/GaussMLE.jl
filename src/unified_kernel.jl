@@ -180,20 +180,19 @@ end
     # Stack-allocated working arrays (known size at compile time)
     θ = simple_initialize(roi, box_size, Val(N), T)
     ∇L = MVector{N,T}(undef)
-    H = MMatrix{N,N,T}(undef)
-    H_inv = MMatrix{N,N,T}(undef)
+    H_diag = MVector{N,T}(undef)  # Only diagonal elements for Newton-Raphson
     
-    # Newton-Raphson iterations
+    # Newton-Raphson iterations with scalar updates
     for iter in 1:iterations
-        # Zero out gradient and Hessian
+        # Zero out gradient and diagonal Hessian
         zero_array!(∇L)
-        zero_array!(H)
+        zero_array!(H_diag)
         
         # Compute derivatives over all pixels
         @inbounds for j in 1:box_size, i in 1:box_size
             # Model and derivatives at this pixel
             θ_static = SVector{N,T}(θ)
-            model, dudt, d2udt2 = compute_pixel_derivatives(i, j, θ_static, psf_model)
+            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ_static, psf_model)
             
             # Likelihood terms based on camera model
             data_ij = roi[i, j]
@@ -203,45 +202,35 @@ end
                 compute_likelihood_terms(data_ij, model, camera_model, i, j)
             end
             
-            # Accumulate gradient and Hessian
+            # Accumulate gradient and diagonal Hessian
             for k in 1:N
                 ∇L[k] += dudt[k] * cf
-                for l in k:N
-                    H_kl = d2udt2[k,l] * cf - dudt[k] * dudt[l] * df
-                    H[k,l] += H_kl
-                    if k != l
-                        H[l,k] += H_kl  # Symmetric
-                    end
-                end
+                H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
             end
         end
         
-        # Newton-Raphson update with constraints
-        det_H = static_det(H)
-        if abs(det_H) > T(1e-10)
-            # Compute inverse using our GPU-compatible LU
-            if static_matrix_inverse!(H_inv, H)
-                # Compute update: Δθ = H_inv * ∇L
-                Δθ = MVector{N,T}(undef)
-                @inbounds for i = 1:N
-                    Δθ[i] = zero(T)
-                    for j = 1:N
-                        Δθ[i] += H_inv[i,j] * ∇L[j]
-                    end
-                end
-                
-                # Apply constraints
-                θ_new = apply_constraints!(SVector{N,T}(θ), SVector{N,T}(Δθ), constraints)
-                @inbounds for i = 1:N
-                    θ[i] = θ_new[i]
-                end
+        # Scalar Newton-Raphson updates with constraints
+        Δθ = MVector{N,T}(undef)
+        @inbounds for k in 1:N
+            if abs(H_diag[k]) > T(1e-10)
+                Δθ[k] = ∇L[k] / H_diag[k]
+            else
+                Δθ[k] = zero(T)
             end
+        end
+        
+        # Apply constraints
+        θ_new = apply_constraints!(SVector{N,T}(θ), SVector{N,T}(Δθ), constraints)
+        @inbounds for i = 1:N
+            θ[i] = θ_new[i]
         end
     end
     
-    # Compute final log-likelihood and CRLB
+    # Compute final log-likelihood and full Fisher Information Matrix for CRLB
     log_likelihood = zero(T)
-    zero_array!(H)  # Reuse for Fisher Information matrix
+    H = MMatrix{N,N,T}(undef)  # Full Fisher Information matrix
+    H_inv = MMatrix{N,N,T}(undef)  # For inverse
+    zero_array!(H)
     
     @inbounds for j in 1:box_size, i in 1:box_size
         θ_static = SVector{N,T}(θ)
@@ -255,13 +244,13 @@ end
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
         end
         
-        # Fisher Information Matrix (for CRLB)
+        # Fisher Information Matrix (for CRLB) - need full matrix here
         if model > zero(T)
             for k in 1:N, l in k:N
                 F_kl = dudt[k] * dudt[l] / model
                 H[k,l] += F_kl
                 if k != l
-                    H[l,k] += F_kl
+                    H[l,k] += F_kl  # Symmetric
                 end
             end
         end
