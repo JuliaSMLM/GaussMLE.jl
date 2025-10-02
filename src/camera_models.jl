@@ -2,10 +2,31 @@
 Camera noise models for different detector types
 """
 
-# Camera noise models
+"""
+    CameraModel
+
+Abstract type for camera noise models used in likelihood calculations.
+"""
 abstract type CameraModel end
 
-# Ideal camera with only Poisson noise
+"""
+    IdealCamera <: CameraModel
+
+Ideal camera model with Poisson noise only.
+
+Assumes photon counting statistics with no additional readout noise. Suitable for:
+- EMCCD cameras in photon-counting mode
+- Ideal simulations
+- Quick fitting when readout noise is negligible
+
+# Example
+```julia
+fitter = GaussMLEFitter(camera_model = IdealCamera())
+```
+
+# See also
+[`SCMOSCamera`](@ref) for cameras with per-pixel readout noise
+"""
 struct IdealCamera <: CameraModel end
 
 # sCMOS camera with Poisson noise + pixel-dependent readout noise

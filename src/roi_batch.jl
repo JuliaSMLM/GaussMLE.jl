@@ -153,6 +153,44 @@ function create_localization_result(
     )
 end
 
+# Iterator interface for LocalizationResult - enables `for fit in result`
+function Base.iterate(r::LocalizationResult, state=1)
+    if state > r.n_fits
+        return nothing
+    end
+    fit = (
+        parameters = r.parameters[:, state],
+        uncertainties = r.uncertainties[:, state],
+        log_likelihood = r.log_likelihoods[state],
+        x_camera = r.x_camera[state],
+        y_camera = r.y_camera[state],
+        frame_index = r.frame_indices[state],
+        roi_corner = r.roi_corners[:, state],
+        index = state
+    )
+    return (fit, state + 1)
+end
+
+# Length and indexing support
+Base.length(r::LocalizationResult) = r.n_fits
+Base.size(r::LocalizationResult) = (r.n_fits,)
+
+function Base.getindex(r::LocalizationResult, i::Int)
+    if i < 1 || i > r.n_fits
+        throw(BoundsError(r, i))
+    end
+    return (
+        parameters = r.parameters[:, i],
+        uncertainties = r.uncertainties[:, i],
+        log_likelihood = r.log_likelihoods[i],
+        x_camera = r.x_camera[i],
+        y_camera = r.y_camera[i],
+        frame_index = r.frame_indices[i],
+        roi_corner = r.roi_corners[:, i],
+        index = i
+    )
+end
+
 # Conversion to SMLMData Emitter2DFit (coordinates in microns)
 function to_emitter2dfit(
     result::LocalizationResult,

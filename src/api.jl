@@ -6,8 +6,52 @@ using KernelAbstractions
 using CUDA
 using SMLMData
 
-# Main fitter type
-# Note: C can be either CameraModel or SCMOSCamera from SMLMData
+# Input validation helpers
+function validate_fit_input(data::AbstractArray{T,3}) where T
+    # Check for empty data
+    if isempty(data)
+        throw(ArgumentError("Input data array is empty"))
+    end
+
+    # Check for square ROIs
+    if size(data, 1) != size(data, 2)
+        throw(ArgumentError("ROIs must be square, got size $(size(data, 1))×$(size(data, 2))"))
+    end
+
+    # Check for minimum ROI size
+    if size(data, 1) < 3
+        throw(ArgumentError("ROI size must be at least 3×3, got $(size(data, 1))×$(size(data, 1))"))
+    end
+
+    # Check for NaN or Inf values
+    if any(!isfinite, data)
+        throw(ArgumentError("Input data contains NaN or Inf values"))
+    end
+
+    # Check for negative values
+    if any(<(0), data)
+        @warn "Input data contains negative values, which may indicate preprocessing issues"
+    end
+
+    return true
+end
+
+"""
+    GaussMLEFitter{D,P,C,PC}
+
+Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob parameters.
+
+# Fields
+- `device::D<:ComputeDevice`: Compute device (CPU or GPU)
+- `psf_model::P<:PSFModel`: Point spread function model
+- `camera_model::C`: Camera noise model (IdealCamera or SCMOSCamera)
+- `iterations::Int`: Number of Newton-Raphson iterations
+- `constraints::PC<:ParameterConstraints`: Parameter bounds and step limits
+- `batch_size::Int`: Batch size for GPU processing
+
+# See also
+[`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
+"""
 struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C, PC<:ParameterConstraints}
     device::D
     psf_model::P
@@ -17,7 +61,38 @@ struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C, PC<:ParameterConstraints
     batch_size::Int
 end
 
-# Convenient constructor with smart defaults
+"""
+    GaussMLEFitter(; kwargs...)
+
+Create a fitter for Gaussian MLE with sensible defaults.
+
+# Keyword Arguments
+- `psf_model = GaussianXYNB(1.3f0)`: PSF model to use
+- `camera_model = IdealCamera()`: Camera noise model
+- `device = nothing`: Compute device (`:cpu`, `:gpu`, `:auto`, or nothing for auto-detect)
+- `iterations = 20`: Number of Newton-Raphson iterations
+- `constraints = nothing`: Parameter constraints (uses defaults if nothing)
+- `batch_size = 10_000`: Number of ROIs to process per GPU batch
+
+# Examples
+```julia
+# Simple usage with auto GPU detection
+fitter = GaussMLEFitter()
+
+# Force CPU execution
+cpu_fitter = GaussMLEFitter(device = :cpu)
+
+# Variable sigma model with sCMOS camera
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNBS(),
+    camera_model = SCMOSCamera(variance_map),
+    iterations = 30
+)
+```
+
+# See also
+[`fit`](@ref), [`GaussianXYNB`](@ref), [`GaussianXYNBS`](@ref), [`IdealCamera`](@ref)
+"""
 function GaussMLEFitter(;
     psf_model = GaussianXYNB(1.3f0),
     camera_model = IdealCamera(),
@@ -52,10 +127,42 @@ function GaussMLEFitter(;
                           iterations, constraints, batch_size)
 end
 
-# Main fitting function
-function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3}; 
+"""
+    fit(fitter::GaussMLEFitter, data::AbstractArray{T,3}; variance_map=nothing) -> GaussMLEResults
+
+Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
+
+# Arguments
+- `fitter::GaussMLEFitter`: Configured fitter object
+- `data::AbstractArray{T,3}`: ROI data as (roi_size, roi_size, n_rois) array
+
+# Keyword Arguments
+- `variance_map=nothing`: Optional sCMOS variance map (will override fitter's camera model)
+
+# Returns
+- `GaussMLEResults`: Fitted parameters, uncertainties, and log-likelihoods
+
+# Examples
+```julia
+# Fit 1000 ROIs
+data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(1.3f0))
+results = fit(fitter, data)
+
+# Access results
+println("Mean x position: ", mean(results.x))
+println("Mean localization precision: ", mean(results.x_error))
+```
+
+# See also
+[`GaussMLEFitter`](@ref), [`GaussMLEResults`](@ref)
+"""
+function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
              variance_map=nothing) where T
-    
+
+    # Validate input
+    validate_fit_input(data)
+
     n_fits = size(data, 3)
     n_params = length(fitter.psf_model)
     box_size = size(data, 1)

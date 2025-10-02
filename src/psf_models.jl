@@ -5,27 +5,128 @@ PSF Models with compile-time known parameter counts
 using StaticArrays
 using SpecialFunctions: erf
 
-# PSF Models with compile-time known parameter counts
+"""
+    PSFModel{NParams,T}
+
+Abstract type for point spread function models.
+
+The type parameter `NParams` specifies the number of fitting parameters at compile time,
+enabling type-stable code generation. The type parameter `T` specifies the numeric type.
+"""
 abstract type PSFModel{NParams,T} end
 
-# Fixed sigma Gaussian (x, y, N, background)
+"""
+    GaussianXYNB{T} <: PSFModel{4,T}
+
+2D Gaussian PSF with fixed width σ.
+
+# Parameters (in order)
+1. x: x-position (pixels)
+2. y: y-position (pixels)
+3. N: total photon count
+4. bg: background per pixel
+
+# Fields
+- `σ::T`: Fixed Gaussian width (standard deviation in pixels)
+
+# Example
+```julia
+psf = GaussianXYNB(1.3f0)  # Fixed σ = 1.3 pixels
+fitter = GaussMLEFitter(psf_model = psf)
+```
+"""
 struct GaussianXYNB{T} <: PSFModel{4,T}
     σ::T
 end
 
-# Variable sigma Gaussian (x, y, N, background, σ)
+"""
+    GaussianXYNBS{T} <: PSFModel{5,T}
+
+2D Gaussian PSF with variable width σ.
+
+# Parameters (in order)
+1. x: x-position (pixels)
+2. y: y-position (pixels)
+3. N: total photon count
+4. bg: background per pixel
+5. σ: Gaussian width (standard deviation in pixels)
+
+# Example
+```julia
+psf = GaussianXYNBS()  # Variable sigma
+fitter = GaussMLEFitter(psf_model = psf)
+```
+"""
 struct GaussianXYNBS{T} <: PSFModel{5,T} end
 
 # Default constructor for GaussianXYNBS
 GaussianXYNBS() = GaussianXYNBS{Float32}()
 
-# Anisotropic Gaussian (x, y, N, background, σx, σy)
+"""
+    GaussianXYNBSXSY{T} <: PSFModel{6,T}
+
+2D Anisotropic Gaussian PSF with independent x and y widths.
+
+# Parameters (in order)
+1. x: x-position (pixels)
+2. y: y-position (pixels)
+3. N: total photon count
+4. bg: background per pixel
+5. σx: Gaussian width in x (standard deviation in pixels)
+6. σy: Gaussian width in y (standard deviation in pixels)
+
+# Example
+```julia
+psf = GaussianXYNBSXSY()
+fitter = GaussMLEFitter(psf_model = psf)
+```
+"""
 struct GaussianXYNBSXSY{T} <: PSFModel{6,T} end
 
 # Default constructor for GaussianXYNBSXSY
 GaussianXYNBSXSY() = GaussianXYNBSXSY{Float32}()
 
-# Astigmatic 3D PSF (x, y, z, N, background)
+"""
+    AstigmaticXYZNB{T} <: PSFModel{5,T}
+
+3D astigmatic PSF for z-position estimation using engineered astigmatism.
+
+The PSF width varies with z-position according to:
+```
+σx(z) = σx₀ * sqrt(1 + ((z-γ)/d)² + Ax*((z-γ)/d)³ + Bx*((z-γ)/d)⁴)
+σy(z) = σy₀ * sqrt(1 + ((z+γ)/d)² + Ay*((z+γ)/d)³ + By*((z+γ)/d)⁴)
+```
+
+# Parameters (in order)
+1. x: x-position (pixels)
+2. y: y-position (pixels)
+3. z: z-position (nm)
+4. N: total photon count
+5. bg: background per pixel
+
+# Fields
+- `σx₀, σy₀::T`: Nominal widths at z=0
+- `Ax, Ay::T`: Cubic coefficients
+- `Bx, By::T`: Quartic coefficients
+- `γ::T`: Astigmatism offset (nm)
+- `d::T`: Depth of focus (nm)
+
+# Example
+```julia
+# Typical parameters from calibration
+psf = AstigmaticXYZNB{Float32}(
+    1.3f0, 1.3f0,    # σx₀, σy₀
+    0.05f0, 0.05f0,  # Ax, Ay
+    0.3f0, 0.3f0,    # Bx, By
+    50.0f0,          # γ
+    100.0f0          # d
+)
+fitter = GaussMLEFitter(psf_model = psf)
+```
+
+# See also
+The astigmatic PSF model is described in Huang et al., Science 319, 810-813 (2008).
+"""
 struct AstigmaticXYZNB{T} <: PSFModel{5,T}
     σx₀::T
     σy₀::T
@@ -35,7 +136,7 @@ struct AstigmaticXYZNB{T} <: PSFModel{5,T}
     By::T
     γ::T
     d::T
-    
+
     function AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d) where T
         new{T}(T(σx₀), T(σy₀), T(Ax), T(Ay), T(Bx), T(By), T(γ), T(d))
     end
