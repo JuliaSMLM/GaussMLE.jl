@@ -62,37 +62,18 @@ end
     return true
 end
 
-# GPU-compatible LU decomposition with partial pivoting for small static matrices
+# GPU-compatible LU decomposition for small static matrices (no pivoting)
+# This matches SMITE's approach with a relative tolerance
 @inline function static_lu_decomposition!(A::MMatrix{N,N,T}) where {N,T}
-    # LU decomposition with partial pivoting for numerical stability
-    # This is critical for poorly-conditioned Fisher Information matrices
-    tol = T(1e-10) * maximum(abs, A)  # Relative tolerance based on matrix scale
+    # Use relative tolerance based on matrix scale (like SMITE)
+    tol = T(1e-10) * maximum(abs, A)
 
     @inbounds for k = 1:N
-        # Find pivot (largest element in column k, rows k:N)
-        pivot_val = abs(A[k, k])
-        pivot_row = k
-        for i = k+1:N
-            val = abs(A[i, k])
-            if val > pivot_val
-                pivot_val = val
-                pivot_row = i
-            end
-        end
-
-        # Check if pivot is too small (singular matrix)
-        if pivot_val < tol
+        # Check for near-zero pivot
+        if abs(A[k, k]) < tol
             return false
         end
 
-        # Swap rows if needed
-        if pivot_row != k
-            for j = 1:N
-                A[k, j], A[pivot_row, j] = A[pivot_row, j], A[k, j]
-            end
-        end
-
-        # Gaussian elimination
         for i = k+1:N
             A[i, k] /= A[k, k]
             for j = k+1:N
