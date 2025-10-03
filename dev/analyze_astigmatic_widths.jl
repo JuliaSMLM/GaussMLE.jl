@@ -15,13 +15,13 @@ println("="^70)
 println("Astigmatic PSF Width Analysis")
 println("="^70)
 
-# NEW calibration parameters (realistic, with aberrations)
+# Current calibration parameters (realistic, with aberrations)
 σx₀ = 1.3f0  # pixels
 σy₀ = 1.3f0  # pixels
-Ax = 0.5f0   # cubic term x
-Ay = -0.5f0  # cubic term y (opposite sign!)
-Bx = 0.1f0   # quartic term x
-By = -0.1f0  # quartic term y (opposite sign!)
+Ax = 0.3f0   # cubic term x
+Ay = -0.3f0  # cubic term y (opposite sign!)
+Bx = 0.05f0  # quartic term x
+By = -0.05f0 # quartic term y (opposite sign!)
 γ = 0.0f0    # focal plane offset (nm)
 d = 500.0f0  # depth scale (nm)
 
