@@ -7,7 +7,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     
     # Test configuration
     n_test_blobs = 1000  # Use 1000 blobs for reasonable statistics
-    box_size = 11  # Keep larger box for all tests (especially important for astigmatic)
+    box_size = 15  # Larger box for better Fisher Information (especially important for astigmatic)
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
     @testset "Fixed Sigma Model (xynb)" begin
