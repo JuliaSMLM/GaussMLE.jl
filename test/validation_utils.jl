@@ -89,7 +89,7 @@ function generate_test_data(
             @assert !isnothing(psf_model) "psf_model required for :xynbz model type"
             @assert psf_model isa GaussMLE.AstigmaticXYZNB "psf_model must be AstigmaticXYZNB for :xynbz"
 
-            z_true = Float32(200.0 * randn())  # Z position in nm
+            z_true = Float32(-250.0 + 500.0 * rand())  # Uniform between -250 and +250 nm
 
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)

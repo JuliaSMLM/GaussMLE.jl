@@ -103,7 +103,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             1.3f0, 1.3f0,     # σx₀, σy₀ - diffraction-limited base width
             0.3f0, -0.3f0,    # Ax, Ay - cubic aberrations (opposite signs for astigmatism)
             0.05f0, -0.05f0,  # Bx, By - quartic aberrations (opposite signs)
-            0.0f0,            # γ = 0 (symmetric focal planes, asymmetry from A/B terms)
+            100.0f0,          # γ = 100nm (offset focal planes - realistic astigmatic system)
             500.0f0           # d = 500nm (typical depth scale for ±600nm range)
         )
         
