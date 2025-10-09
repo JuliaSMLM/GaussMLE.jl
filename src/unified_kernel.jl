@@ -210,10 +210,52 @@ end
     return MVector{6,T}(x, y, photons, bg, T(1.3), T(1.3))
 end
 
-@inline function simple_initialize(roi, box_size::Int, ::AstigmaticXYZNB{T}) where T
+@inline function simple_initialize(roi, box_size::Int, psf::AstigmaticXYZNB{T}) where T
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    # Astigmatic model: [x, y, z, photons, bg]
-    return MVector{5,T}(x, y, T(0), photons, bg)  # z=0 initial guess
+
+    # Estimate z from PSF width asymmetry
+    # Compute second moments to estimate sigma_x and sigma_y
+    total_signal = zero(T)
+    Mxx = zero(T)
+    Myy = zero(T)
+
+    @inbounds for j in 1:box_size, i in 1:box_size
+        signal = max(zero(T), roi[i,j] - bg)
+        total_signal += signal
+        dx = T(i) - x
+        dy = T(j) - y
+        Mxx += signal * dx * dx
+        Myy += signal * dy * dy
+    end
+
+    if total_signal > T(10)
+        sigma_x_est = sqrt(max(T(0.5), Mxx / total_signal))
+        sigma_y_est = sqrt(max(T(0.5), Myy / total_signal))
+
+        # Estimate z from width asymmetry
+        # For astigmatic PSF: σ(z) = σ₀ * sqrt(α(z))
+        # α(z±γ) = 1 + ((z±γ)/d)² + A((z±γ)/d)³ + B((z±γ)/d)⁴
+        # Simplified: use ratio of widths to estimate z
+
+        ratio = sigma_x_est / sigma_y_est
+
+        # Rough estimate: z ≈ d * (ratio² - 1) / (2 + sign difference from γ)
+        # This is a crude approximation, but gets us in the right neighborhood
+        if ratio > T(1.05)  # σx > σy suggests z > 0
+            z_init = psf.d * (ratio - T(1))
+        elseif ratio < T(0.95)  # σx < σy suggests z < 0
+            z_init = -psf.d * (T(1) / ratio - T(1))
+        else
+            z_init = T(0)
+        end
+
+        # Clamp to reasonable range
+        z_init = clamp(z_init, T(-300), T(300))
+    else
+        z_init = T(0)
+    end
+
+    return MVector{5,T}(x, y, z_init, photons, bg)
 end
 
 # Zero out a static array (more efficient than fill!)

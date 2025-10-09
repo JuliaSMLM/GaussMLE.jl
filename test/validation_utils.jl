@@ -233,7 +233,7 @@ function run_model_validation(
     tolerances = Dict(
         :x => (bias_tol=0.05f0, std_tol=0.1f0),  # 10% tolerance for std/CRLB ratio
         :y => (bias_tol=0.05f0, std_tol=0.1f0),
-        :z => (bias_tol=30.0f0, std_tol=5.0f0),  # Z still has issues with Fisher calculation
+        :z => (bias_tol=30.0f0, std_tol=0.1f0),  # 10% tolerance for std/CRLB ratio
         :photons => (bias_tol=100.0f0, std_tol=0.1f0),  # 10% tolerance
         :background => (bias_tol=2.0f0, std_tol=0.1f0),  # 10% tolerance
         :sigma => (bias_tol=0.05f0, std_tol=0.1f0),
