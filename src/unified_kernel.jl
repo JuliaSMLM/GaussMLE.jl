@@ -305,18 +305,33 @@ end
         θ_static = SVector{N,T}(θ)
         model, dudt, _ = compute_pixel_derivatives(i, j, θ_static, psf_model)
         data_ij = roi[i, j]
-        
+
         # Log-likelihood contribution
         if camera_model isa IdealCamera
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model)
         else
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
         end
-        
+
         # Fisher Information Matrix (for CRLB) - need full matrix here
+        # For IdealCamera: variance = model (Poisson only)
+        # For sCMOS: variance = model + readout_variance
         if model > zero(T)
+            # Compute variance based on camera model
+            variance = if camera_model isa IdealCamera
+                model
+            else
+                # sCMOS camera - use total variance
+                if isdefined(camera_model, :variance_map)
+                    model + camera_model.variance_map[i, j]
+                else
+                    # SMLMData.SCMOSCamera
+                    model + camera_model.readnoise_variance[i, j]
+                end
+            end
+
             for k in 1:N, l in k:N
-                F_kl = dudt[k] * dudt[l] / model
+                F_kl = dudt[k] * dudt[l] / variance
                 H[k,l] += F_kl
                 if k != l
                     H[l,k] += F_kl  # Symmetric

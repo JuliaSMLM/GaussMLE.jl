@@ -216,8 +216,9 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         end
         
         @testset "High photons (N=5000) - Ideal" begin
+            # Use more samples for better statistics at high SNR
             passed, results = run_model_validation(
-                :xynb, psf_model, 200;
+                :xynb, psf_model, 500;  # Increased from 200 for better statistics
                 box_size = box_size,
                 device = GaussMLE.CPU(),
                 n_photons = 5000.0f0,
@@ -225,7 +226,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             # Higher photons = better precision
             @test results[:x].empirical_std < 0.03f0  # Should have excellent precision
