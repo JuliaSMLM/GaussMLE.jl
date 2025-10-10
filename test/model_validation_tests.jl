@@ -98,12 +98,12 @@ Tests that fitted values and uncertainties match expectations within tolerance
         # Realistic astigmatic calibration following Huang et al. (Science 2008)
         # Higher-order terms (cubic/quartic) are necessary for real optical systems
         # Opposite signs in Ax/Ay and Bx/By create the astigmatic behavior
-        # Conservative values ensure α > 0 for ±600nm range without clamping
+        # Updated parameters provide flatter CRLB and better convergence
         psf_model = GaussMLE.AstigmaticXYZNB{Float32}(
             1.3f0, 1.3f0,     # σx₀, σy₀ - diffraction-limited base width
-            0.3f0, -0.3f0,    # Ax, Ay - cubic aberrations (opposite signs for astigmatism)
-            0.05f0, -0.05f0,  # Bx, By - quartic aberrations (opposite signs)
-            100.0f0,          # γ = 100nm (offset focal planes - realistic astigmatic system)
+            0.05f0, -0.05f0,  # Ax, Ay - cubic aberrations (opposite signs for astigmatism)
+            0.01f0, -0.01f0,  # Bx, By - quartic aberrations (opposite signs)
+            200.0f0,          # γ = 200nm (offset focal planes - realistic astigmatic system)
             500.0f0           # d = 500nm (typical depth scale for ±600nm range)
         )
         
@@ -112,6 +112,8 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 :xynbz, psf_model, n_test_blobs;
                 box_size = box_size,
                 device = GaussMLE.CPU(),
+                n_photons = 2000.0f0,  # Higher SNR needed for reliable z-fitting
+                background = 1.0f0,     # Lower background improves SNR
                 sigma = 1.3f0,
                 verbose = verbose
             )

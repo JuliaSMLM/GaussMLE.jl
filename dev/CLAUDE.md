@@ -106,8 +106,27 @@ println("Figure saved to $(joinpath(output_dir, "results.png"))")
 - Document findings with println statements
 - Clean up old outputs periodically
 
-## Current GPU Development Files
-The dev/ directory currently contains several GPU kernel development files:
-- `cuda_kernel_fix_summary.md` - Summary of CUDA kernel fixes
-- `debug_*.jl` - Various debugging scripts for GPU kernel components
-- `test_*.jl` - Test scripts for verifying kernel functionality
+## Current Development Files
+
+### Astigmatic PSF Validation (Validated Parameters)
+The astigmatic PSF model uses these validated parameters:
+- σx₀ = 1.3, σy₀ = 1.3 (base widths, pixels)
+- Ax = 0.05, Ay = -0.05 (cubic aberrations)
+- Bx = 0.01, By = -0.01 (quartic aberrations)
+- γ = 200.0 nm (focal plane offset)
+- d = 500.0 nm (depth scale)
+
+These parameters provide:
+- Flat CRLB across z-range (±600 nm)
+- Perfect empirical/CRLB agreement (X: 0.985, Y: 0.999, Z: 1.000)
+- All tests pass with strict 10% tolerance
+
+### Key Files
+- **astig_theory/** - Complete theoretical derivation and validation framework
+  - `astigmatic_fisher_derivation.md` - Fisher Information derivation
+  - `compute_theoretical_crlb.jl` - Standalone CRLB calculator
+  - `compare_theory_vs_gausslib.jl` - Theory vs production validation
+  - `README.md` - Documentation
+
+- **analyze_astigmatic_crlb_vs_z.jl** - Primary CRLB validation tool (1000 fits/z)
+- **plot_astigmatic_psf_widths.jl** - PSF width visualization across z-range

@@ -20,15 +20,15 @@ println("="^70)
 println("Astigmatic PSF Width Visualization")
 println("="^70)
 
-# Current calibration parameters (realistic, with aberrations)
-σx₀ = 1.3f0  # pixels
-σy₀ = 1.3f0  # pixels
-Ax = 0.3f0   # cubic term x
-Ay = -0.3f0  # cubic term y (opposite sign!)
-Bx = 0.05f0  # quartic term x
-By = -0.05f0 # quartic term y (opposite sign!)
-γ = 0.0f0    # focal plane offset (nm)
-d = 500.0f0  # depth scale (nm)
+# Current calibration parameters (updated for consistency)
+σx₀ = 1.3f0   # pixels
+σy₀ = 1.3f0   # pixels
+Ax = 0.05f0   # cubic term x
+Ay = -0.05f0  # cubic term y (opposite sign!)
+Bx = 0.01f0   # quartic term x
+By = -0.01f0  # quartic term y (opposite sign!)
+γ = 200.0f0   # focal plane offset (nm)
+d = 500.0f0   # depth scale (nm)
 
 println("\nCalibration Parameters:")
 println("  σx₀ = $σx₀ pixels")
