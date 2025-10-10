@@ -235,22 +235,21 @@ end
         # Estimate z from width asymmetry
         # For astigmatic PSF: σ(z) = σ₀ * sqrt(α(z))
         # α(z±γ) = 1 + ((z±γ)/d)² + A((z±γ)/d)³ + B((z±γ)/d)⁴
-        # Simplified: use ratio of widths to estimate z
+        # αx = (σx/σx₀)², αy = (σy/σy₀)²
+        # Δα = αx - αy ≈ -4zγ/d² → z ≈ -Δα*d²/(4γ)
 
-        ratio = sigma_x_est / sigma_y_est
+        # Compute α values from measured widths
+        αx_est = (sigma_x_est / psf.σx₀)^2
+        αy_est = (sigma_y_est / psf.σy₀)^2
+        Δα = αx_est - αy_est
 
-        # Rough estimate: z ≈ d * (ratio² - 1) / (2 + sign difference from γ)
-        # This is a crude approximation, but gets us in the right neighborhood
-        if ratio > T(1.05)  # σx > σy suggests z > 0
-            z_init = psf.d * (ratio - T(1))
-        elseif ratio < T(0.95)  # σx < σy suggests z < 0
-            z_init = -psf.d * (T(1) / ratio - T(1))
-        else
-            z_init = T(0)
-        end
+        # Estimate z from Δα (negative because of sign convention)
+        # When z < 0: αx > αy → Δα > 0 → z = -Δα*d²/(4γ) < 0 ✓
+        # When z > 0: αx < αy → Δα < 0 → z = -Δα*d²/(4γ) > 0 ✓
+        z_init = -Δα * psf.d^2 / (T(4) * psf.γ)
 
-        # Clamp to reasonable range
-        z_init = clamp(z_init, T(-300), T(300))
+        # Clamp to reasonable range (±600nm for typical astigmatic systems)
+        z_init = clamp(z_init, T(-600), T(600))
     else
         z_init = T(0)
     end
