@@ -5,23 +5,63 @@
 
 ## Public API
 
-### Main Functions
+### Main Types and Functions
 
 ```@docs
-GaussMLE.GaussFit.fitstack
+GaussMLEFitter
+fit
+GaussMLEResults
 ```
 
-### Model Types
+### PSF Models
 
 ```@docs
-GaussMLE.GaussXyNb
-GaussMLE.GaussXyNbS
+PSFModel
+GaussianXYNB
+GaussianXYNBS
+GaussianXYNBSXSY
+AstigmaticXYZNB
+```
+
+### Camera Models
+
+```@docs
+CameraModel
+IdealCamera
+SCMOSCameraInternal
+to_electrons
+get_variance_map
+```
+
+### Data Structures
+
+```@docs
+ROIBatch
+SingleROI
+LocalizationResult
+```
+
+### Constraints
+
+```@docs
+ParameterConstraints
+default_constraints
 ```
 
 ### Simulation
 
 ```@docs
-GaussMLE.GaussSim.genstack
+generate_roi_batch
+```
+
+### Device Management
+
+```@docs
+ComputeDevice
+CPU
+GPU
+auto_device
+select_device
 ```
 
 ## Internal API
