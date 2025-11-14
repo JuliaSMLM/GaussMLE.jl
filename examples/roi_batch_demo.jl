@@ -77,18 +77,25 @@ end
 println("\n3. Creating sCMOS variance map and fitting...")
 
 # Create sCMOS camera with variance map
-variance_map = ones(Float32, camera_size, camera_size) * 10.0f0  # Base readout noise^2
+# Create spatially varying readnoise map using SMLMData 0.4 API
+# Base readnoise: sqrt(10) ≈ 3.16 e⁻ rms, High noise: sqrt(50) ≈ 7.07 e⁻ rms
+readnoise_map = ones(Float32, camera_size, camera_size) * sqrt(10.0f0)
 
 # Add some regions with higher noise
 for j in 200:300, i in 200:300
-    variance_map[i, j] = 50.0f0  # Higher noise region
+    readnoise_map[i, j] = sqrt(50.0f0)  # Higher noise region
 end
 
-scmos_camera = SCMOSCamera(camera_size, camera_size, Float32(pixel_size_um), variance_map)
+scmos_camera = SMLMData.SCMOSCamera(
+    camera_size, camera_size, Float32(pixel_size_um), readnoise_map,
+    offset = 100.0f0,
+    gain = 0.5f0,
+    qe = 0.82f0
+)
 
 println("  sCMOS camera created with spatial variation")
-println("  Base variance: 10 e²")
-println("  High-noise region: 50 e² (200:300, 200:300)")
+println("  Base readnoise: $(sqrt(10.0f0)) e⁻ rms (variance: 10 e⁻²)")
+println("  High-noise region: $(sqrt(50.0f0)) e⁻ rms (variance: 50 e⁻²) at (200:300, 200:300)")
 
 # Generate new data with sCMOS noise
 roi_batch_scmos = generate_roi_batch(

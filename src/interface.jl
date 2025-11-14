@@ -36,6 +36,23 @@ function validate_fit_input(data::AbstractArray{T,3}) where T
     return true
 end
 
+# Camera parameter preparation for kernel dispatch
+function prepare_camera_params(camera::IdealCamera, box_size, ::Type{T}) where T
+    # Return compile-time flag and dummy variance map (will be ignored)
+    return Val(false), ones(T, box_size, box_size)
+end
+
+function prepare_camera_params(camera::SCMOSCameraInternal, box_size, ::Type{T}) where T
+    # Return compile-time flag and variance map from internal camera
+    return Val(true), T.(camera.variance_map)
+end
+
+function prepare_camera_params(camera::SCMOSCamera, box_size, ::Type{T}) where T
+    # Return compile-time flag and variance map from SMLMData camera
+    # Note: SMLMData uses 'readnoise_variance' field name
+    return Val(true), T.(camera.readnoise_variance)
+end
+
 """
     GaussMLEFitter{D,P,C,PC}
 
@@ -166,38 +183,33 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     n_fits = size(data, 3)
     n_params = length(fitter.psf_model)
     box_size = size(data, 1)
-
-    # Handle camera preprocessing
-    data_f32, camera = if !isnothing(variance_map)
-        # Legacy path: variance_map kwarg provided
+    
+    # Update camera model if variance map provided
+    camera = if !isnothing(variance_map) && fitter.camera_model isa IdealCamera
         @info "Variance map provided, switching to sCMOS noise model"
-        data_processed = convert(Array{Float32,3}, data)
-        cam = SCMOSCameraInternal(Float32.(variance_map))
-        (data_processed, cam)
-    elseif fitter.camera_model isa SMLMData.SCMOSCamera
-        # Preprocess SMLMData.SCMOSCamera: convert ADU to electrons
-        data_electrons = to_electrons(data, fitter.camera_model)
-        variance_map = get_variance_map(fitter.camera_model)
-        cam = SCMOSCameraInternal(Float32.(variance_map))
-        (Float32.(data_electrons), cam)
+        SCMOSCamera(variance_map)
     else
-        # IdealCamera or already SCMOSCameraInternal - no preprocessing needed
-        data_processed = convert(Array{Float32,3}, data)
-        (data_processed, fitter.camera_model)
+        fitter.camera_model
     end
+    
+    # Convert data to Float32 if needed
+    data_f32 = convert(Array{Float32,3}, data)
     
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
     
+    # Prepare camera parameters for kernel
+    use_scmos, variance_map = prepare_camera_params(camera, box_size, Float32)
+
     # Use unified kernel for both CPU and GPU
     if fitter.device isa CPU
         # Use unified kernel on CPU
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, fitter.psf_model, camera,
+               data_f32, fitter.psf_model, use_scmos, variance_map,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -214,16 +226,20 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             # Move batch to device using KernelAbstractions adapt
             d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
-            
+
+            # Move variance map to device (same for all batches)
+            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
+            copyto!(d_variance_map, variance_map)
+
             # Allocate device arrays for results
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
             d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
             d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size)
-            
+
             # Launch unified kernel (works on GPU!)
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, fitter.psf_model, camera, 
+                   d_batch_data, fitter.psf_model, use_scmos, d_variance_map,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size)
             
@@ -273,9 +289,9 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     )
 end
 
-# Fit method for ROIBatch with SMLMData.SCMOSCamera
-function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}) where {T,N,A}
-
+# Fit method for ROIBatch with SCMOSCamera
+function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SCMOSCamera}) where {T,N,A}
+    
     # Create a new fitter with the SCMOSCamera from the ROIBatch
     fitter_with_camera = GaussMLEFitter(
         fitter.device,
@@ -285,16 +301,16 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
         fitter.constraints,
         fitter.batch_size
     )
-
-    # Use standard fit with the updated fitter (preprocessing happens inside)
+    
+    # Use standard fit with the updated fitter
     results = fit(fitter_with_camera, roi_batch.data)
-
+    
     # Return LocalizationResult with camera coordinates
     return create_localization_result(
         results.parameters,
         results.uncertainties,
         results.log_likelihoods,
-        roi_batch,
+        roi_batch, 
         fitter.psf_model
     )
 end

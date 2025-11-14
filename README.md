@@ -99,9 +99,17 @@ println("Mean photons: $(mean(results.photons)) ± $(mean(results.photons_error)
 ### Advanced Usage
 
 ```julia
-# Use sCMOS camera with variance map
-variance_map = 2.0f0 * ones(Float32, 7, 7)  # Readout noise variance
-camera = SCMOSCamera(variance_map)
+# Use sCMOS camera from SMLMData with per-pixel calibration
+using SMLMData
+
+# Create sCMOS camera with realistic parameters
+camera = SMLMData.SCMOSCamera(
+    256, 256, 0.1,      # 256×256 pixels, 100nm pixel size
+    5.0f0,              # 5 e⁻ rms readout noise
+    offset = 100.0f0,   # 100 ADU dark level
+    gain = 0.5f0,       # 0.5 e⁻/ADU conversion gain
+    qe = 0.82f0         # 82% quantum efficiency
+)
 
 # Variable sigma model with custom constraints
 psf_model = GaussianXYNBS()  # 5 parameters: x, y, N, bg, σ
@@ -110,6 +118,9 @@ constraints = ParameterConstraints{5}(
     SVector{5,Float32}(7.5, 7.5, 1e5, 100.0, 3.0),    # upper bounds
     SVector{5,Float32}(1.0, 1.0, Inf32, Inf32, 0.5)   # max step
 )
+
+# Generate simulated data or use ROIBatch from SMLMData
+batch = generate_roi_batch(camera, psf_model; n_rois=100, roi_size=11)
 
 # Create fitter with specific configuration
 fitter = GaussMLEFitter(
@@ -121,7 +132,8 @@ fitter = GaussMLEFitter(
     batch_size = 5000  # Process in batches of 5000
 )
 
-results = fit(fitter, data)
+# Fit - preprocessing (ADU→electrons) happens automatically
+results = fit(fitter, batch)
 ```
 
 For more details and advanced usage, check out the [docs](https://JuliaSMLM.github.io/GaussMLE.jl/dev/).

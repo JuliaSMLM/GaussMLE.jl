@@ -30,17 +30,10 @@ fitter = GaussMLEFitter(camera_model = IdealCamera())
 struct IdealCamera <: CameraModel end
 
 # sCMOS camera with Poisson noise + pixel-dependent readout noise
-# Internal type for fitting - renamed to avoid conflict with SMLMData-compatible version
+# Internal type for fitting - lightweight model with preprocessed variance
+# Data should be preprocessed to electrons before fitting
 struct SCMOSCameraInternal{T} <: CameraModel
-    variance_map::T  # Pixel-wise variance (readout noise²)
-    gain_map::T      # Optional pixel-wise gain calibration
-    
-    function SCMOSCameraInternal(variance_map::T, gain_map=nothing) where T
-        if isnothing(gain_map)
-            gain_map = ones(eltype(variance_map), size(variance_map))
-        end
-        new{T}(variance_map, gain_map)
-    end
+    variance_map::T  # Pixel-wise readout noise variance (e⁻²)
 end
 
 # Noise model interface for likelihood calculations
@@ -90,26 +83,30 @@ end
     end
 end
 
-# Support for SMLMData SCMOSCamera (which is not a CameraModel subtype)
-@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCamera, i, j) where T
-    # Total variance = Poisson variance + readout variance
-    total_var = model + camera.readnoise_variance[i, j]
-    cf = (data - model) / total_var
-    df = one(T) / total_var
-    return cf, df
+# Preprocessing helpers for SMLMData.SCMOSCamera
+"""
+    to_electrons(data_adu, camera::SMLMData.SCMOSCamera)
+
+Convert raw ADU data to electrons using camera calibration.
+Applies: electrons = (ADU - offset) × gain
+"""
+function to_electrons(data_adu::AbstractArray, camera)
+    # Broadcasting handles both scalar and per-pixel offset/gain
+    return (data_adu .- camera.offset) .* camera.gain
 end
 
-@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCamera, i, j) where T
-    # Gaussian approximation for sCMOS noise
-    total_var = model + camera.readnoise_variance[i, j]
-    if total_var > zero(T)
-        residual = data - model
-        return -T(0.5) * (log(T(2π) * total_var) + residual^2 / total_var)
-    else
-        return zero(T)
-    end
+"""
+    get_variance_map(camera::SMLMData.SCMOSCamera)
+
+Extract readout noise variance map in electrons² from camera calibration.
+Returns: readnoise² (in e⁻²)
+"""
+function get_variance_map(camera)
+    # Broadcasting handles both scalar and per-pixel readnoise
+    return camera.readnoise .^ 2
 end
 
 # Export types and functions
 export CameraModel, IdealCamera, SCMOSCameraInternal
 export compute_likelihood_terms, compute_log_likelihood
+export to_electrons, get_variance_map

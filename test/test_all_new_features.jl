@@ -18,17 +18,24 @@ Consolidated test of new simulator and ROIBatch features
     end
     
     @testset "SCMOSCamera Support" begin
-        # Create sCMOS camera
-        variance_map = ones(Float32, 256, 256) * 25.0f0
-        scmos = GaussMLE.SCMOSCamera(256, 256, 0.1f0, variance_map)
-        
+        # Create sCMOS camera using SMLMData 0.4 API
+        # Uniform readnoise of 5.0 e⁻ (variance = 25.0 e⁻²)
+        readnoise = 5.0f0  # e⁻ rms
+        scmos = SMLMData.SCMOSCamera(
+            256, 256, 0.1f0, readnoise,
+            offset = 100.0f0,  # ADU
+            gain = 0.5f0,      # e⁻/ADU
+            qe = 0.82f0        # quantum efficiency
+        )
+
         @test scmos isa SMLMData.AbstractCamera
-        @test scmos.readnoise_variance[1,1] == 25.0f0
-        
+        @test scmos.readnoise == 5.0f0
+        @test scmos.gain == 0.5f0
+
         # Generate data with sCMOS
         psf = GaussMLE.GaussianXYNB(1.3f0)
         batch = GaussMLE.generate_roi_batch(scmos, psf; n_rois=5, seed=42)
-        
+
         @test batch.camera === scmos
     end
     

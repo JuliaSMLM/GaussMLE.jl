@@ -17,7 +17,6 @@ using .GaussLib
 
 # Core modules for refactored API
 include("devices.jl")
-include("smld_camera.jl")  # SCMOSCamera extending SMLMData (must be before camera_models.jl)
 include("camera_models.jl")
 include("psf_models.jl")
 include("psf_derivatives.jl")
@@ -34,9 +33,9 @@ include("api.jl")
 export ComputeDevice, CPU, GPU
 export auto_device, select_device
 
-# Camera models (our internal ones and SMLMData-compatible)
-export CameraModel, IdealCamera
-export SCMOSCamera  # The SMLMData-compatible version
+# Camera models (internal types)
+export CameraModel, IdealCamera, SCMOSCameraInternal
+export to_electrons, get_variance_map  # Preprocessing helpers for SMLMData.SCMOSCamera
 
 # PSF models
 export PSFModel, GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB

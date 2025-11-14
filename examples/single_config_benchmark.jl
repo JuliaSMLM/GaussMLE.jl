@@ -70,7 +70,9 @@ end
 camera_model = if camera_type == :ideal
     GaussMLE.IdealCamera()
 else
-    GaussMLE.SCMOSCamera(variance_map)
+    # Convert variance map to readnoise for SMLMData 0.4 API
+    readnoise_map = sqrt.(variance_map)
+    GaussMLE.SCMOSCameraInternal(variance_map)  # Use internal type with variance directly
 end
 
 # Generate synthetic data with ground truth tracking

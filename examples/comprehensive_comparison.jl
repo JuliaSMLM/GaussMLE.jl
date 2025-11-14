@@ -37,8 +37,14 @@ function run_single_benchmark(psf_model, device, camera_type)
         camera = if camera_type == :ideal
             SMLMData.IdealCamera(512, 512, 0.1)
         else  # :scmos
-            variance_map = ones(Float32, 256, 256) * 25.0f0  # 5e- readout noise
-            GaussMLE.SCMOSCamera(256, 256, 0.1f0, variance_map)
+            # 5.0 e⁻ rms readnoise (variance = 25 e⁻²)
+            readnoise = 5.0f0
+            SMLMData.SCMOSCamera(
+                256, 256, 0.1f0, readnoise,
+                offset = 100.0f0,
+                gain = 0.5f0,
+                qe = 0.82f0
+            )
         end
         
         # Generate known true parameters with some variation

@@ -221,17 +221,17 @@ function _generate_roi_data(camera::SMLMData.IdealCamera, psf_model::PSFModel,
     return data
 end
 
-function _generate_roi_data(camera::SCMOSCamera, psf_model::PSFModel,
+function _generate_roi_data(camera::SMLMData.SCMOSCamera, psf_model::PSFModel,
                            true_params::Matrix, corners::Matrix{Int32}, roi_size::Int)
     n_rois = size(true_params, 2)
     data = zeros(Float32, roi_size, roi_size, n_rois)
-    
+
     for k in 1:n_rois
         roi = @view data[:, :, k]
         params = @view true_params[:, k]
         _generate_single_roi!(roi, psf_model, params, camera, corners[:, k])
     end
-    
+
     return data
 end
 
@@ -257,27 +257,34 @@ function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
 end
 
 """
-Generate single ROI with SCMOSCamera (Poisson + readout noise)
+Generate single ROI with SMLMData.SCMOSCamera (Poisson + readout noise + ADU conversion)
+Simulates full camera pipeline: photons → electrons → ADU
 """
 function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
-                              params::AbstractVector, camera::SCMOSCamera,
+                              params::AbstractVector, camera::SMLMData.SCMOSCamera,
                               corner::AbstractVector)
     roi_size = size(roi, 1)
     x_corner, y_corner = corner
-    
+
     # Generate expected signal for each pixel
     for j in 1:roi_size, i in 1:roi_size
-        expected = _evaluate_psf_pixel(psf_model, i, j, params)
-        
-        # Poisson noise
-        signal = expected > 0 ? Float32(rand(Poisson(expected))) : 0.0f0
-        
-        # Add readout noise from variance map at correct camera position
+        expected_photons = _evaluate_psf_pixel(psf_model, i, j, params)
+
+        # Apply QE and Poisson noise (photons → electrons)
+        qe = camera.qe isa Number ? camera.qe : camera.qe[i + x_corner - 1, j + y_corner - 1]
+        expected_electrons = expected_photons * qe
+        signal_electrons = expected_electrons > 0 ? Float32(rand(Poisson(expected_electrons))) : 0.0f0
+
+        # Add readout noise (Gaussian, in electrons)
         cam_i = i + x_corner - 1
         cam_j = j + y_corner - 1
-        readout_std = sqrt(camera.readnoise_variance[cam_i, cam_j])
-        
-        roi[i, j] = signal + randn() * readout_std
+        readnoise = camera.readnoise isa Number ? camera.readnoise : camera.readnoise[cam_i, cam_j]
+        total_electrons = signal_electrons + randn(Float32) * readnoise
+
+        # Convert to ADU
+        gain = camera.gain isa Number ? camera.gain : camera.gain[cam_i, cam_j]
+        offset = camera.offset isa Number ? camera.offset : camera.offset[cam_i, cam_j]
+        roi[i, j] = total_electrons / gain + offset
     end
 end
 

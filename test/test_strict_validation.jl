@@ -164,13 +164,19 @@ Using the new camera-aware simulator for reliable test data generation
     end
     
     @testset "sCMOS Camera with Variance Map" begin
-        # Create sCMOS with spatially varying noise
-        variance_map = Float32[
-            10.0f0 + 40.0f0 * exp(-((i-128)^2 + (j-128)^2) / 5000.0f0)
+        # Create sCMOS with spatially varying noise using SMLMData 0.4 API
+        # variance = 10 + 40*gaussian, so readnoise = sqrt(variance)
+        readnoise_map = Float32[
+            sqrt(10.0f0 + 40.0f0 * exp(-((i-128)^2 + (j-128)^2) / 5000.0f0))
             for i in 1:256, j in 1:256
         ]
-        
-        scmos = GaussMLE.SCMOSCamera(256, 256, 0.1f0, variance_map)
+
+        scmos = SMLMData.SCMOSCamera(
+            256, 256, 0.1f0, readnoise_map,
+            offset = 100.0f0,
+            gain = 0.5f0,
+            qe = 0.82f0
+        )
         psf = GaussMLE.GaussianXYNB(1.3f0)
         n_rois = 300
 
