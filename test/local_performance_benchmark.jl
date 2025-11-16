@@ -12,12 +12,7 @@ A std/CRLB ratio of 1.0 indicates the estimator is statistically optimal.
 Only runs in local testing environments (not on GitHub Actions).
 """
 
-using GaussMLE
-using SMLMData
-using Random
-using Statistics
-using Printf
-using CUDA
+# All using statements must be in runtests.jl per test/CLAUDE.md guidelines
 
 # Configuration
 const WARMUP_ITERATIONS = 100

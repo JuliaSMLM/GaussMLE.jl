@@ -6,6 +6,7 @@ using Distributions
 using LinearAlgebra
 using SMLMData
 using CUDA
+using Printf
 
 # Include validation utilities
 include("validation_utils.jl")
@@ -70,7 +71,11 @@ if get(ENV, "CI", "false") == "false"
             for r in results
                 for (param, stats) in r.param_stats
                     if isfinite(stats.std_crlb_ratio)
-                        @test 0.8 <= stats.std_crlb_ratio <= 1.2 "$(r.config.model_name)-$(r.config.camera_symbol)-$(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio)"
+                        ratio_ok = 0.8 <= stats.std_crlb_ratio <= 1.2
+                        if !ratio_ok
+                            @warn "$(r.config.model_name)-$(r.config.camera_symbol)-$(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio) (outside [0.8, 1.2])"
+                        end
+                        @test ratio_ok
                     end
                 end
             end
