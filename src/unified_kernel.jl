@@ -361,9 +361,9 @@ end
         # For IdealCamera: variance = model (Poisson only)
         # For sCMOS: variance = model + readout_variance
         if model > zero(T)
-            # Compute variance based on camera model
-            variance = if camera_model isa IdealCamera
-                model
+            # Compute variance - check variance_map, not camera type (camera may be placeholder)
+            variance = if isnothing(variance_map)
+                model  # Poisson only (IdealCamera)
             else
                 # sCMOS camera - use separate variance_map
                 model + variance_map[i, j]

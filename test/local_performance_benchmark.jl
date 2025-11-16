@@ -303,17 +303,20 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
             bg_ratio = format_ratio(get(r.param_stats, :bg, ParameterStats(NaN32, NaN32, NaN32, NaN32)).std_crlb_ratio)
 
             # Handle model-specific parameters
+            # For SXSY: show σx in first column, σy in second
+            # For NBS: show σ in first column
+            # For Astigmatic: show z in first column
             sigma_z_ratio = if haskey(r.param_stats, :σ)
                 format_ratio(r.param_stats[:σ].std_crlb_ratio)
+            elseif haskey(r.param_stats, :σx)
+                format_ratio(r.param_stats[:σx].std_crlb_ratio)
             elseif haskey(r.param_stats, :z)
                 format_ratio(r.param_stats[:z].std_crlb_ratio)
             else
                 "   -   "
             end
 
-            extra_ratio = if haskey(r.param_stats, :σx)
-                format_ratio(r.param_stats[:σx].std_crlb_ratio)
-            elseif haskey(r.param_stats, :σy)
+            extra_ratio = if haskey(r.param_stats, :σy)
                 format_ratio(r.param_stats[:σy].std_crlb_ratio)
             else
                 "   -   "
