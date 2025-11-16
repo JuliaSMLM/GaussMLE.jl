@@ -278,6 +278,7 @@ end
     @Const(data::AbstractArray{T,3}),
     @Const(psf_model::PSFModel{N,T}),
     @Const(camera_model),
+    @Const(variance_map),  # Separate variance_map for sCMOS (nothing for IdealCamera)
     @Const(constraints::ParameterConstraints{N}),
     iterations::Int
 ) where {T, N}
@@ -309,7 +310,8 @@ end
             cf, df = if camera_model isa IdealCamera
                 compute_likelihood_terms(data_ij, model, camera_model)
             else
-                compute_likelihood_terms(data_ij, model, camera_model, i, j)
+                # sCMOS: use separate variance_map argument
+                compute_likelihood_terms(data_ij, model, variance_map, i, j)
             end
             
             # Accumulate gradient and diagonal Hessian
@@ -351,7 +353,8 @@ end
         if camera_model isa IdealCamera
             log_likelihood += compute_log_likelihood(data_ij, model, camera_model)
         else
-            log_likelihood += compute_log_likelihood(data_ij, model, camera_model, i, j)
+            # sCMOS: use separate variance_map argument
+            log_likelihood += compute_log_likelihood(data_ij, model, variance_map, i, j)
         end
 
         # Fisher Information Matrix (for CRLB) - need full matrix here
@@ -362,13 +365,8 @@ end
             variance = if camera_model isa IdealCamera
                 model
             else
-                # sCMOS camera - use total variance
-                if isdefined(camera_model, :variance_map)
-                    model + camera_model.variance_map[i, j]
-                else
-                    # SMLMData.SCMOSCamera
-                    model + camera_model.readnoise_variance[i, j]
-                end
+                # sCMOS camera - use separate variance_map
+                model + variance_map[i, j]
             end
 
             for k in 1:N, l in k:N

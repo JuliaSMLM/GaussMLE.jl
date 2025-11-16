@@ -119,41 +119,75 @@ end
 # Astigmatic model derivatives
 @inline function compute_pixel_derivatives(i, j, θ::Params{5}, psf::AstigmaticXYZNB)
     x, y, z, N, bg = θ
-    
-    # Use GaussLib function which computes all derivatives consistently
-    # GaussLib now expects same parameter order as us: [x, y, z, N, bg]
-    dudt_arr = @MVector zeros(Float32, 5)
-    d2udt2_arr = @MVector zeros(Float32, 5)
-    
-    # This function computes PSF and all derivatives accounting for z-dependent widths
-    PSFx, PSFy = derivative_integral_gaussian_2d_z(
-        i, j, θ,  # Pass θ directly - same order now!
-        psf.σx₀, psf.σy₀, psf.Ax, psf.Ay, psf.Bx, psf.By, psf.γ, psf.d, 
-        dudt_arr, d2udt2_arr
-    )
-    
+
+    # Compute z-dependent widths using astigmatic model
+    # α(z) = 1 + (z/d)² + A(z/d)³ + B(z/d)⁴
+    z_minus_gamma = z - psf.γ
+    z_plus_gamma = z + psf.γ
+
+    # Compute alpha values (inline to avoid function call overhead)
+    z_d_x = z_minus_gamma / psf.d
+    αx = one(Float32) + z_d_x^2 + psf.Ax * z_d_x^3 + psf.Bx * z_d_x^4
+
+    z_d_y = z_plus_gamma / psf.d
+    αy = one(Float32) + z_d_y^2 + psf.Ay * z_d_y^3 + psf.By * z_d_y^4
+
+    # Widths at this z position
+    σx = psf.σx₀ * sqrt(αx)
+    σy = psf.σy₀ * sqrt(αy)
+
+    # Compute PSF values
+    psf_x = integral_gaussian_1d(i, x, σx)
+    psf_y = integral_gaussian_1d(j, y, σy)
+
+    # Get x, y derivatives (same as GaussianXYNBSXSY but with z-dependent sigmas)
+    dudt_x, d2udt2_x = derivative_integral_gaussian_1d(i, x, σx, N, psf_y)
+    dudt_y, d2udt2_y = derivative_integral_gaussian_1d(j, y, σy, N, psf_x)
+
+    # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy * dσy/dz
+    dudt_sx, d2udt2_sx = derivative_integral_gaussian_1d_sigma(i, x, σx, N, psf_y)
+    dudt_sy, d2udt2_sy = derivative_integral_gaussian_1d_sigma(j, y, σy, N, psf_x)
+
+    # dσ/dα = σ₀/(2√α), dα/dz for astigmatic model
+    dαx_dz = (2*z_d_x + 3*psf.Ax*z_d_x^2 + 4*psf.Bx*z_d_x^3) / psf.d
+    dαy_dz = (2*z_d_y + 3*psf.Ay*z_d_y^2 + 4*psf.By*z_d_y^3) / psf.d
+
+    dσx_dz = (psf.σx₀ / (2*sqrt(αx))) * dαx_dz
+    dσy_dz = (psf.σy₀ / (2*sqrt(αy))) * dαy_dz
+
+    dudt_z = dudt_sx * dσx_dz + dudt_sy * dσy_dz
+
+    # Second derivative of z (diagonal only - simplified from full chain rule)
+    d2αx_dz2 = (2 + 6*psf.Ax*z_d_x + 12*psf.Bx*z_d_x^2) / (psf.d^2)
+    d2αy_dz2 = (2 + 6*psf.Ay*z_d_y + 12*psf.By*z_d_y^2) / (psf.d^2)
+
+    d2σx_dz2 = -(psf.σx₀/(4*αx^1.5f0)) * dαx_dz^2 + (psf.σx₀/(2*sqrt(αx))) * d2αx_dz2
+    d2σy_dz2 = -(psf.σy₀/(4*αy^1.5f0)) * dαy_dz^2 + (psf.σy₀/(2*sqrt(αy))) * d2αy_dz2
+
+    d2udt2_z = d2udt2_sx * dσx_dz^2 + dudt_sx * d2σx_dz2 +
+               d2udt2_sy * dσy_dz^2 + dudt_sy * d2σy_dz2
+
     # Model value
-    model = bg + N * PSFx * PSFy
-    
-    # GaussLib now returns derivatives in our standard order [x,y,z,N,bg]
-    # But it only computes x,y,z derivatives. N and bg we compute here.
+    model = bg + N * psf_x * psf_y
+
+    # First derivatives
     dudt = @SVector [
-        dudt_arr[1],          # ∂/∂x (from GaussLib)
-        dudt_arr[2],          # ∂/∂y (from GaussLib)
-        dudt_arr[3],          # ∂/∂z (from GaussLib) - now in position 3!
-        PSFx * PSFy,          # ∂/∂N
-        one(Float32)          # ∂/∂bg
+        dudt_x,          # ∂/∂x
+        dudt_y,          # ∂/∂y
+        dudt_z,          # ∂/∂z
+        psf_x * psf_y,   # ∂/∂N
+        one(Float32)     # ∂/∂bg
     ]
-    
+
     # Second derivatives - diagonal only
     d2udt2_diag = @SVector [
-        d2udt2_arr[1],        # ∂²/∂x²
-        d2udt2_arr[2],        # ∂²/∂y²
-        d2udt2_arr[3],        # ∂²/∂z²
-        zero(Float32),        # ∂²/∂N²
-        zero(Float32)         # ∂²/∂bg²
+        d2udt2_x,        # ∂²/∂x²
+        d2udt2_y,        # ∂²/∂y²
+        d2udt2_z,        # ∂²/∂z²
+        zero(Float32),   # ∂²/∂N²
+        zero(Float32)    # ∂²/∂bg²
     ]
-    
+
     return model, dudt, d2udt2_diag
 end
 

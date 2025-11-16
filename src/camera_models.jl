@@ -54,12 +54,17 @@ end
     return cf, df
 end
 
-@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+@inline function compute_likelihood_terms(data::T, model::T, variance_map::AbstractArray, i, j) where T
     # Total variance = Poisson variance + readout variance
-    total_var = model + camera.variance_map[i, j]
+    total_var = model + variance_map[i, j]
     cf = (data - model) / total_var
     df = one(T) / total_var  # Corrected: ∂²L/∂model² = -1/variance, but we need positive for Hessian
     return cf, df
+end
+
+# Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
+@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+    return compute_likelihood_terms(data, model, camera.variance_map, i, j)
 end
 
 # Log-likelihood computation
@@ -72,15 +77,20 @@ end
     end
 end
 
-@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+@inline function compute_log_likelihood(data::T, model::T, variance_map::AbstractArray, i, j) where T
     # Gaussian approximation for sCMOS noise
-    total_var = model + camera.variance_map[i, j]
+    total_var = model + variance_map[i, j]
     if total_var > zero(T)
         residual = data - model
         return -T(0.5) * (log(T(2π) * total_var) + residual^2 / total_var)
     else
         return zero(T)
     end
+end
+
+# Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
+@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+    return compute_log_likelihood(data, model, camera.variance_map, i, j)
 end
 
 # Preprocessing helpers for SMLMData.SCMOSCamera

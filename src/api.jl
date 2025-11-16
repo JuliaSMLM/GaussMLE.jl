@@ -117,13 +117,13 @@ function GaussMLEFitter(;
         device  # Already a ComputeDevice
     end
     device = select_device(device)
-    
+
     # Default constraints based on typical box size
     if isnothing(constraints)
         constraints = default_constraints(psf_model, 11)  # typical 11x11 box
     end
-    
-    return GaussMLEFitter(device, psf_model, camera_model, 
+
+    return GaussMLEFitter(device, psf_model, camera_model,
                           iterations, constraints, batch_size)
 end
 
@@ -190,40 +190,54 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
-    
+
+    # Extract variance_map for sCMOS (separate from camera struct for GPU isbits compatibility)
+    var_map = camera isa SCMOSCameraInternal ? camera.variance_map : nothing
+    # For kernel: use IdealCamera placeholder when variance_map is passed separately
+    camera_for_kernel = isnothing(var_map) ? camera : IdealCamera()
+
     # Use unified kernel for both CPU and GPU
     if fitter.device isa CPU
         # Use unified kernel on CPU
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, fitter.psf_model, camera,
+               data_f32, fitter.psf_model, camera_for_kernel, var_map,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
     else
         # Use unified kernel on GPU
+        # Move variance_map to GPU once (if sCMOS)
+        d_var_map = if !isnothing(var_map)
+            d_vm = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(var_map))
+            copyto!(d_vm, var_map)
+            d_vm
+        else
+            nothing
+        end
+
         # Process in batches for memory efficiency
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
             batch_size = batch_end - batch_start + 1
-            
+
             # Get batch data
             batch_data = data_f32[:, :, batch_start:batch_end]
-            
+
             # Move batch to device using KernelAbstractions adapt
             d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
-            
+
             # Allocate device arrays for results
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
             d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
             d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size)
-            
+
             # Launch unified kernel (works on GPU!)
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, fitter.psf_model, camera, 
+                   d_batch_data, fitter.psf_model, camera_for_kernel, d_var_map,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size)
             
@@ -234,6 +248,13 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
             log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+
+            # Explicitly free GPU memory to prevent accumulation
+            # Critical for complex PSF models like AstigmaticXYZNB
+            CUDA.unsafe_free!(d_batch_data)
+            CUDA.unsafe_free!(d_results)
+            CUDA.unsafe_free!(d_uncertainties)
+            CUDA.unsafe_free!(d_log_likelihoods)
         end
     end
     

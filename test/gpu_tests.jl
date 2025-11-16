@@ -53,7 +53,7 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, GaussMLE.IdealCamera(),
+                   data, psf_model, GaussMLE.IdealCamera(), nothing,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             
@@ -81,7 +81,7 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, GaussMLE.IdealCamera(),
+                   data, psf_model, GaussMLE.IdealCamera(), nothing,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             
@@ -102,7 +102,7 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, GaussMLE.IdealCamera(),
+                   data, psf_model, GaussMLE.IdealCamera(), nothing,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             
@@ -133,7 +133,7 @@ using KernelAbstractions
                 kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
                 
                 kernel(d_results, d_uncertainties, d_log_likelihoods,
-                       d_data, psf_model, GaussMLE.IdealCamera(),
+                       d_data, psf_model, GaussMLE.IdealCamera(), nothing,
                        constraints, iterations,
                        ndrange=n_test_blobs)
                 
