@@ -47,3 +47,38 @@ println()
         end
     end
 end
+
+# Local performance benchmark (only runs in local environment, not on CI)
+println()
+println("="^70)
+if get(ENV, "CI", "false") == "false"
+    println("Local environment detected - running comprehensive performance benchmark")
+    println("="^70)
+    include("local_performance_benchmark.jl")
+
+    # Run the benchmark
+    @testset "Local Performance Benchmark" begin
+        results = run_comprehensive_benchmark()
+        @test results !== nothing
+
+        # Validate that we got some results
+        if results !== nothing && !isempty(results)
+            @test all(r -> r.fits_per_second > 0, results)
+
+            # Check that std/CRLB ratios are reasonable (within 20% of optimal)
+            # This is a sanity check - allows for some statistical variation
+            for r in results
+                for (param, stats) in r.param_stats
+                    if isfinite(stats.std_crlb_ratio)
+                        @test 0.8 <= stats.std_crlb_ratio <= 1.2 "$(r.config.model_name)-$(r.config.camera_symbol)-$(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio)"
+                    end
+                end
+            end
+        end
+    end
+else
+    println("CI environment detected - skipping local performance benchmark")
+    println("To run comprehensive benchmarks, execute tests locally:")
+    println("  julia> using Pkg; Pkg.test(\"GaussMLE\")")
+    println("="^70)
+end
