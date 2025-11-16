@@ -110,10 +110,12 @@ function create_camera(camera_symbol::Symbol, roi_size::Int)
         return SMLMData.IdealCamera(512, 512, 0.1f0)
     elseif camera_symbol == :scmos
         # Realistic sCMOS parameters: 5.0 e⁻ rms readnoise
+        # Must use array-based readnoise (not scalar) because fitting code indexes variance_map[i,j]
+        readnoise_map = fill(5.0f0, 512, 512)  # Uniform 5 e⁻ rms across sensor
         return SMLMData.SCMOSCamera(
             512, 512,
             0.1f0,      # pixel size (μm)
-            5.0f0,      # readnoise (e⁻ rms)
+            readnoise_map,  # readnoise map (e⁻ rms)
             offset = 100.0f0,
             gain = 0.5f0,
             qe = 0.82f0
@@ -238,6 +240,11 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
     catch e
         @warn "Benchmark failed for $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol): $e"
         return nothing
+    finally
+        # Clean up GPU memory after each benchmark to prevent accumulation
+        if config.device_symbol == :gpu && CUDA.functional()
+            CUDA.reclaim()
+        end
     end
 end
 
@@ -361,7 +368,7 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
         end
 
         if !isempty(best_crlb_matches)
-            sort!(best_crlb_matches)
+            sort!(best_crlb_matches, by=first)
             best = best_crlb_matches[1][2]
             println(@sprintf("  Best CRLB match (x): %s-%s-%s (ratio=%.3f)",
                 best.config.model_name,
