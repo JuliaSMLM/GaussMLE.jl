@@ -289,40 +289,94 @@ function fit(fitter::GaussMLEFitter, roi::AbstractMatrix{T}) where T
     return smld.emitters[1]
 end
 
-# Fit method for ROIBatch - returns BasicSMLD with camera coordinates
+# Fit method for ROIBatch - returns BasicSMLD with real camera coordinates
 function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}) where {T,N,A}
-    # Fit the data and get back raw results
-    # We'll call fit on the data array, get SMLD, then recreate with proper camera coords
-    # This is a bit wasteful but keeps code simple
+    # Fit the raw data, passing roi_batch through to preserve corners
+    n_fits = size(roi_batch.data, 3)
+    n_params = length(fitter.psf_model)
+    box_size = size(roi_batch.data, 1)
 
-    # Actually, just duplicate the minimal fitting code inline
-    # Or better: fit returns SMLD, extract what we need and recreate
+    # Allocate result arrays
+    results = Matrix{Float32}(undef, n_params, n_fits)
+    uncertainties = Matrix{Float32}(undef, n_params, n_fits)
+    log_likelihoods = Vector{Float32}(undef, n_fits)
 
-    # Simplest: fit returns SMLD with default coords, we just use roi_batch coords instead
-    # For now: accept that coordinates won't match perfectly
-    # TODO: Refactor to avoid double coordinate calculation
+    # Prepare camera parameters
+    use_scmos, variance_map = prepare_camera_params(fitter.camera_model, box_size, Float32)
 
-    return fit(fitter, roi_batch.data)  # Returns SMLD with default coords
+    # Use unified kernel on CPU/GPU
+    data_f32 = convert(Array{Float32,3}, roi_batch.data)
+
+    if fitter.device isa CPU
+        backend = KernelAbstractions.CPU()
+        kernel = unified_gaussian_mle_kernel!(backend)
+        kernel(results, uncertainties, log_likelihoods,
+               data_f32, fitter.psf_model, use_scmos, variance_map,
+               fitter.constraints, fitter.iterations,
+               ndrange=n_fits)
+        KernelAbstractions.synchronize(backend)
+    else
+        # GPU batch processing
+        for batch_start in 1:fitter.batch_size:n_fits
+            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+            batch_size_actual = batch_end - batch_start + 1
+
+            batch_data = data_f32[:, :, batch_start:batch_end]
+            d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
+            copyto!(d_batch_data, batch_data)
+
+            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
+            copyto!(d_variance_map, variance_map)
+
+            d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
+            d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
+            d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size_actual)
+
+            kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
+            kernel(d_results, d_uncertainties, d_log_likelihoods,
+                   d_batch_data, fitter.psf_model, use_scmos, d_variance_map,
+                   fitter.constraints, fitter.iterations,
+                   ndrange=batch_size_actual)
+
+            KernelAbstractions.synchronize(GaussMLE.backend(fitter.device))
+
+            results[:, batch_start:batch_end] = Array(d_results)
+            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+        end
+    end
+
+    # Use real ROIBatch for coordinate conversion (preserves corners!)
+    loc_result = create_localization_result(results, uncertainties, log_likelihoods, roi_batch, fitter.psf_model)
+    return to_smld(loc_result, roi_batch)
 end
 
 # Fit method for ROIBatch with SMLMData.SCMOSCamera
 function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}) where {T,N,A}
-    
-    # Create a new fitter with the SCMOSCamera from the ROIBatch
+
+    # Preprocess ADU → electrons
+    data_electrons = to_electrons(roi_batch.data, roi_batch.camera)
+
+    # Create ROIBatch with electron data but same corners/camera
+    batch_electrons = SMLMData.ROIBatch(
+        data_electrons,
+        roi_batch.corners,  # Preserve corners!
+        roi_batch.frame_indices,
+        roi_batch.camera
+    )
+
+    # Create fitter with SCMOSCamera
     fitter_with_camera = GaussMLEFitter(
         fitter.device,
         fitter.psf_model,
-        roi_batch.camera,  # Use the SCMOSCamera from ROIBatch
+        roi_batch.camera,
         fitter.iterations,
         fitter.constraints,
         fitter.batch_size
     )
-    
-    # Preprocess ADU → electrons
-    data_electrons = to_electrons(roi_batch.data, roi_batch.camera)
 
-    # Fit with sCMOS fitter
-    return fit(fitter_with_camera, data_electrons)  # Returns BasicSMLD
+    # Fit using IdealCamera method (data already in electrons)
+    return fit(fitter_with_camera, batch_electrons)
 end
 
 

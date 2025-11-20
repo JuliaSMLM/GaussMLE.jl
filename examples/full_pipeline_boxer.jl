@@ -93,10 +93,11 @@ if boxer_result isa NamedTuple
     println("-" ^ 50)
 
     # Convert Boxer output to ROIBatch
+    # CRITICAL: boxcoords is [row, col, frame] but ROIBatch needs [x, y] = [col, row]!
     batch = SMLMData.ROIBatch(
         boxer_result.boxes,
-        Int32.(permutedims(boxer_result.boxcoords[:, 1:2])),  # (N×2) → (2×N)
-        Int32.(boxer_result.boxcoords[:, 3]),                 # Frame indices
+        Int32.(permutedims(boxer_result.boxcoords[:, [2,1]])),  # [row,col] → [col,row] → (2×N)
+        Int32.(boxer_result.boxcoords[:, 3]),                   # Frame indices
         camera
     )
 
