@@ -87,7 +87,7 @@ end
 Create a fitter for Gaussian MLE with sensible defaults.
 
 # Keyword Arguments
-- `psf_model = GaussianXYNB(1.3f0)`: PSF model to use
+- `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `camera_model = IdealCamera()`: Camera noise model
 - `device = nothing`: Compute device (`:cpu`, `:gpu`, `:auto`, or nothing for auto-detect)
 - `iterations = 20`: Number of Newton-Raphson iterations
@@ -114,7 +114,7 @@ fitter = GaussMLEFitter(
 [`fit`](@ref), [`GaussianXYNB`](@ref), [`GaussianXYNBS`](@ref), [`IdealCamera`](@ref)
 """
 function GaussMLEFitter(;
-    psf_model = GaussianXYNB(1.3f0),
+    psf_model = GaussianXYNB(0.13f0),
     camera_model = IdealCamera(),
     device = nothing,  # auto-detect if nothing
     iterations = 20,
@@ -166,7 +166,7 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 ```julia
 # Fit 1000 ROIs
 data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(1.3f0))
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
 results = fit(fitter, data)
 
 # Access results
@@ -194,15 +194,23 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     n_fits = size(data, 3)
     n_params = length(fitter.psf_model)
     box_size = size(data, 1)
-    
+
     # Convert data to Float32 if needed
     data_f32 = convert(Array{Float32,3}, data)
-    
+
+    # Get pixel size from camera and convert PSF to pixel units for kernel
+    pixel_size = if camera isa SMLMData.AbstractCamera
+        camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    else
+        0.1f0  # Default for internal cameras
+    end
+    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
-    
+
     # Prepare camera parameters for kernel
     use_scmos, variance_map = prepare_camera_params(camera, box_size, Float32)
 
@@ -212,7 +220,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, fitter.psf_model, use_scmos, variance_map,
+               data_f32, psf_pixels, use_scmos, variance_map,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -242,7 +250,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             # Launch unified kernel (works on GPU!)
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, fitter.psf_model, use_scmos, d_variance_map,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size)
             
@@ -296,6 +304,10 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     n_params = length(fitter.psf_model)
     box_size = size(roi_batch.data, 1)
 
+    # Get pixel size and convert PSF from microns to pixels
+    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
+    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
@@ -311,7 +323,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, fitter.psf_model, use_scmos, variance_map,
+               data_f32, psf_pixels, use_scmos, variance_map,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -334,7 +346,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
 
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, fitter.psf_model, use_scmos, d_variance_map,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
 

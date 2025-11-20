@@ -10,11 +10,12 @@ Fast Maximum Likelihood Estimation of Gaussian PSF parameters for single-molecul
 ## Features
 
 - **Multiple PSF Models**: 2D Gaussian (fixed/variable σ), 3D astigmatic
+- **Physical Units**: All PSF parameters in microns (camera-independent)
 - **Automatic GPU Acceleration**: CUDA GPU support with automatic CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramér-Rao lower bound for each parameter
 - **SMLMData Integration**: Works with SMLMData.jl camera types and ROI structures
-- **Minimal API**: Only 7 exports - clean and focused interface
+- **Minimal API**: Only 11 exports - clean and focused interface
 
 ## Installation
 

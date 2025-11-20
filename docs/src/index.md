@@ -45,12 +45,21 @@ println("Mean precision: $(mean(results.x_error)) pixels")
 ### Key Features
 
 - **Multiple PSF Models**: 2D Gaussian (fixed/variable σ), 3D astigmatic
+- **Physical Units**: All PSF parameters in microns (camera-independent)
 - **Automatic GPU Acceleration**: CUDA support with automatic CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramér-Rao lower bound for each parameter
 - **SMLMData Integration**: Works seamlessly with SMLMData.jl types
 - **Custom Emitter Types**: PSF-specific emitters store fitted parameters (σ, σx, σy, z)
 - **Minimal API**: Only 11 exports - clean and focused interface
+
+### Unit Convention
+
+**All user-facing parameters use physical units (microns)**:
+- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
+- Output positions: microns
+- Output uncertainties: microns
+- Internally converted to pixels for computation based on camera pixel size
 
 ### Minimal Export Philosophy
 

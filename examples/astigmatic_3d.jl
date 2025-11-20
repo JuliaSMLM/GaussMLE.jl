@@ -15,11 +15,11 @@ println("=== 3D Astigmatic Localization Example ===\n")
 # Create astigmatic PSF model
 println("Creating astigmatic PSF model...")
 psf_3d = AstigmaticXYZNB{Float32}(
-    1.3f0, 1.3f0,    # σx₀, σy₀ at focus
+    0.13f0, 0.13f0,  # σx₀, σy₀ (microns) at focus
     0.05f0, 0.05f0,  # Ax, Ay
     0.3f0, 0.3f0,    # Bx, By
-    50.0f0,          # γ (focal offset)
-    100.0f0          # d (z-range)
+    0.05f0,          # γ (focal offset, microns)
+    0.10f0           # d (z-range, microns)
 )
 println("  PSF: Astigmatic 3D")
 

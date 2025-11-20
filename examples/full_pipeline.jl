@@ -91,7 +91,7 @@ println("\nStep 3: Fit PSFs (GaussMLE)")
 println("-" ^ 50)
 
 fitter = GaussMLE.GaussMLEFitter(
-    psf_model = GaussMLE.GaussianXYNB(1.3f0),
+    psf_model = GaussMLE.GaussianXYNB(0.13f0),
     device = :cpu,
     iterations = 20
 )

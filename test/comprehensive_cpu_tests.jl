@@ -10,7 +10,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
     @testset "Fixed Sigma Model (xynb)" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
@@ -88,7 +88,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
     end
 
     @testset "Photon Level Sensitivity" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         @testset "Low photons (N=200) - Ideal" begin
             passed, results = run_model_validation(
@@ -130,7 +130,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
     
     @testset "PSF Width Variations" begin
         @testset "Narrow PSF (σ=1.0) - Ideal" begin
-            psf_model = GaussMLE.GaussianXYNB(1.0f0)
+            psf_model = GaussMLE.GaussianXYNB(0.10f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
@@ -147,7 +147,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
         end
         
         @testset "Wide PSF (σ=2.0) - Ideal" begin
-            psf_model = GaussMLE.GaussianXYNB(2.0f0)
+            psf_model = GaussMLE.GaussianXYNB(0.20f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,

@@ -37,7 +37,7 @@ println("1. Generating synthetic ROI data...")
 ideal_camera = SMLMData.IdealCamera(camera_size, camera_size, pixel_size_um)
 
 # PSF model
-psf_model = GaussMLE.GaussianXYNB(1.3f0)
+psf_model = GaussMLE.GaussianXYNB(0.13f0)
 
 # Generate ROI batch with simulator
 roi_batch = generate_roi_batch(

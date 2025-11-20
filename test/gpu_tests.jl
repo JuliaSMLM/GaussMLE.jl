@@ -40,7 +40,7 @@ using KernelAbstractions
         
         # Test with different PSF models
         @testset "GaussianXYNB (N=4)" begin
-            psf_model = GaussMLE.GaussianXYNB(1.3f0)
+            psf_model = GaussMLE.GaussianXYNB(0.13f0)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
             
             # Allocate output arrays
@@ -117,7 +117,7 @@ using KernelAbstractions
             data = generate_simple_test_data(n_test_blobs, box_size)
             
             @testset "GaussianXYNB GPU" begin
-                psf_model = GaussMLE.GaussianXYNB(1.3f0)
+                psf_model = GaussMLE.GaussianXYNB(0.13f0)
                 constraints = GaussMLE.default_constraints(psf_model, box_size)
                 
                 # Move data to GPU
@@ -158,7 +158,7 @@ using KernelAbstractions
             end
             
             @testset "CPU vs GPU Consistency" begin
-                psf_model = GaussMLE.GaussianXYNB(1.3f0)
+                psf_model = GaussMLE.GaussianXYNB(0.13f0)
                 constraints = GaussMLE.default_constraints(psf_model, box_size)
                 
                 # Run on CPU

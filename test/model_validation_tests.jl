@@ -11,7 +11,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
     
     @testset "Fixed Sigma Model (xynb)" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
@@ -135,7 +135,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     end
     
     @testset "Different Photon Levels" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         @testset "Low photons (N=200)" begin
             passed, results = run_model_validation(
@@ -175,7 +175,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     
     @testset "Different PSF Widths" begin
         @testset "Narrow PSF (σ=1.0)" begin
-            psf_model = GaussMLE.GaussianXYNB(1.0f0)
+            psf_model = GaussMLE.GaussianXYNB(0.10f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
@@ -190,7 +190,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         end
         
         @testset "Wide PSF (σ=2.0)" begin
-            psf_model = GaussMLE.GaussianXYNB(2.0f0)
+            psf_model = GaussMLE.GaussianXYNB(0.20f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
@@ -206,7 +206,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     end
     
     @testset "sCMOS Camera Model" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         # Create variance map (readout noise)
         variance_map = ones(Float32, box_size, box_size) * 25.0f0  # 5 e- readout noise
@@ -243,7 +243,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
     end
     
     @testset "Edge Cases" begin
-        psf_model = GaussMLE.GaussianXYNB(1.3f0)
+        psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         @testset "Spots near edges" begin
             # Generate data with spots near ROI edges

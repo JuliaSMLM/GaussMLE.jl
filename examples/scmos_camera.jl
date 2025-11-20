@@ -55,7 +55,7 @@ println("  Variance map range: $(round(minimum(variance_map), digits=2)) - $(rou
 # Fit WITHOUT sCMOS model (ignores pixel-dependent variance)
 println("\n--- Fit 1: Ideal Camera (uniform noise) ---")
 fitter_ideal = GaussMLEFitter(
-    psf_model = GaussianXYNB(1.3f0),
+    psf_model = GaussianXYNB(0.13f0),
     iterations = 25
 )
 smld_ideal = fit(fitter_ideal, data)
@@ -67,7 +67,7 @@ println("  Mean precision: $(round(mean(σ_ideal)*1000, digits=1)) nm")
 # Fit WITH sCMOS model (accounts for pixel-dependent variance)
 println("\n--- Fit 2: sCMOS Camera (pixel-dependent noise) ---")
 fitter_scmos = GaussMLEFitter(
-    psf_model = GaussianXYNB(1.3f0),
+    psf_model = GaussianXYNB(0.13f0),
     iterations = 25
 )
 

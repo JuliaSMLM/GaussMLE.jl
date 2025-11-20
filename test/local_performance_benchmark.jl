@@ -58,15 +58,15 @@ Create all 4 PSF models for testing.
 """
 function create_psf_models()
     return [
-        GaussMLE.GaussianXYNB(1.3f0),
+        GaussMLE.GaussianXYNB(0.13f0),
         GaussMLE.GaussianXYNBS(),
         GaussMLE.GaussianXYNBSXSY(),
         GaussMLE.AstigmaticXYZNB{Float32}(
-            1.3f0, 1.3f0,    # σx₀, σy₀
+            0.13f0, 0.13f0,  # σx₀, σy₀ (microns)
             0.0f0, 0.0f0,    # Ax, Ay
             0.0f0, 0.0f0,    # Bx, By
-            250.0f0,         # γ (nm)
-            400.0f0          # d (nm)
+            0.25f0,          # γ (microns)
+            0.40f0           # d (microns)
         )
     ]
 end

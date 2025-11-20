@@ -6,7 +6,7 @@ Consolidated test of new simulator and ROIBatch features
     
     @testset "Basic Simulator with IdealCamera" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         
         batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=10, seed=42)
         
@@ -33,7 +33,7 @@ Consolidated test of new simulator and ROIBatch features
         @test scmos.gain == 0.5f0
 
         # Generate data with sCMOS
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         batch = GaussMLE.generate_roi_batch(scmos, psf; n_rois=5, seed=42)
 
         @test batch.camera === scmos
@@ -41,7 +41,7 @@ Consolidated test of new simulator and ROIBatch features
     
     @testset "Fitting with ROIBatch" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
 
         batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=20, seed=42)
 
@@ -68,7 +68,7 @@ Consolidated test of new simulator and ROIBatch features
     
     @testset "SMLMData Conversion" begin
         camera = SMLMData.IdealCamera(256, 256, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
 
         # Known corners for testing
         corners = Matrix{Int32}(Int32[10 20; 30 40]')
@@ -97,7 +97,7 @@ Consolidated test of new simulator and ROIBatch features
         camera = SMLMData.IdealCamera(256, 256, 0.1)
 
         psf_models = [
-            GaussMLE.GaussianXYNB(1.3f0),
+            GaussMLE.GaussianXYNB(0.13f0),
             GaussMLE.GaussianXYNBS(),
             GaussMLE.GaussianXYNBSXSY()
         ]

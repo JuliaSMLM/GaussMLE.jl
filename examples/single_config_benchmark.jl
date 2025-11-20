@@ -8,7 +8,7 @@ using Printf
 using Distributions
 
 # Example parameters (users can adjust these)
-psf_model = GaussMLE.GaussianXYNB(1.3f0)      # Can also use GaussianXYNBS(), AstigmaticXYZNB(), etc.
+psf_model = GaussMLE.GaussianXYNB(0.13f0)      # Can also use GaussianXYNBS(), AstigmaticXYZNB(), etc.
 device = :gpu                                  # :cpu, :gpu, or :auto
 camera_type = :ideal                          # :ideal or :scmos
 roi_size = 7

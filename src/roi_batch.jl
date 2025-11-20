@@ -280,7 +280,7 @@ end
 
 # Legacy function names for backward compatibility
 to_emitter2dfit(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) =
-    to_emitter(GaussianXYNB(1.0f0), result, idx, camera; kwargs...)
+    to_emitter(GaussianXYNB(0.10f0), result, idx, camera; kwargs...)
 
 to_emitter3dfit(result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) where T =
     to_emitter(result.psf_model, result, idx, camera; kwargs...)

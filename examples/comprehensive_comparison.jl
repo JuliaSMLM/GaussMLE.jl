@@ -137,11 +137,11 @@ end
 
 # Define test configurations
 psf_models = [
-    GaussMLE.GaussianXYNB(1.3f0),
+    GaussMLE.GaussianXYNB(0.13f0),
     GaussMLE.GaussianXYNBS(),
     GaussMLE.GaussianXYNBSXSY(),
     GaussMLE.AstigmaticXYZNB{Float32}(
-        1.3f0, 1.3f0,    # σx₀, σy₀
+        0.13f0, 0.13f0,  # σx₀, σy₀ (microns)
         0.0f0, 0.0f0,    # Ax, Ay
         0.0f0, 0.0f0,    # Bx, By
         250.0f0,         # γ

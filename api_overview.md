@@ -6,9 +6,18 @@ This document provides a comprehensive overview of the GaussMLE.jl API for LLM a
 
 GaussMLE.jl performs Maximum Likelihood Estimation of Gaussian blob parameters in 2D images. It supports:
 - Multiple PSF models (fixed/variable sigma, astigmatic)
+- **Physical units (microns)** for all PSF parameters (camera-independent)
 - Ideal and sCMOS camera noise models
 - Automatic CPU/GPU acceleration via KernelAbstractions.jl
 - Integration with SMLMData.jl ecosystem
+
+## Unit Convention
+
+**All user-facing PSF parameters are in physical units (microns)**:
+- `GaussianXYNB(σ)`: σ in microns (e.g., 0.13 for 130nm PSF)
+- `AstigmaticXYZNB(...)`: All spatial params in microns
+- Internally converted to pixels for computation
+- Output coordinates and uncertainties in microns
 
 ## Core Workflow
 

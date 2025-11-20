@@ -81,7 +81,7 @@ Using the new camera-aware simulator for reliable test data generation
     
     @testset "GaussianXYNB - Standard Conditions" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 500
 
         Random.seed!(42)
@@ -122,7 +122,7 @@ Using the new camera-aware simulator for reliable test data generation
     
     @testset "Low SNR Conditions" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 200
 
         Random.seed!(43)
@@ -153,7 +153,7 @@ Using the new camera-aware simulator for reliable test data generation
     
     @testset "Edge Position Tests" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 100
         
         # Generate ROIs near edges
@@ -209,7 +209,7 @@ Using the new camera-aware simulator for reliable test data generation
             gain = 0.5f0,
             qe = 0.82f0
         )
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 300
 
         Random.seed!(45)
@@ -295,7 +295,7 @@ Using the new camera-aware simulator for reliable test data generation
     
     @testset "Photon Level Sensitivity" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
-        psf = GaussMLE.GaussianXYNB(1.3f0)
+        psf = GaussMLE.GaussianXYNB(0.13f0)
         
         photon_levels = [100.0f0, 500.0f0, 2000.0f0, 10000.0f0]
         # Just check that precision improves with photon count (qualitative test)

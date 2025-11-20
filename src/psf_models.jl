@@ -18,41 +18,48 @@ abstract type PSFModel{NParams,T} end
 2D Gaussian PSF with fixed width σ.
 
 # Parameters (in order)
-1. x: x-position (pixels)
-2. y: y-position (pixels)
+1. x: x-position (fitted in ROI pixels, output in microns)
+2. y: y-position (fitted in ROI pixels, output in microns)
 3. N: total photon count
 4. bg: background per pixel
 
 # Fields
-- `σ::T`: Fixed Gaussian width (standard deviation in pixels)
+- `σ::T`: Fixed Gaussian width (standard deviation in **microns**)
 
 # Example
 ```julia
-psf = GaussianXYNB(1.3f0)  # Fixed σ = 1.3 pixels
+psf = GaussianXYNB(0.13f0)  # σ = 130 nm (typical ~500nm emission, 100nm pixels)
 fitter = GaussMLEFitter(psf_model = psf)
 ```
+
+# Note
+PSF width is specified in physical units (microns) for camera-independence.
+Internally converted to pixels based on camera pixel size during fitting.
 """
 struct GaussianXYNB{T} <: PSFModel{4,T}
-    σ::T
+    σ::T  # Microns
 end
 
 """
     GaussianXYNBS{T} <: PSFModel{5,T}
 
-2D Gaussian PSF with variable width σ.
+2D Gaussian PSF with variable width σ (fitted parameter).
 
 # Parameters (in order)
-1. x: x-position (pixels)
-2. y: y-position (pixels)
+1. x: x-position (fitted in ROI pixels, output in microns)
+2. y: y-position (fitted in ROI pixels, output in microns)
 3. N: total photon count
 4. bg: background per pixel
-5. σ: Gaussian width (standard deviation in pixels)
+5. σ: Gaussian width (fitted in pixels, output in microns)
 
 # Example
 ```julia
-psf = GaussianXYNBS()  # Variable sigma
+psf = GaussianXYNBS()  # Variable sigma (no fixed value)
 fitter = GaussMLEFitter(psf_model = psf)
 ```
+
+# Note
+The fitted σ parameter is stored in microns in Emitter2DFitSigma output.
 """
 struct GaussianXYNBS{T} <: PSFModel{5,T} end
 
@@ -62,21 +69,24 @@ GaussianXYNBS() = GaussianXYNBS{Float32}()
 """
     GaussianXYNBSXSY{T} <: PSFModel{6,T}
 
-2D Anisotropic Gaussian PSF with independent x and y widths.
+2D Anisotropic Gaussian PSF with independent x and y widths (both fitted parameters).
 
 # Parameters (in order)
-1. x: x-position (pixels)
-2. y: y-position (pixels)
+1. x: x-position (fitted in ROI pixels, output in microns)
+2. y: y-position (fitted in ROI pixels, output in microns)
 3. N: total photon count
 4. bg: background per pixel
-5. σx: Gaussian width in x (standard deviation in pixels)
-6. σy: Gaussian width in y (standard deviation in pixels)
+5. σx: Gaussian width in x (fitted in pixels, output in microns)
+6. σy: Gaussian width in y (fitted in pixels, output in microns)
 
 # Example
 ```julia
-psf = GaussianXYNBSXSY()
+psf = GaussianXYNBSXSY()  # Variable σx, σy (no fixed values)
 fitter = GaussMLEFitter(psf_model = psf)
 ```
+
+# Note
+The fitted σx and σy parameters are stored in microns in Emitter2DFitSigmaXY output.
 """
 struct GaussianXYNBSXSY{T} <: PSFModel{6,T} end
 
@@ -95,44 +105,48 @@ The PSF width varies with z-position according to:
 ```
 
 # Parameters (in order)
-1. x: x-position (pixels)
-2. y: y-position (pixels)
-3. z: z-position (nm)
+1. x: x-position (fitted in ROI pixels, output in microns)
+2. y: y-position (fitted in ROI pixels, output in microns)
+3. z: z-position (fitted in pixels, output in microns)
 4. N: total photon count
 5. bg: background per pixel
 
-# Fields
-- `σx₀, σy₀::T`: Nominal widths at z=0
-- `Ax, Ay::T`: Cubic coefficients
-- `Bx, By::T`: Quartic coefficients
-- `γ::T`: Astigmatism offset (nm)
-- `d::T`: Depth of focus (nm)
+# Fields (calibration parameters in **microns**)
+- `σx₀, σy₀::T`: In-focus PSF widths (microns)
+- `Ax, Ay::T`: Cubic coefficients (dimensionless)
+- `Bx, By::T`: Quartic coefficients (dimensionless)
+- `γ::T`: Astigmatism offset (microns)
+- `d::T`: Depth scaling parameter (microns)
 
 # Example
 ```julia
-# Typical parameters from calibration
+# Typical parameters from calibration (all spatial params in microns)
 psf = AstigmaticXYZNB{Float32}(
-    1.3f0, 1.3f0,    # σx₀, σy₀
-    0.05f0, 0.05f0,  # Ax, Ay
-    0.3f0, 0.3f0,    # Bx, By
-    50.0f0,          # γ
-    100.0f0          # d
+    0.13f0, 0.13f0,  # σx₀, σy₀ (130 nm)
+    0.05f0, 0.05f0,  # Ax, Ay (dimensionless)
+    0.3f0, 0.3f0,    # Bx, By (dimensionless)
+    0.05f0,          # γ (50 nm astigmatism offset)
+    0.4f0            # d (400 nm depth scale)
 )
 fitter = GaussMLEFitter(psf_model = psf)
 ```
+
+# Note
+All spatial parameters in physical units (microns) for camera-independence.
+Internally converted to pixels based on camera pixel size during fitting.
 
 # See also
 The astigmatic PSF model is described in Huang et al., Science 319, 810-813 (2008).
 """
 struct AstigmaticXYZNB{T} <: PSFModel{5,T}
-    σx₀::T
-    σy₀::T
-    Ax::T
-    Ay::T
-    Bx::T
-    By::T
-    γ::T
-    d::T
+    σx₀::T  # Microns
+    σy₀::T  # Microns
+    Ax::T   # Dimensionless
+    Ay::T   # Dimensionless
+    Bx::T   # Dimensionless
+    By::T   # Dimensionless
+    γ::T    # Microns
+    d::T    # Microns
 
     function AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d) where T
         new{T}(T(σx₀), T(σy₀), T(Ax), T(Ay), T(Bx), T(By), T(γ), T(d))
@@ -267,4 +281,51 @@ function Base.show(io::IO, psf::AstigmaticXYZNB)
     print(io, "σx₀=", psf.σx₀, ", σy₀=", psf.σy₀, ", ")
     print(io, "γ=", psf.γ, ", d=", psf.d)
     print(io, ")")
+end
+# ===================================================================
+# Unit Conversion: Physical (microns) → Pixels
+# ===================================================================
+
+"""
+    to_pixel_units(psf::PSFModel, pixel_size::Real)
+
+Convert PSF model from physical units (microns) to pixel units for kernel computation.
+
+User-facing PSF models store parameters in microns (camera-independent).
+Kernel requires pixels for computation. This function performs the conversion.
+
+# Arguments
+- `psf`: PSF model with parameters in microns
+- `pixel_size`: Camera pixel size in microns
+
+# Returns
+PSF model with parameters converted to pixels
+
+# Example
+```julia
+psf_microns = GaussianXYNB(0.13f0)  # σ = 130 nm
+pixel_size = 0.1f0  # 100 nm pixels
+psf_pixels = to_pixel_units(psf_microns, pixel_size)  # σ = 1.3 pixels
+```
+"""
+function to_pixel_units(psf::GaussianXYNB{T}, pixel_size::Real) where T
+    GaussianXYNB{T}(psf.σ / T(pixel_size))
+end
+
+# GaussianXYNBS and GaussianXYNBSXSY have no fixed parameters - no conversion needed
+to_pixel_units(psf::GaussianXYNBS{T}, pixel_size::Real) where T = psf
+to_pixel_units(psf::GaussianXYNBSXSY{T}, pixel_size::Real) where T = psf
+
+function to_pixel_units(psf::AstigmaticXYZNB{T}, pixel_size::Real) where T
+    px = T(pixel_size)
+    AstigmaticXYZNB{T}(
+        psf.σx₀ / px,
+        psf.σy₀ / px,
+        psf.Ax,  # Dimensionless
+        psf.Ay,  # Dimensionless
+        psf.Bx,  # Dimensionless
+        psf.By,  # Dimensionless
+        psf.γ / px,
+        psf.d / px
+    )
 end
