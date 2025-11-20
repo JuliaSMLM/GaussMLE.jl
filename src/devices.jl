@@ -2,9 +2,6 @@
 Device abstraction with automatic GPU detection
 """
 
-using KernelAbstractions
-using CUDA
-
 # Device abstraction
 abstract type ComputeDevice end
 struct CPU <: ComputeDevice end
@@ -36,7 +33,3 @@ function select_device(device::Union{ComputeDevice, Nothing}=nothing)
         return device
     end
 end
-
-# Export functions
-export ComputeDevice, CPU, GPU
-export auto_device, select_device, backend

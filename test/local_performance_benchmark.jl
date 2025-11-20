@@ -22,7 +22,7 @@ const SEED = 42
 
 # Benchmark result structure
 struct BenchmarkConfig
-    psf_model::PSFModel
+    psf_model::GaussMLE.PSFModel
     camera_symbol::Symbol
     device_symbol::Symbol
     model_name::String
@@ -52,7 +52,7 @@ function detect_environment()
 end
 
 """
-    create_psf_models() -> Vector{PSFModel}
+    create_psf_models() -> Vector{GaussMLE.PSFModel}
 
 Create all 4 PSF models for testing.
 """
@@ -72,21 +72,21 @@ function create_psf_models()
 end
 
 """
-    get_model_name(psf::PSFModel) -> String
+    get_model_name(psf::GaussMLE.PSFModel) -> String
 
 Get short name for PSF model.
 """
-function get_model_name(psf::PSFModel)
+function get_model_name(psf::GaussMLE.PSFModel)
     type_str = string(typeof(psf))
     return split(type_str, ".")[end] |> x -> replace(x, r"\{.*\}" => "")
 end
 
 """
-    get_param_names(psf::PSFModel) -> Vector{Symbol}
+    get_param_names(psf::GaussMLE.PSFModel) -> Vector{Symbol}
 
 Get parameter names for a PSF model.
 """
-function get_param_names(psf::PSFModel)
+function get_param_names(psf::GaussMLE.PSFModel)
     if psf isa GaussMLE.GaussianXYNB
         return [:x, :y, :N, :bg]
     elseif psf isa GaussMLE.GaussianXYNBS
@@ -126,11 +126,11 @@ function create_camera(camera_symbol::Symbol, roi_size::Int)
 end
 
 """
-    generate_test_data(psf::PSFModel, camera, n_rois::Int, roi_size::Int; seed=42)
+    generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed=42)
 
 Generate synthetic test data with known ground truth.
 """
-function generate_test_data(psf::PSFModel, camera, n_rois::Int, roi_size::Int; seed=42)
+function generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed=42)
     Random.seed!(seed)
 
     # Base parameters (x, y, N, bg)
@@ -201,17 +201,73 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
 
         # Benchmark run with timing
         t_start = time()
-        results = GaussMLE.fit(fitter, benchmark_batch)
+        smld = GaussMLE.fit(fitter, benchmark_batch)
         t_elapsed = time() - t_start
 
         fits_per_second = benchmark / t_elapsed
 
-        # Extract results
-        params = results.parameters
-        uncertainties = results.uncertainties
+        # Extract ROI-local coordinates and parameters
+        pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
+        coords = extract_roi_coords(smld, ROI_SIZE, pixel_size)
+
+        param_names = get_param_names(config.psf_model)
+        n_params = length(param_names)
+        n_fits = length(smld.emitters)
+
+        # Build parameter matrices from extracted coordinates
+        params = zeros(Float32, n_params, n_fits)
+        uncertainties = zeros(Float32, n_params, n_fits)
+
+        # Fill in standard parameters
+        params[1, :] = coords.x_roi
+        params[2, :] = coords.y_roi
+        uncertainties[1, :] = coords.σ_x
+        uncertainties[2, :] = coords.σ_y
+
+        # Handle model-specific parameters
+        if :z in param_names
+            # AstigmaticXYZNB: x, y, z, N, bg
+            # Extract z from Emitter3DFit (convert from microns to pixels)
+            params[3, :] = Float32[e.z / pixel_size for e in smld.emitters]
+            uncertainties[3, :] = Float32[e.σ_z / pixel_size for e in smld.emitters]
+            params[4, :] = coords.photons
+            params[5, :] = coords.bg
+            uncertainties[4, :] = [e.σ_photons for e in smld.emitters]
+            uncertainties[5, :] = [e.σ_bg for e in smld.emitters]
+        else
+            # Standard models: photons, background, and optional sigma parameters
+            if :N in param_names
+                n_idx = findfirst(x -> x == :N, param_names)
+                params[n_idx, :] = coords.photons
+                uncertainties[n_idx, :] = [e.σ_photons for e in smld.emitters]
+            end
+            if :bg in param_names
+                bg_idx = findfirst(x -> x == :bg, param_names)
+                params[bg_idx, :] = coords.bg
+                uncertainties[bg_idx, :] = [e.σ_bg for e in smld.emitters]
+            end
+            # Extract σ parameters from custom emitter types (dispatch!)
+            if :σ in param_names
+                σ_idx = findfirst(x -> x == :σ, param_names)
+                # Emitter2DFitSigma has σ field (in microns), convert to pixels
+                params[σ_idx, :] = Float32[e.σ / pixel_size for e in smld.emitters]
+                uncertainties[σ_idx, :] = Float32[e.σ_σ / pixel_size for e in smld.emitters]
+            end
+            if :σx in param_names
+                σx_idx = findfirst(x -> x == :σx, param_names)
+                # Emitter2DFitSigmaXY has σx field (in microns), convert to pixels
+                params[σx_idx, :] = Float32[e.σx / pixel_size for e in smld.emitters]
+                uncertainties[σx_idx, :] = Float32[e.σ_σx / pixel_size for e in smld.emitters]
+            end
+            if :σy in param_names
+                σy_idx = findfirst(x -> x == :σy, param_names)
+                # Emitter2DFitSigmaXY has σy field (in microns), convert to pixels
+                params[σy_idx, :] = Float32[e.σy / pixel_size for e in smld.emitters]
+                uncertainties[σy_idx, :] = Float32[e.σ_σy / pixel_size for e in smld.emitters]
+            end
+        end
 
         # Calculate statistics for each parameter
-        param_names = get_param_names(config.psf_model)
         param_stats = Dict{Symbol, ParameterStats}()
 
         for (i, name) in enumerate(param_names)
@@ -219,13 +275,12 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
             uncertainty = uncertainties[i, :]
             true_vals = true_params[i, :]
 
-            # Calculate errors
+            # For all parameters, calculate errors from true values
+            # Both fitted and true_vals are in ROI-pixel coordinates
             errors = fitted .- true_vals
             bias = mean(errors)
-            empirical_std = std(errors)
+            empirical_std = std(errors)  # Measure precision (error std), not spread!
             mean_crlb = mean(uncertainty[isfinite.(uncertainty)])
-
-            # Calculate std/CRLB ratio (1.0 = optimal)
             ratio = empirical_std / mean_crlb
 
             param_stats[name] = ParameterStats(ratio, bias, empirical_std, mean_crlb)

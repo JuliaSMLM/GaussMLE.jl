@@ -2,9 +2,6 @@
 PSF Models with compile-time known parameter counts
 """
 
-using StaticArrays
-using SpecialFunctions: erf
-
 """
     PSFModel{NParams,T}
 
@@ -149,9 +146,6 @@ const Params{N} = SVector{N, Float32}
 Base.length(::Type{<:PSFModel{N,T}}) where {N,T} = N
 Base.length(::PSFModel{N,T}) where {N,T} = N
 
-# Use the GaussLib implementation for consistency
-using .GaussLib: integral_gaussian_1d
-
 # PSF evaluation interface
 
 # Fixed sigma model
@@ -260,11 +254,17 @@ function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) whe
     # Initialize z to zero - with proper gamma parameter, this is not a local minimum
     # The focal planes are separated by 2γ, so z=0 is a good starting point
     z = T(0)
-    
+
     return Params{5}(T(x), T(y), z, T(N), T(bg))
 end
 
-# Export types and functions
-export PSFModel, GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
-export Params, evaluate_psf, compute_pixel_derivatives, initialize_parameters
-export integrated_gaussian_1d
+# Pretty printing for PSF models
+Base.show(io::IO, psf::GaussianXYNB) = print(io, "GaussianXYNB(σ=$(psf.σ))")
+Base.show(io::IO, psf::GaussianXYNBS) = print(io, "GaussianXYNBS()")  # No fields, just default
+Base.show(io::IO, psf::GaussianXYNBSXSY) = print(io, "GaussianXYNBSXSY()")  # No fields
+function Base.show(io::IO, psf::AstigmaticXYZNB)
+    print(io, "AstigmaticXYZNB(")
+    print(io, "σx₀=", psf.σx₀, ", σy₀=", psf.σy₀, ", ")
+    print(io, "γ=", psf.γ, ", d=", psf.d)
+    print(io, ")")
+end

@@ -2,11 +2,6 @@
 Analytical derivatives for PSF models using GaussLib functions
 """
 
-using StaticArrays
-using .GaussLib: integral_gaussian_1d, derivative_integral_gaussian_1d, 
-                 derivative_integral_gaussian_1d_sigma, derivative_integral_gaussian_2d_sigma,
-                 derivative_integral_gaussian_2d_z, compute_alpha, derivative_alpha_z
-
 # Fixed sigma model derivatives
 @inline function compute_pixel_derivatives(i, j, θ::Params{4}, psf::GaussianXYNB)
     x, y, N, bg = θ
@@ -190,5 +185,3 @@ end
 
     return model, dudt, d2udt2_diag
 end
-
-export compute_pixel_derivatives

@@ -3,12 +3,6 @@ Camera-aware simulator with PSF-specific defaults
 Generates ROIBatch with appropriate noise models based on camera type
 """
 
-using Random
-using Distributions
-using SMLMData
-using StaticArrays
-using .GaussLib: integral_gaussian_1d, compute_alpha
-
 # PSF-specific default parameters
 get_default_params(::GaussianXYNB) = Float32[6.0, 6.0, 1000.0, 10.0]
 get_default_params(::GaussianXYNBS) = Float32[6.0, 6.0, 1000.0, 10.0, 1.3]
@@ -325,6 +319,3 @@ function _evaluate_psf_pixel(psf::AstigmaticXYZNB, i::Int, j::Int, params::Abstr
     psf_y = integral_gaussian_1d(j, y, σy)
     return bg + photons * psf_x * psf_y
 end
-
-# Export the main function
-export generate_roi_batch

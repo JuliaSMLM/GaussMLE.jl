@@ -115,8 +115,3 @@ function get_variance_map(camera)
     # Broadcasting handles both scalar and per-pixel readnoise
     return camera.readnoise .^ 2
 end
-
-# Export types and functions
-export CameraModel, IdealCamera, SCMOSCameraInternal
-export compute_likelihood_terms, compute_log_likelihood
-export to_electrons, get_variance_map

@@ -2,9 +2,6 @@
 Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 """
 
-using KernelAbstractions
-using StaticArrays
-
 # GPU-compatible Cholesky decomposition for symmetric positive definite matrices
 # This is more robust than LU for Fisher Information matrices
 @inline function static_cholesky_decomposition!(A::MMatrix{N,N,T}) where {N,T}
@@ -412,9 +409,6 @@ end
             end
         end
     end
-    
+
     @inbounds log_likelihoods[idx] = log_likelihood
 end
-
-# Export the unified kernel
-export unified_gaussian_mle_kernel!

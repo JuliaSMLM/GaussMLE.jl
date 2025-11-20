@@ -26,33 +26,38 @@ end
 println("="^70)
 println()
 
-# Main test suite
-@testset "GaussMLE.jl" begin
-    # Core CPU tests
-    @testset "CPU Tests" begin
-        # Consolidated test of all new features
-        include("test_all_new_features.jl")
+# Main test suite - wrapped in try/catch/finally to ensure benchmark runs
+global test_exception = nothing
+try
+    @testset "GaussMLE.jl" begin
+        # Core CPU tests
+        @testset "CPU Tests" begin
+            # Consolidated test of all new features
+            include("test_all_new_features.jl")
 
-        # Strict validation tests using new simulator
-        include("test_strict_validation.jl")
+            # Strict validation tests using new simulator
+            include("test_strict_validation.jl")
 
-        # Comprehensive validation tests
-        include("model_validation_tests.jl")
-        include("comprehensive_cpu_tests.jl")
-    end
+            # Comprehensive validation tests
+            include("model_validation_tests.jl")
+            include("comprehensive_cpu_tests.jl")
+        end
 
-    # GPU tests (auto-detected)
-    if GPU_AVAILABLE
-        @testset "GPU Tests" begin
-            include("gpu_tests.jl")
+        # GPU tests (auto-detected)
+        if GPU_AVAILABLE
+            @testset "GPU Tests" begin
+                include("gpu_tests.jl")
+            end
         end
     end
-end
-
-# Local performance benchmark (only runs in local environment, not on CI)
-println()
-println("="^70)
-if get(ENV, "CI", "false") == "false"
+catch e
+    global test_exception = e
+finally
+    # Local performance benchmark (only runs in local environment, not on CI)
+    # Runs in finally block so it executes even if tests fail
+    println()
+    println("="^70)
+    if get(ENV, "CI", "false") == "false"
     println("Local environment detected - running comprehensive performance benchmark")
     println("="^70)
     include("local_performance_benchmark.jl")
@@ -81,9 +86,15 @@ if get(ENV, "CI", "false") == "false"
             end
         end
     end
-else
-    println("CI environment detected - skipping local performance benchmark")
-    println("To run comprehensive benchmarks, execute tests locally:")
-    println("  julia> using Pkg; Pkg.test(\"GaussMLE\")")
-    println("="^70)
+    else
+        println("CI environment detected - skipping local performance benchmark")
+        println("To run comprehensive benchmarks, execute tests locally:")
+        println("  julia> using Pkg; Pkg.test(\"GaussMLE\")")
+        println("="^70)
+    end
+end  # end finally block
+
+# Re-throw test exception if any occurred
+if test_exception !== nothing
+    rethrow(test_exception)
 end

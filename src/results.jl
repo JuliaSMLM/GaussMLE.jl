@@ -210,6 +210,3 @@ function Base.show(io::IO, r::GaussMLEResults)
 
     println(io, "  Mean log-likelihood: $(mean(r.log_likelihoods))")
 end
-
-# Export results type
-export GaussMLEResults

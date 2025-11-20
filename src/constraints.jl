@@ -2,8 +2,6 @@
 Parameter constraint system for optimization
 """
 
-using StaticArrays
-
 # Flexible constraint system
 struct ParameterConstraints{N}
     lower::SVector{N, Float32}
@@ -53,6 +51,3 @@ end
     θ_new = θ - clamp.(Δθ, -constraints.max_step, constraints.max_step)
     return clamp.(θ_new, constraints.lower, constraints.upper)
 end
-
-# Export
-export ParameterConstraints, default_constraints, apply_constraints!
