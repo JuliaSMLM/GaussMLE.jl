@@ -67,22 +67,30 @@ end
     return compute_likelihood_terms(data, model, camera.variance_map, i, j)
 end
 
-# Log-likelihood computation
+# Log-likelihood ratio (LLR) computation: log L(fitted) - log L(saturated)
+# For goodness-of-fit testing via χ² = -2×LLR ~ χ²(df)
 @inline function compute_log_likelihood(data::T, model::T, ::IdealCamera) where T
     if model > zero(T) && data > zero(T)
-        # Simplified Poisson log-likelihood without lgamma term (constant w.r.t. parameters)
-        return data * log(model) - model
+        # LLR for Poisson: data×log(model) - model - (data×log(data) - data)
+        # Matches SMITE's Div calculation (smi_cuda_gaussMLEv2.cu)
+        return data * log(model) - model - (data * log(data) - data)
+    elseif model > zero(T) && data == zero(T)
+        # Limit as data→0: saturated term = 0, fitted term = -model
+        return -model
     else
         return zero(T)
     end
 end
 
 @inline function compute_log_likelihood(data::T, model::T, variance_map::AbstractArray, i, j) where T
-    # Gaussian approximation for sCMOS noise
+    # LLR for Gaussian (sCMOS): log L(fitted) - log L(saturated)
+    # L(saturated) has μ=data, so residual=0: log L = -0.5×log(2π×var)
+    # L(fitted): -0.5×[log(2π×var) + residual²/var]
+    # LLR = -0.5×residual²/var (constant terms cancel)
     total_var = model + variance_map[i, j]
     if total_var > zero(T)
         residual = data - model
-        return -T(0.5) * (log(T(2π) * total_var) + residual^2 / total_var)
+        return -T(0.5) * (residual^2 / total_var)
     else
         return zero(T)
     end

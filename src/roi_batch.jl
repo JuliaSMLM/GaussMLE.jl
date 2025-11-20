@@ -9,7 +9,8 @@ This file contains only GaussMLE-specific types and conversions.
 struct LocalizationResult{T,P<:PSFModel}
     parameters::Matrix{T}       # ROI coordinates (as before)
     uncertainties::Matrix{T}     # Uncertainties
-    log_likelihoods::Vector{T}  # Log-likelihood values
+    log_likelihoods::Vector{T}  # Log-likelihood ratios
+    pvalues::Vector{T}          # Goodness-of-fit p-values
 
     # Camera coordinates (computed from ROI coords + corners)
     x_camera::Vector{T}         # X position in camera pixels
@@ -36,6 +37,7 @@ function create_localization_result(
     parameters::Matrix{T},
     uncertainties::Matrix{T},
     log_likelihoods::Vector{T},
+    pvalues::Vector{T},
     roi_batch::SMLMData.ROIBatch,
     psf_model::P
 ) where {T,P<:PSFModel}
@@ -59,6 +61,7 @@ function create_localization_result(
         parameters,
         uncertainties,
         log_likelihoods,
+        pvalues,
         x_camera,
         y_camera,
         roi_batch.frame_indices,
@@ -114,7 +117,7 @@ end
 to_emitter(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) =
     to_emitter(result.psf_model, result, idx, camera; kwargs...)
 
-# ---- GaussianXYNB: Standard Emitter2DFit ----
+# ---- GaussianXYNB: Emitter2DFitGaussMLE (with p-value) ----
 function to_emitter(
     ::GaussianXYNB,
     result::LocalizationResult{T},
@@ -141,11 +144,15 @@ function to_emitter(
     σ_photons = result.uncertainties[3, idx]
     σ_bg = result.uncertainties[4, idx]
 
-    SMLMData.Emitter2DFit{T}(
+    # Goodness-of-fit
+    pvalue = result.pvalues[idx]
+
+    Emitter2DFitGaussMLE{T}(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σ_x), T(σ_y),
         σ_photons, σ_bg,
+        pvalue,
         Int(result.frame_indices[idx]),
         dataset, track_id, id
     )
@@ -181,6 +188,9 @@ function to_emitter(
     σ_bg = result.uncertainties[4, idx]
     σ_σ = result.uncertainties[5, idx] * pixel_size_x  # σ uncertainty in microns
 
+    # Goodness-of-fit
+    pvalue = result.pvalues[idx]
+
     Emitter2DFitSigma{T}(
         T(x_microns), T(y_microns),
         photons, bg,
@@ -188,6 +198,7 @@ function to_emitter(
         T(σ_x), T(σ_y),
         σ_photons, σ_bg,
         T(σ_σ),
+        pvalue,
         Int(result.frame_indices[idx]),
         dataset, track_id, id
     )
@@ -226,6 +237,9 @@ function to_emitter(
     σ_σx = result.uncertainties[5, idx] * pixel_size_x
     σ_σy = result.uncertainties[6, idx] * pixel_size_y
 
+    # Goodness-of-fit
+    pvalue = result.pvalues[idx]
+
     Emitter2DFitSigmaXY{T}(
         T(x_microns), T(y_microns),
         photons, bg,
@@ -233,6 +247,7 @@ function to_emitter(
         T(σ_x), T(σ_y),
         σ_photons, σ_bg,
         T(σ_σx), T(σ_σy),
+        pvalue,
         Int(result.frame_indices[idx]),
         dataset, track_id, id
     )
@@ -268,11 +283,15 @@ function to_emitter(
     σ_photons = result.uncertainties[4, idx]
     σ_bg = result.uncertainties[5, idx]
 
-    SMLMData.Emitter3DFit{T}(
+    # Goodness-of-fit
+    pvalue = result.pvalues[idx]
+
+    Emitter3DFitGaussMLE{T}(
         T(x_microns), T(y_microns), T(z_microns),
         photons, bg,
         T(σ_x), T(σ_y), T(σ_z),
         σ_photons, σ_bg,
+        pvalue,
         Int(result.frame_indices[idx]),
         dataset, track_id, id
     )

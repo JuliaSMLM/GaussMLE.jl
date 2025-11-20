@@ -264,6 +264,18 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
         end
     end
 
+    # Compute p-values from log-likelihood ratios
+    # χ² = -2×LLR, df = n_pixels - n_params
+    pvalues = Vector{Float32}(undef, n_fits)
+    df = box_size^2 - n_params
+    chi2_dist = Chisq(df)
+
+    for i in 1:n_fits
+        llr = log_likelihoods[i]
+        χ² = -2.0f0 * llr
+        pvalues[i] = 1.0f0 - Float32(cdf(chi2_dist, χ²))
+    end
+
     # Create minimal ROIBatch for SMLD conversion
     roi_size = size(data_f32, 1)
     corners = zeros(Int32, 2, n_fits)
@@ -281,7 +293,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     end
 
     batch = SMLMData.ROIBatch(data_f32, corners, frame_indices, camera_smld)
-    loc_result = create_localization_result(results, uncertainties, log_likelihoods, batch, fitter.psf_model)
+    loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, batch, fitter.psf_model)
 
     # Return BasicSMLD
     return to_smld(loc_result, batch)
@@ -358,8 +370,19 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
         end
     end
 
+    # Compute p-values from log-likelihood ratios
+    pvalues = Vector{Float32}(undef, n_fits)
+    df = box_size^2 - n_params
+    chi2_dist = Chisq(df)
+
+    for i in 1:n_fits
+        llr = log_likelihoods[i]
+        χ² = -2.0f0 * llr
+        pvalues[i] = 1.0f0 - Float32(cdf(chi2_dist, χ²))
+    end
+
     # Use real ROIBatch for coordinate conversion (preserves corners!)
-    loc_result = create_localization_result(results, uncertainties, log_likelihoods, roi_batch, fitter.psf_model)
+    loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
     return to_smld(loc_result, roi_batch)
 end
 

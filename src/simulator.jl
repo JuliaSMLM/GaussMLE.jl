@@ -47,10 +47,14 @@ function generate_roi_batch(
 )
     # Set random seed if provided
     !isnothing(seed) && Random.seed!(seed)
-    
+
+    # Convert PSF from microns to pixels for simulation
+    pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    psf_pixels = to_pixel_units(psf_model, pixel_size)
+
     # Generate or validate parameters
     if isnothing(true_params)
-        true_params = _generate_default_params(psf_model, n_rois, xy_variation)
+        true_params = _generate_default_params(psf_pixels, n_rois, xy_variation)
     else
         actual_n_rois = size(true_params, 2)
         if actual_n_rois != n_rois
@@ -76,9 +80,9 @@ function generate_roi_batch(
         @assert length(frame_indices) == n_rois "Must have one frame index per ROI"
     end
     
-    # Generate the ROI data with appropriate noise
-    data = _generate_roi_data(camera, psf_model, true_params, corners, roi_size)
-    
+    # Generate the ROI data with appropriate noise (use pixel-based PSF)
+    data = _generate_roi_data(camera, psf_pixels, true_params, corners, roi_size)
+
     # Create and return ROIBatch
     ROIBatch(data, corners, frame_indices, camera)
 end

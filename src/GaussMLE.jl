@@ -8,7 +8,7 @@ using Statistics
 using SpecialFunctions
 using SMLMData
 using Random
-using Distributions
+using Distributions  # For p-value computation (chi-squared CDF)
 
 # Import ROIBatch and SingleROI from SMLMData (ecosystem standard)
 using SMLMData: ROIBatch, SingleROI
@@ -43,7 +43,7 @@ export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
 export generate_roi_batch
 
 # Export custom emitter types (subtype AbstractEmitter)
-export Emitter2DFitSigma, Emitter2DFitSigmaXY
+export Emitter2DFitGaussMLE, Emitter2DFitSigma, Emitter2DFitSigmaXY, Emitter3DFitGaussMLE
 
 # Re-export SMLMData types for convenience
 export ROIBatch, SingleROI
