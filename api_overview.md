@@ -65,7 +65,7 @@ GaussMLEFitter(;
 )
 ```
 
-### `fit(fitter, data)` → `GaussMLEResults`
+### `fit(fitter, data)` → `SMLMData.BasicSMLD`
 
 Fit Gaussian blobs to ROI data.
 
@@ -76,27 +76,43 @@ Fit Gaussian blobs to ROI data.
 **Keyword Arguments:**
 - `variance_map=nothing` - Optional sCMOS variance map (legacy)
 
-**Returns:** `GaussMLEResults` with fitted parameters and uncertainties
+**Returns:** `SMLMData.BasicSMLD` with model-specific emitter types (all <: AbstractEmitter)
 
 **Dispatches:**
 - `fit(fitter, data::AbstractArray{T,3})` - Fit raw 3D array
 - `fit(fitter, roi::AbstractMatrix)` - Fit single ROI (convenience)
-- `fit(fitter, batch::ROIBatch)` - Fit ROIBatch from SMLMData
+- `fit(fitter, batch::ROIBatch{IdealCamera})` - Fit ROIBatch (uses camera coords)
+- `fit(fitter, batch::ROIBatch{SCMOSCamera})` - Fit sCMOS data (ADU→electrons preprocessing)
 
-### `GaussMLEResults`
+### Output Emitter Types (Dispatch-Based)
 
-Result container with parameter-specific field access:
+**fit() returns BasicSMLD with PSF-specific emitter types:**
 
-**Common to all PSF models:**
-- `.x`, `.y` - Positions in pixels (relative to ROI corner)
-- `.photons` - Total photon count
-- `.background` - Background level
-- `.x_error`, `.y_error`, `.photons_error`, `.background_error` - CRLB uncertainties
+#### `Emitter2DFit` (GaussianXYNB - fixed σ)
+Standard SMLMData type with fields:
+- `x`, `y` - Position (microns)
+- `photons`, `bg` - Photometry
+- `σ_x`, `σ_y`, `σ_photons`, `σ_bg` - CRLB uncertainties
 
-**Model-specific:**
-- `.sigma` (GaussianXYNBS only) - PSF width
-- `.sigma_x`, `.sigma_y` (GaussianXYNBSXSY only) - Separate widths
-- `.z` (AstigmaticXYZNB only) - Axial position
+#### `Emitter2DFitSigma` (GaussianXYNBS - fitted σ)
+Custom GaussMLE type with additional fields:
+- All Emitter2DFit fields, plus:
+- `σ` - Fitted PSF width (microns)
+- `σ_σ` - PSF width uncertainty (microns)
+
+#### `Emitter2DFitSigmaXY` (GaussianXYNBSXSY - fitted σx, σy)
+Custom GaussMLE type with additional fields:
+- All Emitter2DFit fields, plus:
+- `σx`, `σy` - Fitted PSF widths (microns)
+- `σ_σx`, `σ_σy` - PSF width uncertainties (microns)
+
+#### `Emitter3DFit` (AstigmaticXYZNB - 3D)
+Standard SMLMData type with fields:
+- `x`, `y`, `z` - Position (microns)
+- `photons`, `bg` - Photometry
+- `σ_x`, `σ_y`, `σ_z`, `σ_photons`, `σ_bg` - CRLB uncertainties
+
+**All types subtype `SMLMData.AbstractEmitter`** for ecosystem compatibility.
 
 **Raw access:**
 - `.parameters` - Full parameter matrix (n_params × n_fits)

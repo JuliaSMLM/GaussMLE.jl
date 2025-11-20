@@ -65,8 +65,10 @@ using GaussMLE
 fitter = GaussMLEFitter(psf_model=GaussianXYNBS())
 smld = fit(fitter, data)
 
-# Extract PSF widths (stored in emitter metadata for variable-σ models)
-println("Fitted $(length(smld.emitters)) localizations")
+# Extract PSF widths from Emitter2DFitSigma
+σ_values = [e.σ for e in smld.emitters]  # Microns
+σ_uncertainties = [e.σ_σ for e in smld.emitters]
+println("Mean PSF width: $(mean(σ_values)*1000) nm ± $(mean(σ_uncertainties)*1000) nm")
 ```
 
 ### GPU Acceleration
@@ -118,7 +120,7 @@ x_positions = [e.x for e in smld.emitters]
 precisions = [e.σ_x for e in smld.emitters]
 ```
 
-## Exported API (9 Functions/Types)
+## Exported API (11 Functions/Types)
 
 ### Core Functions
 - `fit(fitter, data)` → **Returns SMLMData.BasicSMLD** (ecosystem standard!)
@@ -128,10 +130,14 @@ precisions = [e.σ_x for e in smld.emitters]
 - `GaussMLEFitter(; psf_model, camera_model, device, iterations, constraints, batch_size)`
 
 ### PSF Models
-- `GaussianXYNB(σ)` - Fixed σ (4 params)
-- `GaussianXYNBS(σ₀)` - Variable σ (5 params)
-- `GaussianXYNBSXSY(σx₀, σy₀)` - Independent σx, σy (6 params)
-- `AstigmaticXYZNB{T}(...)` - 3D astigmatic (5 params)
+- `GaussianXYNB(σ)` - Fixed σ (4 params: x, y, N, bg)
+- `GaussianXYNBS(σ₀)` - Variable σ (5 params: x, y, N, bg, σ)
+- `GaussianXYNBSXSY(σx₀, σy₀)` - Independent σx, σy (6 params: x, y, N, bg, σx, σy)
+- `AstigmaticXYZNB{T}(...)` - 3D astigmatic (5 params: x, y, z, N, bg)
+
+### Custom Emitter Types
+- `Emitter2DFitSigma{T}` - 2D emitter with fitted σ (for GaussianXYNBS)
+- `Emitter2DFitSigmaXY{T}` - 2D emitter with fitted σx, σy (for GaussianXYNBSXSY)
 
 ### SMLMData Types (Re-exported)
 - `ROIBatch` - Batch of ROIs with camera context
@@ -139,15 +145,36 @@ precisions = [e.σ_x for e in smld.emitters]
 
 ### Output Format
 
-**fit() returns SMLMData.BasicSMLD** with Emitter2DFit objects:
+**fit() returns SMLMData.BasicSMLD** with model-specific emitter types:
+
 ```julia
 smld = fit(fitter, data)
 
-# Access results (standard Julia comprehensions)
+# All models: Access standard localization parameters
 x_positions = [e.x for e in smld.emitters]  # Microns
 photons = [e.photons for e in smld.emitters]
 precisions = [e.σ_x for e in smld.emitters]  # Microns
+
+# GaussianXYNBS: Access fitted PSF width (Emitter2DFitSigma)
+fitter = GaussMLEFitter(psf_model=GaussianXYNBS())
+smld = fit(fitter, data)
+σ_values = [e.σ for e in smld.emitters]  # Microns
+σ_errors = [e.σ_σ for e in smld.emitters]  # CRLB uncertainties
+
+# GaussianXYNBSXSY: Access anisotropic PSF widths (Emitter2DFitSigmaXY)
+fitter = GaussMLEFitter(psf_model=GaussianXYNBSXSY())
+smld = fit(fitter, data)
+σx_values = [e.σx for e in smld.emitters]  # Microns
+σy_values = [e.σy for e in smld.emitters]  # Microns
+
+# AstigmaticXYZNB: Access 3D positions (Emitter3DFit)
+fitter = GaussMLEFitter(psf_model=AstigmaticXYZNB{Float32}(...))
+smld = fit(fitter, data)
+z_positions = [e.z for e in smld.emitters]  # Microns
+z_errors = [e.σ_z for e in smld.emitters]  # CRLB uncertainties
 ```
+
+**All emitter types subtype `SMLMData.AbstractEmitter`** for full ecosystem compatibility.
 
 ### Advanced Features (Qualified Access)
 

@@ -49,17 +49,20 @@ println("Mean precision: $(mean(results.x_error)) pixels")
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramér-Rao lower bound for each parameter
 - **SMLMData Integration**: Works seamlessly with SMLMData.jl types
-- **Minimal API**: Only 7 exports - clean and focused interface
+- **Custom Emitter Types**: PSF-specific emitters store fitted parameters (σ, σx, σy, z)
+- **Minimal API**: Only 11 exports - clean and focused interface
 
 ### Minimal Export Philosophy
 
 GaussMLE.jl exports only what you need for common workflows:
 
-**Exported (7):**
+**Exported (11):**
 - `fit` - Main fitting function
 - `GaussMLEFitter` - Fitter constructor
 - `GaussianXYNB`, `GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` - PSF models
+- `Emitter2DFitSigma`, `Emitter2DFitSigmaXY` - Custom emitter types
 - `generate_roi_batch` - Synthetic data generation
+- `ROIBatch`, `SingleROI` - Re-exported from SMLMData
 
 **Qualified Access (use `GaussMLE.` prefix):**
 - `GaussMLE.ParameterConstraints` - Custom constraints
@@ -141,6 +144,70 @@ results = fit(fitter, data)
 # Z positions
 z_positions = results.z
 z_precision = results.z_error
+```
+
+## Output Format and Emitter Types
+
+### BasicSMLD with Custom Emitter Types
+
+**fit() returns `SMLMData.BasicSMLD`** with PSF-specific emitter types. All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
+
+#### Dispatch-Based Emitter Selection
+
+| PSF Model | Emitter Type | Additional Fields |
+|-----------|--------------|-------------------|
+| `GaussianXYNB` | `Emitter2DFit` | None (standard SMLMData type) |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | `σ`, `σ_σ` (fitted PSF width) |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `σx`, `σy`, `σ_σx`, `σ_σy` |
+| `AstigmaticXYZNB` | `Emitter3DFit` | `z`, `σ_z` (standard SMLMData type) |
+
+### Accessing Fitted Parameters
+
+```julia
+using GaussMLE
+
+# Variable σ model - returns Emitter2DFitSigma
+fitter = GaussMLEFitter(psf_model=GaussianXYNBS())
+smld = fit(fitter, data)
+
+# All emitters have standard fields
+x = [e.x for e in smld.emitters]  # Microns
+photons = [e.photons for e in smld.emitters]
+σ_x = [e.σ_x for e in smld.emitters]  # Position uncertainty (microns)
+
+# Emitter2DFitSigma also has fitted PSF width
+σ = [e.σ for e in smld.emitters]  # Fitted width (microns)
+σ_σ = [e.σ_σ for e in smld.emitters]  # Width uncertainty (microns)
+```
+
+```julia
+# Anisotropic model - returns Emitter2DFitSigmaXY
+fitter = GaussMLEFitter(psf_model=GaussianXYNBSXSY())
+smld = fit(fitter, data)
+
+# Access both σx and σy
+σx = [e.σx for e in smld.emitters]  # Microns
+σy = [e.σy for e in smld.emitters]  # Microns
+σ_σx = [e.σ_σx for e in smld.emitters]  # Uncertainties
+σ_σy = [e.σ_σy for e in smld.emitters]
+```
+
+### Type-Based Dispatch
+
+Since all emitter types subtype `AbstractEmitter`, you can write generic code:
+
+```julia
+# Works with any emitter type
+function analyze_localizations(smld::SMLMData.BasicSMLD)
+    # All emitters have x, y, photons, bg
+    positions = [(e.x, e.y) for e in smld.emitters]
+
+    # Use dispatch to access PSF-specific fields
+    if first(smld.emitters) isa GaussMLE.Emitter2DFitSigma
+        widths = [e.σ for e in smld.emitters]
+        println("Variable PSF widths available")
+    end
+end
 ```
 
 ## Mathematical Foundation
