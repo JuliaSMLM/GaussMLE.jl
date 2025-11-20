@@ -291,22 +291,22 @@ Evaluate PSF at a single pixel - dispatches on PSF model type
 """
 function _evaluate_psf_pixel(psf::GaussianXYNB, i::Int, j::Int, params::AbstractVector)
     x, y, photons, bg = params
-    psf_x = integral_gaussian_1d(i, x, psf.σ)
-    psf_y = integral_gaussian_1d(j, y, psf.σ)
+    psf_x = integral_gaussian_1d(j, x, psf.σ)
+    psf_y = integral_gaussian_1d(i, y, psf.σ)
     return bg + photons * psf_x * psf_y
 end
 
 function _evaluate_psf_pixel(::GaussianXYNBS, i::Int, j::Int, params::AbstractVector)
     x, y, photons, bg, σ = params
-    psf_x = integral_gaussian_1d(i, x, σ)
-    psf_y = integral_gaussian_1d(j, y, σ)
+    psf_x = integral_gaussian_1d(j, x, σ)
+    psf_y = integral_gaussian_1d(i, y, σ)
     return bg + photons * psf_x * psf_y
 end
 
 function _evaluate_psf_pixel(::GaussianXYNBSXSY, i::Int, j::Int, params::AbstractVector)
     x, y, photons, bg, σx, σy = params
-    psf_x = integral_gaussian_1d(i, x, σx)
-    psf_y = integral_gaussian_1d(j, y, σy)
+    psf_x = integral_gaussian_1d(j, x, σx)
+    psf_y = integral_gaussian_1d(i, y, σy)
     return bg + photons * psf_x * psf_y
 end
 
@@ -319,7 +319,7 @@ function _evaluate_psf_pixel(psf::AstigmaticXYZNB, i::Int, j::Int, params::Abstr
     σx = psf.σx₀ * sqrt(αx)
     σy = psf.σy₀ * sqrt(αy)
 
-    psf_x = integral_gaussian_1d(i, x, σx)
-    psf_y = integral_gaussian_1d(j, y, σy)
+    psf_x = integral_gaussian_1d(j, x, σx)
+    psf_y = integral_gaussian_1d(i, y, σy)
     return bg + photons * psf_x * psf_y
 end

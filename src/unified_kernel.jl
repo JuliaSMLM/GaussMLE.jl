@@ -175,8 +175,8 @@ end
     @inbounds for j in 1:box_size, i in 1:box_size
         signal = max(zero(T), roi[i,j] - bg)
         total_signal += signal
-        x_weighted += signal * T(i)
-        y_weighted += signal * T(j)
+        x_weighted += signal * T(j)
+        y_weighted += signal * T(i)
     end
 
     center = T((box_size + 1) / 2)
@@ -219,8 +219,8 @@ end
     @inbounds for j in 1:box_size, i in 1:box_size
         signal = max(zero(T), roi[i,j] - bg)
         total_signal += signal
-        dx = T(i) - x
-        dy = T(j) - y
+        dx = T(j) - x
+        dy = T(i) - y
         Mxx += signal * dx * dx
         Myy += signal * dy * dy
     end

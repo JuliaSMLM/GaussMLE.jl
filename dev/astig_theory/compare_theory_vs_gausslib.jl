@@ -195,17 +195,17 @@ function compute_fisher_gausslib(x::Float32, y::Float32, z::Float32, N::Float32,
     # Loop over pixels
     for j in 1:box_size, i in 1:box_size
         # PSF values
-        phi_x = GaussMLE.GaussLib.integral_gaussian_1d(i, x, σx_z)
-        phi_y = GaussMLE.GaussLib.integral_gaussian_1d(j, y, σy_z)
+        phi_x = GaussMLE.GaussLib.integral_gaussian_1d(j, x, σx_z)
+        phi_y = GaussMLE.GaussLib.integral_gaussian_1d(i, y, σy_z)
 
         model = bg + N * phi_x * phi_y
 
         if model > 0.0f0
             # Derivatives (GaussLib functions return (dudt, d2udt2) tuples)
-            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(i, x, σx_z, N_photons, phi_y)
-            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(j, y, σy_z, N_photons, phi_x)
-            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(i, x, σx_z, N_photons, phi_y)
-            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(j, y, σy_z, N_photons, phi_x)
+            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(j, x, σx_z, N_photons, phi_y)
+            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(i, y, σy_z, N_photons, phi_x)
+            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(j, x, σx_z, N_photons, phi_y)
+            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(i, y, σy_z, N_photons, phi_x)
 
             # These derivatives include N already, so adjust
             dmu_dx = dphi_x_dx

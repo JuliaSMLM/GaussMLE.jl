@@ -127,8 +127,8 @@ for (idx, z_true) in enumerate(z_range)
     for k in 1:n_samples_per_z
         # Generate pixels with different Poisson noise realizations
         for j in 1:box_size, i in 1:box_size
-            psf_x = GaussMLE.GaussLib.integral_gaussian_1d(i, x_true, σx_z)
-            psf_y = GaussMLE.GaussLib.integral_gaussian_1d(j, y_true, σy_z)
+            psf_x = GaussMLE.GaussLib.integral_gaussian_1d(j, x_true, σx_z)
+            psf_y = GaussMLE.GaussLib.integral_gaussian_1d(i, y_true, σy_z)
             μ = background + n_photons * psf_x * psf_y
             data[i, j, k] = Float32(rand(Poisson(μ)))
         end
