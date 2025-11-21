@@ -59,8 +59,8 @@ end
 Compute the derivative of the integral of a 2D Gaussian function with respect to sigma.
 """
 function derivative_integral_gaussian_2d_sigma(i::Int, j::Int, x::T, y::T, S::T, N::T, PSFx::T, PSFy::T) where T <: Real
-    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(i, x, S, N, PSFy)
-    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(j, y, S, N, PSFx)
+    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(j, x, S, N, PSFy)
+    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(i, y, S, N, PSFx)
     dudt = dSx + dSy
     d2udt2 = ddSx + ddSy
     return (dudt, d2udt2)
