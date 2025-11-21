@@ -1,38 +1,17 @@
 """
-Camera noise models for different detector types
+Camera noise models for likelihood calculations
+
+Note: This file defines INTERNAL types for likelihood dispatch only.
+Users interact with SMLMData.IdealCamera and SMLMData.SCMOSCamera.
 """
 
-"""
-    CameraModel
+# Lightweight marker type for Poisson-only likelihood dispatch
+# Not exported - internal use only
+struct IdealCamera end
 
-Abstract type for camera noise models used in likelihood calculations.
-"""
-abstract type CameraModel end
-
-"""
-    IdealCamera <: CameraModel
-
-Ideal camera model with Poisson noise only.
-
-Assumes photon counting statistics with no additional readout noise. Suitable for:
-- EMCCD cameras in photon-counting mode
-- Ideal simulations
-- Quick fitting when readout noise is negligible
-
-# Example
-```julia
-fitter = GaussMLEFitter(camera_model = IdealCamera())
-```
-
-# See also
-[`SCMOSCamera`](@ref) for cameras with per-pixel readout noise
-"""
-struct IdealCamera <: CameraModel end
-
-# sCMOS camera with Poisson noise + pixel-dependent readout noise
-# Internal type for fitting - lightweight model with preprocessed variance
-# Data should be preprocessed to electrons before fitting
-struct SCMOSCameraInternal{T} <: CameraModel
+# Internal sCMOS representation with preprocessed variance
+# Not exported - internal use only
+struct SCMOSCameraInternal{T}
     variance_map::T  # Pixel-wise readout noise variance (e⁻²)
 end
 

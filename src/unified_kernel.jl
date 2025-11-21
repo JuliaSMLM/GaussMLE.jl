@@ -267,6 +267,17 @@ end
     end
 end
 
+# Likelihood dispatch helpers - compile-time Val{Bool} branching
+# Val{false} → IdealCamera (Poisson only)
+@inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, i, j) where T
+    return compute_likelihood_terms(data, model, IdealCamera())
+end
+
+# Val{true} → SCMOSCamera (Poisson + variance)
+@inline function _dispatch_likelihood(::Val{true}, data::T, model::T, variance_map, i, j) where T
+    return compute_likelihood_terms(data, model, variance_map, i, j)
+end
+
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
     results::AbstractArray{T,2},
@@ -274,8 +285,8 @@ end
     log_likelihoods::AbstractArray{T,1},
     @Const(data::AbstractArray{T,3}),
     @Const(psf_model::PSFModel{N,T}),
-    @Const(camera_model),
-    @Const(variance_map),  # Separate variance_map for sCMOS (nothing for IdealCamera)
+    @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
+    @Const(variance_map),  # variance map (zeros for Ideal, readnoise² for sCMOS)
     @Const(constraints::ParameterConstraints{N}),
     iterations::Int
 ) where {T, N}
@@ -302,14 +313,9 @@ end
             θ_static = SVector{N,T}(θ)
             model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ_static, psf_model)
             
-            # Likelihood terms based on camera model
+            # Likelihood terms based on camera model (Val dispatch for compile-time optimization)
             data_ij = roi[i, j]
-            cf, df = if camera_model isa IdealCamera
-                compute_likelihood_terms(data_ij, model, camera_model)
-            else
-                # sCMOS: use separate variance_map argument
-                compute_likelihood_terms(data_ij, model, variance_map, i, j)
-            end
+            cf, df = _dispatch_likelihood(camera_model, data_ij, model, variance_map, i, j)
             
             # Accumulate gradient and diagonal Hessian
             for k in 1:N

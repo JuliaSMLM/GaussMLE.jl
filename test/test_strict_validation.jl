@@ -285,7 +285,7 @@ Using the new camera-aware simulator for reliable test data generation
                                            corners=dummy_corners_scmos,
                                            seed=45)
 
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, camera_model=scmos, device=GaussMLE.CPU(), iterations=20)
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
         smld = GaussMLE.fit(fitter, batch)
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
