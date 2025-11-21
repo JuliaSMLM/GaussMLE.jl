@@ -279,7 +279,8 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     # Create minimal ROIBatch for SMLD conversion
     roi_size = size(data_f32, 1)
     corners = zeros(Int32, 2, n_fits)
-    corners[1, :] = (0:n_fits-1) * roi_size  # Spread horizontally
+    corners[1, :] = 1 .+ (0:n_fits-1) * roi_size  # [1, 1+roi_size, ...] (1-indexed for Julia)
+    corners[2, :] .= Int32(1)  # All at y=1
     frame_indices = ones(Int32, n_fits)
 
     # Convert camera to SMLMData type if needed

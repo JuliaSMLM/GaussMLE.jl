@@ -30,9 +30,9 @@ function extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size:
     σ_y = Vector{Float32}(undef, n)
 
     for (i, e) in enumerate(smld.emitters)
-        # Dummy corners: [0, 11, 22, ...] horizontally
-        corner_x = Float32((i-1) * roi_size)
-        corner_y = 0.0f0
+        # Dummy corners: [1, 12, 23, ...] horizontally (matches interface.jl)
+        corner_x = Float32(1 + (i-1) * roi_size)
+        corner_y = 1.0f0
 
         # Forward transform (see roi_batch.jl):
         #   x_camera = corner_x + x_roi - 1

@@ -92,9 +92,15 @@ Using the new camera-aware simulator for reliable test data generation
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
         
-        batch = GaussMLE.generate_roi_batch(camera, psf; 
+        # Generate dummy corners that match interface.jl convention
+        dummy_corners = zeros(Int32, 2, n_rois)
+        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
+        dummy_corners[2, :] .= Int32(1)  # All at y=1
+
+        batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
                                            true_params=true_params,
+                                           corners=dummy_corners,
                                            seed=42)
         
         # Fit
@@ -133,9 +139,15 @@ Using the new camera-aware simulator for reliable test data generation
             20.0 .+ 5.0f0 * randn(Float32, n_rois)'
         ]
         
-        batch = GaussMLE.generate_roi_batch(camera, psf; 
+        # Generate dummy corners that match interface.jl convention
+        dummy_corners = zeros(Int32, 2, n_rois)
+        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
+        dummy_corners[2, :] .= Int32(1)  # All at y=1
+
+        batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
                                            true_params=true_params,
+                                           corners=dummy_corners,
                                            seed=43)
         
         fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
@@ -175,9 +187,15 @@ Using the new camera-aware simulator for reliable test data generation
             10.0f0 * ones(Float32, n_rois)'
         ]
         
-        batch = GaussMLE.generate_roi_batch(camera, psf; 
+        # Generate dummy corners that match interface.jl convention
+        dummy_corners = zeros(Int32, 2, n_rois)
+        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
+        dummy_corners[2, :] .= Int32(1)  # All at y=1
+
+        batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
                                            true_params=true_params,
+                                           corners=dummy_corners,
                                            seed=44)
         
         fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
@@ -220,9 +238,14 @@ Using the new camera-aware simulator for reliable test data generation
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
         
-        batch = GaussMLE.generate_roi_batch(scmos, psf; 
+        # Generate dummy corners that match extract_roi_coords assumptions
+        dummy_corners_scmos = zeros(Int32, 2, n_rois)
+        dummy_corners_scmos[1, :] = Int32.((0:n_rois-1) * 11)  # [0, 11, 22, ...] horizontally
+
+        batch = GaussMLE.generate_roi_batch(scmos, psf;
                                            n_rois=n_rois,
                                            true_params=true_params,
+                                           corners=dummy_corners_scmos,
                                            seed=45)
         
         fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
@@ -253,9 +276,14 @@ Using the new camera-aware simulator for reliable test data generation
             1.3f0 .+ 0.2f0 * randn(Float32, n_rois)'
         ]
         
-        batch_nbs = GaussMLE.generate_roi_batch(camera, psf_nbs; 
+        # Generate dummy corners that match extract_roi_coords assumptions
+        dummy_corners_nbs = zeros(Int32, 2, n_rois)
+        dummy_corners_nbs[1, :] = Int32.((0:n_rois-1) * 11)  # [0, 11, 22, ...] horizontally
+
+        batch_nbs = GaussMLE.generate_roi_batch(camera, psf_nbs;
                                                n_rois=n_rois,
                                                true_params=true_params_nbs,
+                                               corners=dummy_corners_nbs,
                                                seed=46)
         
         fitter_nbs = GaussMLE.GaussMLEFitter(psf_model=psf_nbs, device=GaussMLE.CPU(), iterations=20)
@@ -280,6 +308,7 @@ Using the new camera-aware simulator for reliable test data generation
         batch_sxsy = GaussMLE.generate_roi_batch(camera, psf_sxsy;
                                                 n_rois=n_rois,
                                                 true_params=true_params_sxsy,
+                                                corners=dummy_corners_nbs,  # Reuse same dummy corners
                                                 seed=47)
 
         fitter_sxsy = GaussMLE.GaussMLEFitter(psf_model=psf_sxsy, device=GaussMLE.CPU(), iterations=20)
@@ -312,9 +341,14 @@ Using the new camera-aware simulator for reliable test data generation
                 10.0f0 * ones(Float32, n_rois)'
             ]
             
-            batch = GaussMLE.generate_roi_batch(camera, psf; 
+            # Generate dummy corners that match extract_roi_coords assumptions
+            dummy_corners_photon = zeros(Int32, 2, n_rois)
+            dummy_corners_photon[1, :] = Int32.((0:n_rois-1) * 11)  # [0, 11, 22, ...] horizontally
+
+            batch = GaussMLE.generate_roi_batch(camera, psf;
                                                n_rois=n_rois,
                                                true_params=true_params,
+                                               corners=dummy_corners_photon,
                                                seed=48)
             
             fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
