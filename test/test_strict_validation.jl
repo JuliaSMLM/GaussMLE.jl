@@ -7,17 +7,18 @@ Using the new camera-aware simulator for reliable test data generation
     
     # Helper function to validate fitting results using proper ROI coordinate extraction
     function validate_fits(smld::SMLMData.BasicSMLD,
+                           roi_batch::SMLMData.ROIBatch,
                            expected_params::Matrix{Float32};
                            param_idx::Int,
                            bias_tol::Float32 = 0.1f0,
                            std_ratio_tol::Float32 = 0.25f0,
-                           verbose::Bool = false,
-                           roi_size::Int = 11)
+                           verbose::Bool = false)
 
-        pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
+        pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
+        roi_size = size(roi_batch.data, 1)
 
-        # Extract ROI-local coordinates (handles camera→ROI conversion properly)
-        coords = extract_roi_coords(smld, roi_size, pixel_size)
+        # Extract ROI-local coordinates using actual corners from ROIBatch
+        coords = extract_roi_coords(smld, roi_batch.corners, roi_size, pixel_size)
 
         # Map parameter index to extracted coordinates
         fitted = if param_idx == 1
@@ -119,10 +120,10 @@ Using the new camera-aware simulator for reliable test data generation
         # Validate each parameter
         verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
 
-        x_val = validate_fits(smld, true_params, param_idx=1, bias_tol=0.1f0, verbose=verbose)
-        y_val = validate_fits(smld, true_params, param_idx=2, bias_tol=0.1f0, verbose=verbose)
-        n_val = validate_fits(smld, true_params, param_idx=3, bias_tol=50.0f0, verbose=verbose)
-        b_val = validate_fits(smld, true_params, param_idx=4, bias_tol=2.0f0, verbose=verbose)
+        x_val = validate_fits(smld, batch, true_params, param_idx=1, bias_tol=0.1f0, verbose=verbose)
+        y_val = validate_fits(smld, batch, true_params, param_idx=2, bias_tol=0.1f0, verbose=verbose)
+        n_val = validate_fits(smld, batch, true_params, param_idx=3, bias_tol=50.0f0, verbose=verbose)
+        b_val = validate_fits(smld, batch, true_params, param_idx=4, bias_tol=2.0f0, verbose=verbose)
 
         @test x_val.bias_pass  # Always true for positions (see helper)
         @test y_val.bias_pass
@@ -172,7 +173,7 @@ Using the new camera-aware simulator for reliable test data generation
         smld = GaussMLE.fit(fitter, batch)
 
         # More relaxed tolerances for low SNR
-        x_val = validate_fits(smld, true_params, param_idx=1, bias_tol=0.2f0, std_ratio_tol=0.35f0)
+        x_val = validate_fits(smld, batch, true_params, param_idx=1, bias_tol=0.2f0, std_ratio_tol=0.35f0)
 
         @test x_val.bias_pass  # Always true for positions
         @test x_val.std_pass
@@ -290,7 +291,7 @@ Using the new camera-aware simulator for reliable test data generation
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
         # Standard tolerances apply
-        x_val = validate_fits(smld, true_params, param_idx=1,
+        x_val = validate_fits(smld, batch, true_params, param_idx=1,
                              bias_tol=0.1f0, std_ratio_tol=0.25f0)
 
         @test x_val.bias_pass  # Always true for positions
@@ -365,7 +366,7 @@ Using the new camera-aware simulator for reliable test data generation
         @test all([isfinite(e.σ_x) && isfinite(e.σ_y) for e in smld_sxsy.emitters])
 
         # Basic validation for anisotropic model
-        x_val_sxsy = validate_fits(smld_sxsy, true_params_sxsy, param_idx=1,
+        x_val_sxsy = validate_fits(smld_sxsy, batch_sxsy, true_params_sxsy, param_idx=1,
                                    bias_tol=0.15f0, std_ratio_tol=0.35f0)
         @test x_val_sxsy.bias_pass  # Always true for positions
     end

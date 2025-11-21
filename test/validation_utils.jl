@@ -7,20 +7,28 @@ using Statistics
 using Distributions
 
 """
-    extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size::Float32=0.1f0)
+    extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real)
 
-Extract ROI-local coordinates from BasicSMLD for validation.
+Extract ROI-local coordinates from BasicSMLD using actual ROI corners.
 
-For fit(Array), dummy corners are: corner[i] = (i-1)*roi_size, 0
-This reverses the coordinate transformation to recover fitted ROI positions.
+Converts fitted results (in camera/micron coordinates) back to ROI-local coordinates
+using the true corner positions from the ROIBatch.
 
-Returns vectors of ROI-local parameters (in pixels):
+# Arguments
+- `smld`: Fitted localization results
+- `corners`: Actual ROI corners from ROIBatch (2×n_rois matrix, 1-indexed camera positions)
+- `roi_size`: Size of ROI (pixels)
+- `pixel_size`: Camera pixel size (microns)
+
+# Returns
+NamedTuple with ROI-local parameters (in pixels):
 - x_roi, y_roi: Positions within ROI (1-indexed pixels)
 - photons, bg: Photometry (unchanged)
 - σ_x, σ_y: Uncertainties (in pixels)
 """
-function extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size::Real=0.1f0)
+function extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real)
     n = length(smld.emitters)
+    @assert size(corners, 2) == n "Number of corners must match number of emitters"
 
     x_roi = Vector{Float32}(undef, n)
     y_roi = Vector{Float32}(undef, n)
@@ -30,9 +38,9 @@ function extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size:
     σ_y = Vector{Float32}(undef, n)
 
     for (i, e) in enumerate(smld.emitters)
-        # Dummy corners: [1, 12, 23, ...] horizontally (matches interface.jl)
-        corner_x = Float32(1 + (i-1) * roi_size)
-        corner_y = 1.0f0
+        # Use actual corner from ROIBatch
+        corner_x = Float32(corners[1, i])
+        corner_y = Float32(corners[2, i])
 
         # Forward transform (see roi_batch.jl):
         #   x_camera = corner_x + x_roi - 1
@@ -192,8 +200,16 @@ function validate_fitting_results(
     verbose::Bool = false
 )
     # Extract ROI-local coordinates
+    # For fit(Array), use dummy corners [1, 12, 23, ...] (matches interface.jl)
+    n = length(smld.emitters)
+    dummy_corners = zeros(Int32, 2, n)
+    for i in 1:n
+        dummy_corners[1, i] = Int32(1 + (i-1) * roi_size)
+        dummy_corners[2, i] = Int32(1)
+    end
+
     pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
-    coords = extract_roi_coords(smld, roi_size, pixel_size)
+    coords = extract_roi_coords(smld, dummy_corners, roi_size, pixel_size)
 
     # All parameters are now accessible via custom emitter types!
     # - sigma: Emitter2DFitSigma

@@ -206,9 +206,9 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
 
         fits_per_second = benchmark / t_elapsed
 
-        # Extract ROI-local coordinates and parameters
-        pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
-        coords = extract_roi_coords(smld, ROI_SIZE, pixel_size)
+        # Extract ROI-local coordinates using actual batch corners
+        pixel_size = benchmark_batch.camera.pixel_edges_x[2] - benchmark_batch.camera.pixel_edges_x[1]
+        coords = extract_roi_coords(smld, benchmark_batch.corners, ROI_SIZE, pixel_size)
 
         param_names = get_param_names(config.psf_model)
         n_params = length(param_names)
