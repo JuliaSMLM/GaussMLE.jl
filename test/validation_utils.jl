@@ -19,7 +19,7 @@ Returns vectors of ROI-local parameters (in pixels):
 - photons, bg: Photometry (unchanged)
 - σ_x, σ_y: Uncertainties (in pixels)
 """
-function extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size::Float32=0.1f0)
+function extract_roi_coords(smld::SMLMData.BasicSMLD, roi_size::Int, pixel_size::Real=0.1f0)
     n = length(smld.emitters)
 
     x_roi = Vector{Float32}(undef, n)
