@@ -168,16 +168,8 @@ println("Mean localization precision: ", mean(results.x_error))
 function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
              variance_map=nothing) where T
 
-    # Update camera model if variance map provided
-    camera = if !isnothing(variance_map) && fitter.camera_model isa IdealCamera
-        @info "Variance map provided, switching to sCMOS noise model"
-        SCMOSCamera(variance_map)
-    else
-        fitter.camera_model
-    end
-
-    # Validate input (pass camera to suppress sCMOS negative value warnings)
-    validate_fit_input(data, camera)
+    # Validate input
+    validate_fit_input(data, nothing)
 
     n_fits = size(data, 3)
     n_params = length(fitter.psf_model)
@@ -186,12 +178,8 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     # Convert data to Float32 if needed
     data_f32 = convert(Array{Float32,3}, data)
 
-    # Get pixel size from camera and convert PSF to pixel units for kernel
-    pixel_size = if camera isa SMLMData.AbstractCamera
-        camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-    else
-        0.1f0  # Default for internal cameras
-    end
+    # Default pixel size for Array input (no camera attached)
+    pixel_size = 0.1f0
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
     # Allocate result arrays
@@ -199,8 +187,9 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
 
-    # Prepare camera parameters for kernel
-    use_scmos, variance_map = prepare_camera_params(camera, box_size, Float32)
+    # Determine camera model from variance_map keyword
+    use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
+    var_map = isnothing(variance_map) ? zeros(Float32, box_size, box_size) : Float32.(variance_map)
 
     # Use unified kernel for both CPU and GPU
     if fitter.device isa CPU
@@ -208,7 +197,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, variance_map,
+               data_f32, psf_pixels, use_scmos, var_map,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -227,8 +216,8 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             copyto!(d_batch_data, batch_data)
 
             # Move variance map to device (same for all batches)
-            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
+            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(var_map))
+            copyto!(d_variance_map, var_map)
 
             # Allocate device arrays for results
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
@@ -271,15 +260,8 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     corners[2, :] .= Int32(1)  # All at y=1
     frame_indices = ones(Int32, n_fits)
 
-    # Convert camera to SMLMData type if needed
-    camera_smld = if camera isa IdealCamera
-        SMLMData.IdealCamera(0:1023, 0:1023, 0.1f0)
-    elseif camera isa SCMOSCameraInternal
-        @warn "sCMOS from array: using IdealCamera for SMLD"
-        SMLMData.IdealCamera(0:1023, 0:1023, 0.1f0)
-    else
-        camera
-    end
+    # Create minimal camera for SMLD conversion (fit(Array) has no real camera)
+    camera_smld = SMLMData.IdealCamera(0:1023, 0:1023, pixel_size)
 
     batch = SMLMData.ROIBatch(data_f32, corners, frame_indices, camera_smld)
     loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, batch, fitter.psf_model)

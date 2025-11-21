@@ -209,25 +209,23 @@ Tests that fitted values and uncertainties match expectations within tolerance
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
         
         # Create variance map (readout noise)
-        variance_map = ones(Float32, box_size, box_size) * 25.0f0  # 5 e- readout noise
-        camera_model = GaussMLE.SCMOSCameraInternal(variance_map)
-        
+        variance_map = ones(Float32, box_size, box_size) * 25.0f0  # 5 e- readout noise squared
+
         # Generate test data with sCMOS noise
         data, true_params = generate_test_data(:xynb, 500, box_size; sigma=1.3f0)
-        
+
         # Add readout noise
         for k in 1:size(data, 3)
             data[:, :, k] .+= randn(Float32, box_size, box_size) .* sqrt(25.0f0)
         end
-        
-        # Fit with sCMOS model
+
+        # Fit with sCMOS model (variance_map passed to fit())
         fitter = GaussMLE.GaussMLEFitter(
             psf_model = psf_model,
-            camera_model = camera_model,
             device = GaussMLE.CPU()
         )
 
-        smld = GaussMLE.fit(fitter, data)
+        smld = GaussMLE.fit(fitter, data; variance_map=variance_map)
 
         # Validate - use photons since position comparison doesn't work
         photons_result = validate_fitting_results(
