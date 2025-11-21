@@ -191,13 +191,18 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
     var_map = isnothing(variance_map) ? zeros(Float32, box_size, box_size) : Float32.(variance_map)
 
+    # Create dummy corners for fit(Array): [1, 1+roi_size, 1+2*roi_size, ...]
+    corners = zeros(Int32, 2, n_fits)
+    corners[1, :] = 1 .+ (0:n_fits-1) * box_size  # x corners
+    corners[2, :] .= Int32(1)  # y corners all at 1
+
     # Use unified kernel for both CPU and GPU
     if fitter.device isa CPU
         # Use unified kernel on CPU
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, var_map,
+               data_f32, psf_pixels, use_scmos, var_map, corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -219,6 +224,11 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(var_map))
             copyto!(d_variance_map, var_map)
 
+            # Move batch corners to device
+            batch_corners = corners[:, batch_start:batch_end]
+            d_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, size(batch_corners))
+            copyto!(d_corners, batch_corners)
+
             # Allocate device arrays for results
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
             d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
@@ -227,7 +237,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             # Launch unified kernel (works on GPU!)
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size)
             
@@ -307,7 +317,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, variance_map,
+               data_f32, psf_pixels, use_scmos, variance_map, roi_batch.corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -324,13 +334,17 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
             d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
             copyto!(d_variance_map, variance_map)
 
+            batch_corners = roi_batch.corners[:, batch_start:batch_end]
+            d_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, size(batch_corners))
+            copyto!(d_corners, batch_corners)
+
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
             d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
             d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size_actual)
 
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
 
@@ -387,7 +401,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
         backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(backend)
         kernel(results, uncertainties, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, variance_map,
+               data_f32, psf_pixels, use_scmos, variance_map, roi_batch.corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
         KernelAbstractions.synchronize(backend)
@@ -404,13 +418,17 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
             d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
             copyto!(d_variance_map, variance_map)
 
+            batch_corners = roi_batch.corners[:, batch_start:batch_end]
+            d_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, size(batch_corners))
+            copyto!(d_corners, batch_corners)
+
             d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
             d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
             d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size_actual)
 
             kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
 

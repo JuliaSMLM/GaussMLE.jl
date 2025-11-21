@@ -269,13 +269,16 @@ end
 
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
 # Val{false} → IdealCamera (Poisson only)
-@inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, i, j) where T
+@inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where T
     return compute_likelihood_terms(data, model, IdealCamera())
 end
 
 # Val{true} → SCMOSCamera (Poisson + variance)
-@inline function _dispatch_likelihood(::Val{true}, data::T, model::T, variance_map, i, j) where T
-    return compute_likelihood_terms(data, model, variance_map, i, j)
+@inline function _dispatch_likelihood(::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where T
+    # Convert ROI-local (i,j) to camera coordinates for variance lookup
+    cam_i = corner_y + i - 1
+    cam_j = corner_x + j - 1
+    return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
 # Unified kernel that works on both CPU and GPU
@@ -286,15 +289,20 @@ end
     @Const(data::AbstractArray{T,3}),
     @Const(psf_model::PSFModel{N,T}),
     @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
-    @Const(variance_map),  # variance map (zeros for Ideal, readnoise² for sCMOS)
+    @Const(variance_map),  # 2D variance map (camera-sized for sCMOS)
+    @Const(corners),       # 2×n_rois corners for variance indexing
     @Const(constraints::ParameterConstraints{N}),
     iterations::Int
 ) where {T, N}
     idx = @index(Global)
-    
+
     # Get the data for this fit
     box_size = size(data, 1)
     @inbounds roi = @view data[:, :, idx]
+
+    # Get corner for variance map indexing (sCMOS only)
+    corner_x = corners[1, idx]
+    corner_y = corners[2, idx]
     
     # Stack-allocated working arrays (known size at compile time)
     θ = simple_initialize(roi, box_size, psf_model)
@@ -315,7 +323,7 @@ end
             
             # Likelihood terms based on camera model (Val dispatch for compile-time optimization)
             data_ij = roi[i, j]
-            cf, df = _dispatch_likelihood(camera_model, data_ij, model, variance_map, i, j)
+            cf, df = _dispatch_likelihood(camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j)
             
             # Accumulate gradient and diagonal Hessian
             for k in 1:N
@@ -352,12 +360,15 @@ end
         model, dudt, _ = compute_pixel_derivatives(i, j, θ_static, psf_model)
         data_ij = roi[i, j]
 
-        # Log-likelihood contribution
-        if camera_model isa IdealCamera
-            log_likelihood += compute_log_likelihood(data_ij, model, camera_model)
+        # Log-likelihood contribution (dispatch based on camera_model Val)
+        # camera_model is Val{false} for IdealCamera, Val{true} for sCMOS
+        log_likelihood += if camera_model isa Val{false}
+            compute_log_likelihood(data_ij, model, IdealCamera())
         else
-            # sCMOS: use separate variance_map argument
-            log_likelihood += compute_log_likelihood(data_ij, model, variance_map, i, j)
+            # sCMOS: convert ROI-local (i,j) to camera coordinates
+            cam_i = corner_y + i - 1
+            cam_j = corner_x + j - 1
+            compute_log_likelihood(data_ij, model, variance_map, cam_i, cam_j)
         end
 
         # Fisher Information Matrix (for CRLB) - need full matrix here
@@ -368,8 +379,10 @@ end
             variance = if isnothing(variance_map)
                 model  # Poisson only (IdealCamera)
             else
-                # sCMOS camera - use separate variance_map
-                model + variance_map[i, j]
+                # sCMOS camera - convert ROI-local (i,j) to camera coordinates
+                cam_i = corner_y + i - 1
+                cam_j = corner_x + j - 1
+                model + variance_map[cam_i, cam_j]
             end
 
             for k in 1:N, l in k:N
