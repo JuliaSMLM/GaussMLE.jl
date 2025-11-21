@@ -63,14 +63,34 @@ function generate_roi_batch(
     end
     
     # Generate or validate corners
+    camera_size = (
+        length(camera.pixel_edges_x) - 1,
+        length(camera.pixel_edges_y) - 1
+    )
+
     if isnothing(corners)
-        camera_size = (
-            length(camera.pixel_edges_x) - 1,
-            length(camera.pixel_edges_y) - 1
-        )
         corners = _generate_corners(n_rois, camera_size, roi_size, corner_mode, min_spacing)
     else
         @assert size(corners) == (2, n_rois) "Corners must be 2×n_rois"
+
+        # Validate that all ROIs fit within camera bounds
+        max_x = camera_size[1] - roi_size + 1
+        max_y = camera_size[2] - roi_size + 1
+
+        for i in 1:n_rois
+            x_corner = corners[1, i]
+            y_corner = corners[2, i]
+
+            if x_corner < 1 || x_corner > max_x
+                error("ROI $i: x corner ($x_corner) must be in range [1, $max_x] " *
+                      "for ROI size $roi_size on camera width $(camera_size[1])")
+            end
+
+            if y_corner < 1 || y_corner > max_y
+                error("ROI $i: y corner ($y_corner) must be in range [1, $max_y] " *
+                      "for ROI size $roi_size on camera height $(camera_size[2])")
+            end
+        end
     end
     
     # Generate or validate frame indices

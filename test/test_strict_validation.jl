@@ -92,10 +92,19 @@ Using the new camera-aware simulator for reliable test data generation
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
         
-        # Generate dummy corners that match interface.jl convention
+        # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+        # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
-        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
-        dummy_corners[2, :] .= Int32(1)  # All at y=1
+        max_corner = 512 - 11 + 1  # Maximum valid corner position
+        roi_spacing = 11  # Space ROIs by their size to avoid overlap
+        rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
+
+        for i in 1:n_rois
+            row = div(i-1, rois_per_row)
+            col = mod(i-1, rois_per_row)
+            dummy_corners[1, i] = Int32(1 + col * roi_spacing)
+            dummy_corners[2, i] = Int32(1 + row * roi_spacing)
+        end
 
         batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
@@ -139,10 +148,19 @@ Using the new camera-aware simulator for reliable test data generation
             20.0 .+ 5.0f0 * randn(Float32, n_rois)'
         ]
         
-        # Generate dummy corners that match interface.jl convention
+        # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+        # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
-        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
-        dummy_corners[2, :] .= Int32(1)  # All at y=1
+        max_corner = 512 - 11 + 1  # Maximum valid corner position
+        roi_spacing = 11  # Space ROIs by their size to avoid overlap
+        rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
+
+        for i in 1:n_rois
+            row = div(i-1, rois_per_row)
+            col = mod(i-1, rois_per_row)
+            dummy_corners[1, i] = Int32(1 + col * roi_spacing)
+            dummy_corners[2, i] = Int32(1 + row * roi_spacing)
+        end
 
         batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
@@ -187,10 +205,19 @@ Using the new camera-aware simulator for reliable test data generation
             10.0f0 * ones(Float32, n_rois)'
         ]
         
-        # Generate dummy corners that match interface.jl convention
+        # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+        # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
-        dummy_corners[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
-        dummy_corners[2, :] .= Int32(1)  # All at y=1
+        max_corner = 512 - 11 + 1  # Maximum valid corner position
+        roi_spacing = 11  # Space ROIs by their size to avoid overlap
+        rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
+
+        for i in 1:n_rois
+            row = div(i-1, rois_per_row)
+            col = mod(i-1, rois_per_row)
+            dummy_corners[1, i] = Int32(1 + col * roi_spacing)
+            dummy_corners[2, i] = Int32(1 + row * roi_spacing)
+        end
 
         batch = GaussMLE.generate_roi_batch(camera, psf;
                                            n_rois=n_rois,
@@ -238,23 +265,33 @@ Using the new camera-aware simulator for reliable test data generation
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
         
-        # Generate dummy corners that match interface.jl (1-indexed for Julia)
+        # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+        # Camera is 256x256, ROI is 11x11, so max corner is 256 - 11 + 1 = 246
         dummy_corners_scmos = zeros(Int32, 2, n_rois)
-        dummy_corners_scmos[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...] (1-indexed)
-        dummy_corners_scmos[2, :] .= Int32(1)  # All at y=1
+        max_corner = 256 - 11 + 1  # Maximum valid corner position
+        roi_spacing = 11  # Space ROIs by their size to avoid overlap
+        rois_per_row = div(max_corner, roi_spacing)  # ~22 ROIs per row
+
+        for i in 1:n_rois
+            row = div(i-1, rois_per_row)
+            col = mod(i-1, rois_per_row)
+            dummy_corners_scmos[1, i] = Int32(1 + col * roi_spacing)
+            dummy_corners_scmos[2, i] = Int32(1 + row * roi_spacing)
+        end
 
         batch = GaussMLE.generate_roi_batch(scmos, psf;
                                            n_rois=n_rois,
                                            true_params=true_params,
                                            corners=dummy_corners_scmos,
                                            seed=45)
-        
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
+
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, camera_model=scmos, device=GaussMLE.CPU(), iterations=20)
         smld = GaussMLE.fit(fitter, batch)
 
-        # sCMOS should still meet specifications, but with slightly relaxed tolerances
+        # sCMOS CRLB properly accounts for spatially-varying readnoise
+        # Standard tolerances apply
         x_val = validate_fits(smld, true_params, param_idx=1,
-                             bias_tol=0.15f0, std_ratio_tol=0.30f0)
+                             bias_tol=0.1f0, std_ratio_tol=0.25f0)
 
         @test x_val.bias_pass  # Always true for positions
         @test x_val.std_pass
@@ -277,10 +314,19 @@ Using the new camera-aware simulator for reliable test data generation
             1.3f0 .+ 0.2f0 * randn(Float32, n_rois)'
         ]
         
-        # Generate dummy corners that match interface.jl (1-indexed)
+        # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+        # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners_nbs = zeros(Int32, 2, n_rois)
-        dummy_corners_nbs[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...]
-        dummy_corners_nbs[2, :] .= Int32(1)  # All at y=1
+        max_corner = 512 - 11 + 1  # Maximum valid corner position
+        roi_spacing = 11  # Space ROIs by their size to avoid overlap
+        rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
+
+        for i in 1:n_rois
+            row = div(i-1, rois_per_row)
+            col = mod(i-1, rois_per_row)
+            dummy_corners_nbs[1, i] = Int32(1 + col * roi_spacing)
+            dummy_corners_nbs[2, i] = Int32(1 + row * roi_spacing)
+        end
 
         batch_nbs = GaussMLE.generate_roi_batch(camera, psf_nbs;
                                                n_rois=n_rois,
@@ -343,10 +389,19 @@ Using the new camera-aware simulator for reliable test data generation
                 10.0f0 * ones(Float32, n_rois)'
             ]
             
-            # Generate dummy corners that match interface.jl (1-indexed)
+            # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
+            # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
             dummy_corners_photon = zeros(Int32, 2, n_rois)
-            dummy_corners_photon[1, :] = Int32.(1 .+ (0:n_rois-1) * 11)  # [1, 12, 23, ...]
-            dummy_corners_photon[2, :] .= Int32(1)  # All at y=1
+            max_corner = 512 - 11 + 1  # Maximum valid corner position
+            roi_spacing = 11  # Space ROIs by their size to avoid overlap
+            rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
+
+            for i in 1:n_rois
+                row = div(i-1, rois_per_row)
+                col = mod(i-1, rois_per_row)
+                dummy_corners_photon[1, i] = Int32(1 + col * roi_spacing)
+                dummy_corners_photon[2, i] = Int32(1 + row * roi_spacing)
+            end
 
             batch = GaussMLE.generate_roi_batch(camera, psf;
                                                n_rois=n_rois,

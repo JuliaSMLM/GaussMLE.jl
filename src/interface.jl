@@ -393,19 +393,26 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     # Preprocess ADU → electrons
     data_electrons = to_electrons(roi_batch.data, roi_batch.camera)
 
-    # Create ROIBatch with electron data but same corners/camera
+    # Create ROIBatch with electron data using IdealCamera
+    # After conversion to electrons, we fit with Poisson noise (variance map handled via fitter.camera_model)
+    camera_width = length(roi_batch.camera.pixel_edges_x) - 1
+    camera_height = length(roi_batch.camera.pixel_edges_y) - 1
+    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
+
+    ideal_camera = SMLMData.IdealCamera(camera_width, camera_height, pixel_size)
+
     batch_electrons = SMLMData.ROIBatch(
         data_electrons,
         roi_batch.corners,  # Preserve corners!
         roi_batch.frame_indices,
-        roi_batch.camera
+        ideal_camera  # Use IdealCamera after conversion to electrons
     )
 
-    # Create fitter with SCMOSCamera
+    # Create fitter with SCMOSCamera (for variance map)
     fitter_with_camera = GaussMLEFitter(
         fitter.device,
         fitter.psf_model,
-        roi_batch.camera,
+        roi_batch.camera,  # Keep SCMOSCamera here for variance map extraction
         fitter.iterations,
         fitter.constraints,
         fitter.batch_size

@@ -188,10 +188,11 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
             config.psf_model, camera, benchmark, ROI_SIZE; seed=SEED+1
         )
 
-        # Create fitter
+        # Create fitter with matching camera model
         device_obj = config.device_symbol == :cpu ? GaussMLE.CPU() : GaussMLE.GPU()
         fitter = GaussMLE.GaussMLEFitter(
             psf_model = config.psf_model,
+            camera_model = camera,  # Must match batch camera type!
             device = device_obj,
             iterations = 20
         )
