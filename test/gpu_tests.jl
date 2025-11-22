@@ -53,13 +53,12 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             # Create dummy corners and variance for new kernel signature
-            corners = zeros(Int32, 2, n_test_blobs)
-            corners[1, :] = 1 .+ (0:n_test_blobs-1) * box_size
-            corners[2, :] .= Int32(1)
+            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, corners,
+                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             
@@ -87,13 +86,12 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             # Create dummy corners and variance for new kernel signature
-            corners = zeros(Int32, 2, n_test_blobs)
-            corners[1, :] = 1 .+ (0:n_test_blobs-1) * box_size
-            corners[2, :] .= Int32(1)
+            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, corners,
+                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             
@@ -114,13 +112,12 @@ using KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             
             # Create dummy corners and variance for new kernel signature
-            corners = zeros(Int32, 2, n_test_blobs)
-            corners[1, :] = 1 .+ (0:n_test_blobs-1) * box_size
-            corners[2, :] .= Int32(1)
+            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
             kernel(results, uncertainties, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, corners,
+                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
             

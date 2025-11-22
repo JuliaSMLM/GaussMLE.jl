@@ -103,8 +103,8 @@ function generate_roi_batch(
     # Generate the ROI data with appropriate noise (use pixel-based PSF)
     data = _generate_roi_data(camera, psf_pixels, true_params, corners, roi_size)
 
-    # Create and return ROIBatch
-    ROIBatch(data, corners, frame_indices, camera)
+    # Create and return ROIBatch (split corners into x_corners and y_corners)
+    ROIBatch(data, corners[1, :], corners[2, :], frame_indices, camera)
 end
 
 """

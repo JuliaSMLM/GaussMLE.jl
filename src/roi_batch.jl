@@ -18,7 +18,8 @@ struct LocalizationResult{T,P<:PSFModel}
 
     # Context
     frame_indices::Vector{Int32}  # Frame index for each fit
-    roi_corners::Matrix{Int32}  # For reference
+    x_roi_corners::Vector{Int32}  # X corners for reference
+    y_roi_corners::Vector{Int32}  # Y corners for reference
 
     psf_model::P
     n_fits::Int
@@ -51,8 +52,8 @@ function create_localization_result(
     for i in 1:n_fits
         x_roi = parameters[1, i]
         y_roi = parameters[2, i]
-        x_corner = roi_batch.corners[1, i]
-        y_corner = roi_batch.corners[2, i]
+        x_corner = roi_batch.x_corners[i]
+        y_corner = roi_batch.y_corners[i]
 
         x_camera[i], y_camera[i] = roi_to_camera_coords(x_roi, y_roi, x_corner, y_corner)
     end
@@ -65,7 +66,8 @@ function create_localization_result(
         x_camera,
         y_camera,
         roi_batch.frame_indices,
-        roi_batch.corners,
+        roi_batch.x_corners,
+        roi_batch.y_corners,
         psf_model,
         n_fits
     )
@@ -83,7 +85,8 @@ function Base.iterate(r::LocalizationResult, state=1)
         x_camera = r.x_camera[state],
         y_camera = r.y_camera[state],
         frame_index = r.frame_indices[state],
-        roi_corner = r.roi_corners[:, state],
+        x_roi_corner = r.x_roi_corners[state],
+        y_roi_corner = r.y_roi_corners[state],
         index = state
     )
     return (fit, state + 1)
@@ -104,7 +107,8 @@ function Base.getindex(r::LocalizationResult, i::Int)
         x_camera = r.x_camera[i],
         y_camera = r.y_camera[i],
         frame_index = r.frame_indices[i],
-        roi_corner = r.roi_corners[:, i],
+        x_roi_corner = r.x_roi_corners[i],
+        y_roi_corner = r.y_roi_corners[i],
         index = i
     )
 end

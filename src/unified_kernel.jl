@@ -290,7 +290,8 @@ end
     @Const(psf_model::PSFModel{N,T}),
     @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
     @Const(variance_map),  # 2D variance map (camera-sized for sCMOS)
-    @Const(corners),       # 2×n_rois corners for variance indexing
+    @Const(x_corners::AbstractVector{Int32}),  # X corners for variance indexing
+    @Const(y_corners::AbstractVector{Int32}),  # Y corners for variance indexing
     @Const(constraints::ParameterConstraints{N}),
     iterations::Int
 ) where {T, N}
@@ -301,8 +302,8 @@ end
     @inbounds roi = @view data[:, :, idx]
 
     # Get corner for variance map indexing (sCMOS only)
-    corner_x = corners[1, idx]
-    corner_y = corners[2, idx]
+    corner_x = x_corners[idx]
+    corner_y = y_corners[idx]
     
     # Stack-allocated working arrays (known size at compile time)
     θ = simple_initialize(roi, box_size, psf_model)
