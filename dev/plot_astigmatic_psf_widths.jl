@@ -162,14 +162,18 @@ else
 end
 
 # Check symmetry
-σx_at_plus500 = σx_values[findfirst(z -> z ≈ 500, z_values)]
-σy_at_minus500 = σy_values[findfirst(z -> z ≈ -500, z_values)]
-asymmetry = abs(σx_at_plus500 - σy_at_minus500)
+idx_plus = findfirst(z -> abs(z - 500) < 10, z_values)
+idx_minus = findfirst(z -> abs(z + 500) < 10, z_values)
+if !isnothing(idx_plus) && !isnothing(idx_minus)
+    σx_at_plus500 = σx_values[idx_plus]
+    σy_at_minus500 = σy_values[idx_minus]
+    asymmetry = abs(σx_at_plus500 - σy_at_minus500)
 
-if asymmetry < 0.05
-    println("  ✓ Symmetric behavior: σx(+500) ≈ σy(-500)")
-else
-    println("  ⚠ Asymmetric: σx(+500) = $σx_at_plus500, σy(-500) = $σy_at_minus500")
+    if asymmetry < 0.05
+        println("  ✓ Symmetric behavior: σx(+500) ≈ σy(-500)")
+    else
+        println("  ⚠ Asymmetric: σx(+500) = $σx_at_plus500, σy(-500) = $σy_at_minus500")
+    end
 end
 
 println()

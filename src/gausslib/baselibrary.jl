@@ -189,13 +189,14 @@ function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T,
     Sx = PSFSigma_x * sqrt(alphax)
     Sy = PSFSigma_y * sqrt(alphay)
 
-    PSFx = integral_gaussian_1d(i, x, Sx)
-    PSFy = integral_gaussian_1d(j, y, Sy)
+    # FIXED: Use correct Julia convention - j for x (column), i for y (row)
+    PSFx = integral_gaussian_1d(j, x, Sx)
+    PSFy = integral_gaussian_1d(i, y, Sy)
 
-    (dudt[1], d2udt2[1]) = derivative_integral_gaussian_1d(i, x, Sx, N, PSFy)
-    (dudt[2], d2udt2[2]) = derivative_integral_gaussian_1d(j, y, Sy, N, PSFx)
-    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(i, x, Sx, N, PSFy)
-    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(j, y, Sy, N, PSFx)
+    (dudt[1], d2udt2[1]) = derivative_integral_gaussian_1d(j, x, Sx, N, PSFy)
+    (dudt[2], d2udt2[2]) = derivative_integral_gaussian_1d(i, y, Sy, N, PSFx)
+    (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(j, x, Sx, N, PSFy)
+    (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(i, y, Sy, N, PSFx)
 
     dSdalpha_x = PSFSigma_x / T(2) / sqrt(alphax)
     dSdalpha_y = PSFSigma_y / T(2) / sqrt(alphay)

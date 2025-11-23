@@ -139,28 +139,8 @@ function generate_test_data(
             end
             
         elseif model_type == :xynbz
-            # Astigmatic 3D model - use actual PSF model for data generation
-            @assert !isnothing(psf_model) "psf_model required for :xynbz model type"
-            @assert psf_model isa GaussMLE.AstigmaticXYZNB "psf_model must be AstigmaticXYZNB for :xynbz"
-
-            z_true = Float32(-250.0 + 500.0 * rand())  # Uniform between -250 and +250 nm
-
-            true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
-            true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
-            true_params[:z] = push!(get(true_params, :z, Float32[]), z_true)
-            true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
-            true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
-
-            # Use actual PSF model to compute widths (matches implementation exactly)
-            αx = GaussMLE.GaussLib.compute_alpha((z_true - psf_model.γ), psf_model.Ax, psf_model.Bx, psf_model.d)
-            αy = GaussMLE.GaussLib.compute_alpha((z_true + psf_model.γ), psf_model.Ay, psf_model.By, psf_model.d)
-            sigma_x_z = psf_model.σx₀ * sqrt(αx)
-            sigma_y_z = psf_model.σy₀ * sqrt(αy)
-
-            for j in 1:box_size, i in 1:box_size
-                mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_x_z, sigma_y_z)
-                data[i, j, k] = Float32(rand(Poisson(mu)))
-            end
+            # Astigmatic 3D model - DEPRECATED: Use generate_roi_batch_validation instead
+            error("Astigmatic validation should use generate_roi_batch_validation, not generate_test_data")
         end
     end
     
@@ -168,19 +148,20 @@ function generate_test_data(
 end
 
 """
-    generate_pixel_value(i, j, x, y, n, bg, sigma_x, sigma_y)
+    generate_pixel_value(i, j, psf_model, params)
 
-Generate expected pixel value for an integrated Gaussian PSF
+Generate expected pixel value using the actual PSF model evaluation (not duplicate code).
+Delegates to simulator's _evaluate_psf_pixel to ensure identical code path.
 """
-function generate_pixel_value(i, j, x, y, n, bg, sigma_x, sigma_y)
-    # Integrated Gaussian model (matches fitting code)
-    dx = Float32(j) - x
-    dy = Float32(i) - y
+function generate_pixel_value(i, j, psf_model::GaussMLE.PSFModel, params::AbstractVector)
+    # Use the SAME code path as simulator and fitting
+    return GaussMLE._evaluate_psf_pixel(psf_model, i, j, params)
+end
 
-    # Use the same integrated Gaussian as in fitting (from GaussLib)
+# Legacy signature for backward compatibility with simple models
+function generate_pixel_value(i, j, x, y, n, bg, sigma_x, sigma_y)
     psf_x = GaussMLE.GaussLib.integral_gaussian_1d(j, x, sigma_x)
     psf_y = GaussMLE.GaussLib.integral_gaussian_1d(i, y, sigma_y)
-
     return bg + n * psf_x * psf_y
 end
 

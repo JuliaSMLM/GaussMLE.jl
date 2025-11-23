@@ -12,7 +12,7 @@ This script validates the astigmatic PSF model by:
 """
 
 using Pkg
-Pkg.activate("dev")
+Pkg.activate(@__DIR__)
 
 using GaussMLE
 using CairoMakie
@@ -115,21 +115,14 @@ for (idx, z_true) in enumerate(z_range)
     x_true = Float32(box_size/2 + 0.3)
     y_true = Float32(box_size/2 + 0.2)
 
-    # Compute widths at this z
-    αx = GaussMLE.GaussLib.compute_alpha(z_true - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d)
-    αy = GaussMLE.GaussLib.compute_alpha(z_true + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d)
-    σx_z = psf_model.σx₀ * sqrt(αx)
-    σy_z = psf_model.σy₀ * sqrt(αy)
-
-    # Generate synthetic data at this z position with FIXED position, varying noise
+    # Generate synthetic data using simulator functions (ensures identical code path)
     data = zeros(Float32, box_size, box_size, n_samples_per_z)
+    params_true = Float32[x_true, y_true, z_true, n_photons, background]
 
     for k in 1:n_samples_per_z
-        # Generate pixels with different Poisson noise realizations
+        # Use simulator's _evaluate_psf_pixel for EXACT match with fitting code
         for j in 1:box_size, i in 1:box_size
-            psf_x = GaussMLE.GaussLib.integral_gaussian_1d(j, x_true, σx_z)
-            psf_y = GaussMLE.GaussLib.integral_gaussian_1d(i, y_true, σy_z)
-            μ = background + n_photons * psf_x * psf_y
+            μ = GaussMLE._evaluate_psf_pixel(psf_model, i, j, params_true)
             data[i, j, k] = Float32(rand(Poisson(μ)))
         end
     end
@@ -137,15 +130,15 @@ for (idx, z_true) in enumerate(z_range)
     # Fit the data
     results = GaussMLE.fit(fitter, data)
 
-    # Extract mean CRLB (reported uncertainties)
-    mean_x_error = mean(results.x_error)
-    mean_y_error = mean(results.y_error)
-    mean_z_error = mean(results.z_error)
+    # Extract mean CRLB (reported uncertainties) from new emitter-based API
+    mean_x_error = mean([e.σ_x for e in results.emitters])
+    mean_y_error = mean([e.σ_y for e in results.emitters])
+    mean_z_error = mean([e.σ_z for e in results.emitters])
 
     # Compute empirical standard deviations of ERROR (fitted - true)
-    emp_x = std(results.x .- x_true)
-    emp_y = std(results.y .- y_true)
-    emp_z = std(results.z .- z_true)
+    emp_x = std([e.x for e in results.emitters] .- x_true)
+    emp_y = std([e.y for e in results.emitters] .- y_true)
+    emp_z = std([e.z for e in results.emitters] .- z_true)
 
     push!(crlb_x, mean_x_error)
     push!(crlb_y, mean_y_error)
