@@ -2,8 +2,19 @@
 
 ## Installation
 
-GaussMLE.jl is available through the Julia package registry:
+GaussMLE.jl requires SMLMData.jl as a dependency:
 
+```julia
+using Pkg
+
+# Install SMLMData.jl dependency first
+Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
+
+# Then install GaussMLE.jl
+Pkg.add(url="https://github.com/JuliaSMLM/GaussMLE.jl")
+```
+
+Once registered in Julia General:
 ```julia
 using Pkg
 Pkg.add("GaussMLE")
@@ -13,100 +24,191 @@ Pkg.add("GaussMLE")
 
 The typical workflow for using GaussMLE.jl consists of three main steps:
 
-1. **Generate or load data**: Either simulate synthetic data or load real microscopy images
-2. **Choose a model**: Select the appropriate Gaussian model for your data
-3. **Fit the data**: Use `fitstack` to estimate parameters
+1. **Create a fitter**: Configure PSF model, device (CPU/GPU), and fitting parameters
+2. **Fit data**: Pass ROI data to the `fit()` function
+3. **Access results**: Iterate over emitters in the returned `BasicSMLD`
 
-### Step 1: Data Preparation
+### Step 1: Create a Fitter
 
-GaussMLE.jl expects data as a 3D array with dimensions `(height, width, n_images)`. Each "slice" along the third dimension represents a small image region (typically 5×5 to 13×13 pixels) containing a single Gaussian blob.
-
-```@example getting_started
+```julia
 using GaussMLE
+using SMLMData
 
-# Generate synthetic data for demonstration
-boxsz = 7  # Size of each image region
-nboxes = 1000  # Number of regions to fit
-data_type = Float32
+# Create fitter with default settings (fixed-sigma Gaussian, auto device selection)
+fitter = GaussMLEFitter()
 
-# Generate synthetic data with Poisson noise
-out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, nboxes, :xynb; 
-                                               T=data_type, poissonnoise=true)
-
-println("Data shape: $(size(out))")
-println("First few true x positions: $(getproperty.(θ_true[1:5], :x))")
+# Or configure explicitly
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
+    device = :cpu,                      # :cpu, :gpu, or :auto
+    iterations = 20                     # Newton-Raphson iterations
+)
 ```
 
-### Step 2: Model Selection
+### Step 2: Fit Data
 
-Choose the appropriate model based on your experimental conditions:
+GaussMLE.jl expects data as a 3D array with dimensions `(roi_size, roi_size, n_rois)`. Each slice along the third dimension represents a small image region (typically 7x7 to 13x13 pixels) containing a single Gaussian blob.
 
-- **GaussXyNb** (`:xynb`): Use when PSF width is known and constant
-- **GaussXyNbS** (`:xynbs`): Use when PSF width varies and needs to be fitted
+```julia
+# Your data: (roi_size, roi_size, n_rois)
+data = rand(Float32, 11, 11, 100)
 
-```@example getting_started
-# For fixed PSF width (most common case)
-model_type = :xynb
-
-# For variable PSF width
-# model_type = :xynbs
-# args = GaussMLE.GaussModel.Args_xynbs(Float32(1.3))  # Initial PSF width
+# Fit the data
+smld = fit(fitter, data)
 ```
 
-### Step 3: Fitting
+### Step 3: Access Results
 
-Use `fitstack` to perform the fitting:
+The `fit()` function returns a `SMLMData.BasicSMLD` containing emitter objects:
 
-```@example getting_started
-# Perform the fitting
-θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, model_type, args)
+```julia
+# Number of localizations
+println("Fitted $(length(smld.emitters)) localizations")
+
+# Iterate over emitters
+for emitter in smld.emitters
+    println("Position: ($(emitter.x), $(emitter.y)) microns")
+    println("Photons: $(emitter.photons)")
+    println("Precision: $(emitter.sigma_x) microns")
+end
+
+# Extract arrays for analysis
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
+photons = [e.photons for e in smld.emitters]
+precisions = [e.sigma_x for e in smld.emitters]
+```
+
+## Complete Example
+
+```julia
+using GaussMLE
+using SMLMData
+using Statistics
+
+# Generate synthetic test data
+data = rand(Float32, 11, 11, 100)
+
+# Create fitter with fixed PSF width (130nm = 0.13 microns)
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+
+# Fit the data
+smld = fit(fitter, data)
 
 # Display results
-println("Number of fits: $(length(θ_found))")
-println("First fit result:")
-println("  x = $(θ_found[1].x) ± $(Σ_found[1].σ_x)")
-println("  y = $(θ_found[1].y) ± $(Σ_found[1].σ_y)")
-println("  intensity = $(θ_found[1].n) ± $(Σ_found[1].σ_n)")
-println("  background = $(θ_found[1].bg) ± $(Σ_found[1].σ_bg)")
+println("Fitted: $(length(smld.emitters)) localizations")
+
+# Extract statistics
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
+photons = [e.photons for e in smld.emitters]
+precisions_x = [e.sigma_x for e in smld.emitters]
+
+println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
+println("Mean photons: $(round(mean(photons), digits=1))")
+println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 ```
 
-## Understanding the Results
+## Understanding the Output
 
-The fitting returns two arrays:
+### BasicSMLD Structure
 
-- **`θ_found`**: Fitted parameter values for each region
-- **`Σ_found`**: Uncertainty estimates (standard deviations) based on Cramér-Rao Lower Bound
+The `fit()` function returns a `SMLMData.BasicSMLD` containing:
 
-### Parameter Access
+- `emitters`: Vector of emitter objects with fitted parameters
+- `camera`: Camera model used for fitting
+- `metadata`: Additional information
 
-Each fitted result is a structured type with named fields:
+### Emitter Types
 
-```@example getting_started
-# Access parameters for the first fit
-first_fit = θ_found[1]
-first_uncertainty = Σ_found[1]
+Different PSF models return different emitter types, all subtypes of `SMLMData.AbstractEmitter`:
 
-println("Parameter access:")
-println("  Position: ($(first_fit.x), $(first_fit.y))")
-println("  Intensity: $(first_fit.n)")
-println("  Background: $(first_fit.bg)")
+| PSF Model | Emitter Type | Additional Fields |
+|-----------|--------------|-------------------|
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | `pvalue` (goodness-of-fit) |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | `sigma`, `sigma_sigma` (fitted PSF width) |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `sigma_x`, `sigma_y` (fitted PSF widths) |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `sigma_z` (z-position) |
 
-println("Uncertainties:")
-println("  σ_x: $(first_uncertainty.σ_x)")
-println("  σ_y: $(first_uncertainty.σ_y)")
-println("  σ_n: $(first_uncertainty.σ_n)")
-println("  σ_bg: $(first_uncertainty.σ_bg)")
+### Common Emitter Fields
+
+All emitter types share these fields:
+
+- `x`, `y`: Position in microns
+- `photons`: Total photon count
+- `bg`: Background level
+- `sigma_x`, `sigma_y`: Position uncertainties (CRLB, microns)
+- `sigma_photons`, `sigma_bg`: Photometry uncertainties
+- `frame`: Frame number
+- `pvalue`: Goodness-of-fit p-value
+
+## Unit Convention
+
+**All user-facing parameters use physical units (microns)**:
+
+- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
+- Output positions: microns
+- Output uncertainties: microns
+- Internally converted to pixels for computation based on camera pixel size
+
+## Working with ROIBatch
+
+For real microscopy data, use `SMLMData.ROIBatch` which includes camera information and ROI positions:
+
+```julia
+using GaussMLE
+using SMLMData
+
+# Create camera model (65nm pixels)
+camera = SMLMData.IdealCamera(0:2047, 0:2047, 0.065)
+
+# Create ROIBatch with camera and corner positions
+batch = ROIBatch(
+    data,           # (roi_size, roi_size, n_rois) Float32 array
+    x_corners,      # Vector{Int32} - x position of each ROI on sensor
+    y_corners,      # Vector{Int32} - y position of each ROI on sensor
+    frame_indices,  # Vector{Int32} - frame number for each ROI
+    camera          # Camera model
+)
+
+# Fit with proper coordinate conversion
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
+```
+
+## Generating Test Data
+
+For testing and development, use `generate_roi_batch()`:
+
+```julia
+using GaussMLE
+using SMLMData
+
+# Create camera
+camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+# Generate synthetic data with Poisson noise
+batch = generate_roi_batch(
+    camera,
+    GaussianXYNB(0.13f0),  # PSF model (sigma in microns)
+    n_rois = 100,
+    roi_size = 11
+)
+
+# Fit the generated data
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
 ```
 
 ## Performance Tips
 
-- Use `Float32` instead of `Float64` for better performance when precision allows
-- For large datasets, consider using GPU acceleration (see [GPU Support](@ref))
+- Use `Float32` data for best performance (native GPU type)
+- For large datasets, GPU acceleration provides significant speedups
+- Choose the simplest PSF model that adequately describes your data
 - Pre-allocate arrays when processing multiple datasets
-- Choose the simplest model that adequately describes your data
 
 ## Next Steps
 
 - Learn about [different models](@ref Models) and when to use them
 - Explore [GPU acceleration](@ref "GPU Support") for large datasets
-- Check out the [examples](@ref Examples) for more detailed use cases
+- Check out the [examples](@ref "Basic Fitting Example") for more detailed use cases

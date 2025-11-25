@@ -1,276 +1,268 @@
 # PSF Width Fitting Example
 
-This example demonstrates fitting with variable PSF width using the `GaussXyNbS` model, which includes the PSF width as a fitted parameter.
-
-## Running the Example
-
-The complete example is available in `examples/sigmafit.jl`:
-
-```bash
-julia --project=. examples/sigmafit.jl
-```
-
-## Step-by-Step Walkthrough
-
-### Setup and Data Generation
-
-```@example sigma
-using GaussMLE
-using Statistics
-using Printf
-
-# Example parameters
-n_boxes = Int(1e4)  # Number of boxes to simulate and fit
-boxsz = 7          # Box size (7×7 pixels)
-σ_PSF_init = 1.3   # Initial guess for PSF width
-
-println("=== PSF Width Fitting Example ===")
-println("Simulating $n_boxes Gaussian blobs with variable PSF width...")
-
-# Generate synthetic data with variable PSF width
-T = Float32
-out, θ_true, = GaussMLE.GaussSim.genstack(boxsz, n_boxes, :xynbs; T, poissonnoise=true)
-
-println("Data shape: $(size(out))")
-println("Using initial PSF width guess: $σ_PSF_init pixels")
-```
-
-### Model Setup
-
-The key difference from basic fitting is using the `GaussXyNbS` model:
-
-```@example sigma
-# Create arguments for variable PSF model
-args = GaussMLE.GaussModel.Args_xynbs(T(σ_PSF_init))
-
-println("Model: GaussXyNbS (5 parameters)")
-println("Parameters: x, y, intensity, background, PSF_width")
-```
-
-### Fitting the Data
-
-```@example sigma
-# Perform the fitting
-println("\nFitting data...")
-@time θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynbs, args)
-
-# Calculate performance metrics
-fits_per_second = n_boxes / @elapsed GaussMLE.GaussFit.fitstack(out, :xynbs, args)
-
-println("Fitting completed!")
-println("Processing speed: $(round(Int, fits_per_second)) fits/second")
-```
-
-### Analyzing Results
-
-```@example sigma
-# Calculate statistics for all parameters (including PSF width)
-parameters = [:x, :y, :n, :bg, :σ_PSF]
-param_names = ["x position", "y position", "intensity", "background", "PSF width"]
-
-println("\nFitting Results Summary:")
-println("=" ^ 70)
-println("Parameter     | Mean (MC)  | Std (MC)   | CRLB Std   | Agreement")
-println("-" ^ 70)
-
-for (param, name) in zip(parameters, param_names)
-    # Get fitted values and uncertainties
-    fitted_vals = getproperty.(θ_found, param)
-    uncertainties = getproperty.(Σ_found, Symbol("σ_", param))
-    
-    # Calculate statistics
-    mean_fitted = mean(fitted_vals)
-    std_fitted = std(fitted_vals)
-    mean_crlb = mean(uncertainties)
-    
-    # Agreement ratio (should be ~1.0 for good fits)
-    agreement = std_fitted / mean_crlb
-    
-    @printf("%-12s  | %8.4f   | %8.4f   | %8.4f   | %6.3f\n", 
-            name, mean_fitted, std_fitted, mean_crlb, agreement)
-end
-```
-
-### PSF Width Analysis
-
-The PSF width parameter provides additional insights:
-
-```@example sigma
-# Analyze PSF width distribution
-psf_widths = getproperty.(θ_found, :σ_PSF)
-psf_uncertainties = getproperty.(Σ_found, :σ_σ_PSF)
-
-println("\nPSF Width Analysis:")
-println("=" ^ 40)
-println("Mean PSF width: $(round(mean(psf_widths), digits=3)) ± $(round(std(psf_widths), digits=3)) pixels")
-println("Median PSF width: $(round(median(psf_widths), digits=3)) pixels")
-println("PSF width range: $(round.(extrema(psf_widths), digits=3)) pixels")
-println("Mean uncertainty: $(round(mean(psf_uncertainties), digits=3)) pixels")
-
-# Check for reasonable PSF widths
-reasonable_psf = sum(0.5 .< psf_widths .< 3.0)
-println("Reasonable PSF widths (0.5-3.0 px): $reasonable_psf / $n_boxes")
-```
-
-### Comparison with Fixed PSF Model
-
-To understand the benefits of variable PSF fitting:
-
-```@example sigma
-# Also fit with fixed PSF model for comparison
-args_fixed = GaussMLE.GaussModel.Args_xynb(T(σ_PSF_init))
-θ_fixed, Σ_fixed = GaussMLE.GaussFit.fitstack(out, :xynb, args_fixed)
-
-# Compare position estimates
-x_variable = getproperty.(θ_found, :x)
-y_variable = getproperty.(θ_found, :y)
-x_fixed = getproperty.(θ_fixed, :x)
-y_fixed = getproperty.(θ_fixed, :y)
-
-# Calculate RMS differences
-x_diff_rms = sqrt(mean((x_variable - x_fixed).^2))
-y_diff_rms = sqrt(mean((y_variable - y_fixed).^2))
-
-println("\nComparison with Fixed PSF Model:")
-println("=" ^ 40)
-println("X position RMS difference: $(round(x_diff_rms, digits=4)) pixels")
-println("Y position RMS difference: $(round(y_diff_rms, digits=4)) pixels")
-
-# Compare uncertainties
-σx_variable = mean(getproperty.(Σ_found, :σ_x))
-σy_variable = mean(getproperty.(Σ_found, :σ_y))
-σx_fixed = mean(getproperty.(Σ_fixed, :σ_x))
-σy_fixed = mean(getproperty.(Σ_fixed, :σ_y))
-
-println("Mean X uncertainty - Variable PSF: $(round(σx_variable, digits=4)) pixels")
-println("Mean X uncertainty - Fixed PSF:    $(round(σx_fixed, digits=4)) pixels")
-println("Uncertainty ratio: $(round(σx_variable/σx_fixed, digits=2))")
-```
+This example demonstrates fitting with variable PSF width using the `GaussianXYNBS` model, which includes the PSF width as a fitted parameter.
 
 ## When to Use Variable PSF Fitting
 
-### Advantages of GaussXyNbS
+Use `GaussianXYNBS` when:
+- PSF width varies across your dataset (e.g., z-dependent defocus)
+- PSF width is unknown and needs to be measured
+- Quality control: filter localizations by fitted PSF width
+- Detecting PSF changes during acquisition
 
-```@example sigma
-# Demonstrate PSF variation detection
-psf_std = std(psf_widths)
-psf_cv = psf_std / mean(psf_widths)  # Coefficient of variation
-
-println("\nPSF Variation Assessment:")
-println("=" ^ 30)
-println("PSF standard deviation: $(round(psf_std, digits=3)) pixels")
-println("PSF coefficient of variation: $(round(psf_cv * 100, digits=1))%")
-
-if psf_cv > 0.1
-    println("→ Significant PSF variation detected - Variable PSF model recommended")
-elseif psf_cv > 0.05
-    println("→ Moderate PSF variation - Consider experimental conditions")
-else
-    println("→ Low PSF variation - Fixed PSF model may be sufficient")
-end
-```
-
-### Performance Considerations
-
-```@example sigma
-# Compare fitting times
-time_variable = @elapsed GaussMLE.GaussFit.fitstack(out, :xynbs, args)
-time_fixed = @elapsed GaussMLE.GaussFit.fitstack(out, :xynb, args_fixed)
-
-println("\nPerformance Comparison:")
-println("=" ^ 25)
-println("Variable PSF (5 params): $(round(time_variable, digits=3))s")
-println("Fixed PSF (4 params):    $(round(time_fixed, digits=3))s")
-println("Speed penalty: $(round(time_variable/time_fixed, digits=1))x")
-```
-
-## Practical Applications
-
-### Astigmatic PSF
-
-For astigmatic PSFs (used in 3D SMLM), the fitted PSF width relates to z-position:
+## Basic Usage
 
 ```julia
-# In real applications, PSF width varies with z-position
-# This relationship can be calibrated and used for 3D localization
-z_calibration_curve = fit_z_calibration(psf_widths, known_z_positions)
-```
-
-### Quality Control
-
-```@example sigma
-# Use PSF width for quality control
-median_psf = median(psf_widths)
-psf_outliers = sum(abs.(psf_widths .- median_psf) .> 0.5)
-
-println("\nQuality Control:")
-println("=" ^ 20)
-println("PSF outliers (>0.5px from median): $psf_outliers / $n_boxes")
-
-# Flag potentially problematic fits
-problematic = sum((psf_widths .< 0.3) .| (psf_widths .> 4.0))
-println("Extreme PSF widths (<0.3 or >4.0): $problematic / $n_boxes")
-```
-
-### Uncertainty Relationships
-
-```@example sigma
-# Examine relationship between PSF width and position uncertainty
+using GaussMLE
+using SMLMData
 using Statistics
 
-# Bin PSF widths and calculate mean uncertainties
-psf_bins = 0.8:0.2:2.0
-σx_by_psf = Float64[]
+# Create variable-sigma model (no fixed parameters)
+psf = GaussianXYNBS()
 
-for i in 1:(length(psf_bins)-1)
-    mask = (psf_bins[i] .<= psf_widths .< psf_bins[i+1])
-    if sum(mask) > 10  # Require at least 10 points
-        push!(σx_by_psf, mean(getproperty.(Σ_found[mask], :σ_x)))
-    else
-        push!(σx_by_psf, NaN)
-    end
-end
+# Create fitter
+fitter = GaussMLEFitter(psf_model = psf)
 
-println("\nUncertainty vs PSF Width:")
-println("=" ^ 30)
-for (i, (psf_bin, σx)) in enumerate(zip(psf_bins[1:end-1], σx_by_psf))
-    if !isnan(σx)
-        println("PSF $(psf_bin)-$(psf_bins[i+1]): σx = $(round(σx, digits=4)) px")
-    end
-end
+# Fit data
+data = rand(Float32, 11, 11, 100)
+smld = fit(fitter, data)
+
+# Access fitted PSF width from emitters (Emitter2DFitSigma type)
+sigmas = [e.sigma for e in smld.emitters]
+sigma_uncertainties = [e.sigma_sigma for e in smld.emitters]
+
+println("Mean PSF width: $(mean(sigmas)) microns")
+println("Mean sigma uncertainty: $(mean(sigma_uncertainties)) microns")
+```
+
+## Complete Working Example
+
+```julia
+using GaussMLE
+using SMLMData
+using Statistics
+
+println("=== PSF Width Fitting Example ===\n")
+
+# Generate synthetic data
+n_rois = 100
+data = rand(Float32, 11, 11, n_rois)
+
+# Create variable-sigma fitter
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNBS(),
+    iterations = 25  # More iterations for 5-parameter fit
+)
+
+# Fit the data
+println("Fitting $n_rois ROIs with variable PSF width...")
+smld = fit(fitter, data)
+
+# The emitters are Emitter2DFitSigma type with sigma field
+println("\n=== Results ===")
+println("Fitted: $(length(smld.emitters)) localizations")
+
+# Extract all fields
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
+photons = [e.photons for e in smld.emitters]
+backgrounds = [e.bg for e in smld.emitters]
+sigmas = [e.sigma for e in smld.emitters]
+
+# Uncertainties
+sigma_x = [e.sigma_x for e in smld.emitters]
+sigma_sigma = [e.sigma_sigma for e in smld.emitters]
+
+println("\nPosition Statistics:")
+println("  Mean x: $(round(mean(x_positions), digits=3)) microns")
+println("  Mean y: $(round(mean(y_positions), digits=3)) microns")
+println("  Mean precision: $(round(mean(sigma_x)*1000, digits=1)) nm")
+
+println("\nPhotometry Statistics:")
+println("  Mean photons: $(round(mean(photons), digits=1))")
+println("  Mean background: $(round(mean(backgrounds), digits=1))")
+
+println("\nPSF Width Statistics:")
+println("  Mean sigma: $(round(mean(sigmas), digits=4)) microns")
+println("  Sigma std: $(round(std(sigmas), digits=4)) microns")
+println("  Sigma range: $(round.(extrema(sigmas), digits=4)) microns")
+println("  Mean sigma uncertainty: $(round(mean(sigma_sigma), digits=4)) microns")
+```
+
+## Understanding Emitter2DFitSigma
+
+The `GaussianXYNBS` model returns `Emitter2DFitSigma` emitters with these fields:
+
+| Field | Description | Units |
+|-------|-------------|-------|
+| `x`, `y` | Position | microns |
+| `photons` | Total photon count | photons |
+| `bg` | Background level | photons/pixel |
+| `sigma` | **Fitted PSF width** | microns |
+| `sigma_x`, `sigma_y` | Position uncertainty | microns |
+| `sigma_photons`, `sigma_bg` | Photometry uncertainties | photons |
+| `sigma_sigma` | **PSF width uncertainty** | microns |
+| `pvalue` | Goodness-of-fit | 0-1 |
+| `frame` | Frame number | integer |
+
+## Quality Control with PSF Width
+
+One key use of variable PSF fitting is quality control:
+
+```julia
+using GaussMLE
+using Statistics
+
+# Fit with variable sigma
+fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
+smld = fit(fitter, data)
+
+# Extract PSF widths
+sigmas = [e.sigma for e in smld.emitters]
+
+# Analyze distribution
+println("PSF Width Analysis:")
+println("  Mean: $(round(mean(sigmas), digits=4)) microns")
+println("  Median: $(round(median(sigmas), digits=4)) microns")
+println("  Std: $(round(std(sigmas), digits=4)) microns")
+println("  IQR: $(round.(quantile(sigmas, [0.25, 0.75]), digits=4)) microns")
+
+# Filter by PSF width (typical range: 100-200nm)
+expected_sigma = 0.13  # 130nm expected
+tolerance = 0.05       # 50nm tolerance
+
+valid = filter(e -> abs(e.sigma - expected_sigma) < tolerance, smld.emitters)
+println("\nValid localizations (sigma within $(tolerance*1000)nm of expected):")
+println("  $(length(valid)) / $(length(smld.emitters)) ($(round(100*length(valid)/length(smld.emitters), digits=1))%)")
+```
+
+## Comparing Fixed vs Variable PSF Models
+
+```julia
+using GaussMLE
+using Statistics
+
+# Same data, two models
+data = rand(Float32, 11, 11, 1000)
+
+# Fixed PSF model
+fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld_fixed = fit(fitter_fixed, data)
+
+# Variable PSF model
+fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
+smld_var = fit(fitter_var, data)
+
+# Compare position estimates
+x_fixed = [e.x for e in smld_fixed.emitters]
+x_var = [e.x for e in smld_var.emitters]
+
+rms_diff = sqrt(mean((x_fixed .- x_var).^2))
+println("Position difference (RMS): $(round(rms_diff*1000, digits=2)) nm")
+
+# Compare uncertainties
+sigma_x_fixed = mean([e.sigma_x for e in smld_fixed.emitters])
+sigma_x_var = mean([e.sigma_x for e in smld_var.emitters])
+
+println("Mean x uncertainty:")
+println("  Fixed PSF:    $(round(sigma_x_fixed*1000, digits=2)) nm")
+println("  Variable PSF: $(round(sigma_x_var*1000, digits=2)) nm")
+println("  Ratio: $(round(sigma_x_var/sigma_x_fixed, digits=2))x")
+
+# Performance comparison
+t_fixed = @elapsed fit(fitter_fixed, data)
+t_var = @elapsed fit(fitter_var, data)
+
+println("\nPerformance:")
+println("  Fixed PSF:    $(round(1000/t_fixed)) fits/second")
+println("  Variable PSF: $(round(1000/t_var)) fits/second")
+println("  Speed ratio: $(round(t_fixed/t_var, digits=2))x")
+```
+
+## Using with ROIBatch
+
+```julia
+using GaussMLE
+using SMLMData
+
+# Create camera
+camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+# Generate test data
+batch = generate_roi_batch(
+    camera,
+    GaussianXYNBS(),  # Variable sigma model
+    n_rois = 100,
+    roi_size = 11
+)
+
+# Fit
+fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
+smld = fit(fitter, batch)
+
+# Extract results - positions in camera coordinates
+sigmas = [e.sigma for e in smld.emitters]
+println("Fitted PSF widths: $(round.(extrema(sigmas), digits=4)) microns")
+```
+
+## Anisotropic PSF (GaussianXYNBSXSY)
+
+For elliptical PSFs, use `GaussianXYNBSXSY`:
+
+```julia
+using GaussMLE
+using Statistics
+
+# Anisotropic model - fits sigma_x and sigma_y independently
+fitter = GaussMLEFitter(psf_model = GaussianXYNBSXSY())
+smld = fit(fitter, data)
+
+# Returns Emitter2DFitSigmaXY with sigma_x and sigma_y fields
+sigma_x_psf = [e.sigma_x for e in smld.emitters]  # Note: this is position uncertainty
+# For fitted PSF widths, the field names are different - check emitter type
+
+# The emitter type Emitter2DFitSigmaXY has:
+# - sigmxa, sigma_y: fitted PSF widths
+# - sigma_sigmxa, sigma_sigma_y: uncertainties on PSF widths
 ```
 
 ## Troubleshooting
 
-### Common Issues
+### PSF Width Convergence Issues
 
-1. **PSF width convergence problems**: Very small or very large fitted PSF widths
-2. **Increased uncertainty**: Variable PSF fitting has higher parameter uncertainty
-3. **Slower convergence**: More parameters mean more iterations needed
+If fitted PSF widths are unreasonable:
 
-### Diagnostic Checks
+```julia
+# Check for extreme values
+sigmas = [e.sigma for e in smld.emitters]
 
-```@example sigma
-# Check for convergence issues
-extreme_psf = sum((psf_widths .< 0.1) .| (psf_widths .> 10.0))
-negative_intensity = sum(getproperty.(θ_found, :n) .< 0)
+extreme_low = count(s -> s < 0.05, sigmas)   # < 50nm
+extreme_high = count(s -> s > 0.5, sigmas)   # > 500nm
 
-println("\nDiagnostic Summary:")
-println("=" ^ 20)
-println("Extreme PSF widths: $extreme_psf")
-println("Negative intensities: $negative_intensity")
+println("Extreme low sigma: $extreme_low")
+println("Extreme high sigma: $extreme_high")
 
-if extreme_psf > n_boxes * 0.01
-    println("Warning: High rate of extreme PSF widths - check data quality")
+if extreme_low + extreme_high > length(sigmas) * 0.1
+    println("Warning: >10% of fits have extreme PSF widths")
+    println("Consider:")
+    println("  - Using fixed PSF model (GaussianXYNB)")
+    println("  - Checking data quality")
+    println("  - Increasing iterations")
 end
+```
 
-if negative_intensity > n_boxes * 0.01
-    println("Warning: High rate of negative intensities - check fitting stability")
-end
+### Slow Convergence
+
+```julia
+# Use more iterations for variable PSF
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNBS(),
+    iterations = 30  # Default is 20
+)
 ```
 
 ## Next Steps
 
-- Learn about [GPU acceleration](@ref "GPU Support") for large variable PSF datasets
-- Explore the [API reference](@ref) for advanced fitting options
-- Check the [models guide](@ref Models) for choosing between fixed and variable PSF models
+- Learn about [3D astigmatic fitting](@ref Models) with `AstigmaticXYZNB`
+- Explore [GPU Support](@ref) for large datasets
+- See the [API Reference](@ref) for all options

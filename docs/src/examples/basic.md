@@ -1,174 +1,244 @@
 # Basic Fitting Example
 
-This example demonstrates the most common use case: fitting Gaussian blobs with a fixed PSF width using the `GaussXyNb` model.
+This example demonstrates the most common use case: fitting Gaussian blobs with a fixed PSF width using the `GaussianXYNB` model.
 
 ## Running the Example
 
-The complete example is available in `examples/basicfit.jl`:
+The complete example is available in `examples/basic_fitting.jl`:
 
 ```bash
-julia --project=. examples/basicfit.jl
+julia --project=. examples/basic_fitting.jl
 ```
 
 ## Step-by-Step Walkthrough
 
-### Setup and Data Generation
+### Setup and Imports
 
-```@example basic
+```julia
 using GaussMLE
+using SMLMData
 using Statistics
-using Printf
-
-# Example parameters
-n_boxes = Int(1e4)  # Number of boxes to simulate and fit
-boxsz = 7          # Box size (7×7 pixels)
-psf_width = 1.3    # Fixed PSF width
-
-println("=== Basic Gaussian Fitting Example ===")
-println("Simulating $n_boxes Gaussian blobs...")
-
-# Generate synthetic data with Poisson noise
-T = Float32  # Use Float32 for better performance
-out, θ_true, args = GaussMLE.GaussSim.genstack(boxsz, n_boxes, :xynb; T, poissonnoise=true)
-
-println("Data shape: $(size(out))")
-println("True PSF width: $(args.σ_PSF)")
 ```
+
+### Creating a Fitter
+
+```julia
+# Create fitter with default settings
+# - GaussianXYNB(0.13f0): fixed PSF width of 130nm
+# - Auto device selection (GPU if available)
+# - 20 Newton-Raphson iterations
+fitter = GaussMLEFitter()
+
+# Or with explicit configuration
+fitter = GaussMLEFitter(
+    psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
+    device = :cpu,                      # Force CPU
+    iterations = 20
+)
+```
+
+### Preparing Data
+
+GaussMLE expects data as a 3D array with dimensions `(roi_size, roi_size, n_rois)`:
+
+```julia
+# Example: 100 ROIs of 11x11 pixels each
+data = rand(Float32, 11, 11, 100)
+```
+
+For real data, each ROI should contain a single fluorescent emitter centered approximately in the ROI.
 
 ### Fitting the Data
 
-```@example basic
+```julia
 # Perform the fitting
-@time θ_found, Σ_found = GaussMLE.GaussFit.fitstack(out, :xynb, args)
+smld = fit(fitter, data)
 
-# Calculate performance metrics
-fits_per_second = n_boxes / @elapsed GaussMLE.GaussFit.fitstack(out, :xynb, args)
-
-println("Fitting completed!")
-println("Processing speed: $(round(Int, fits_per_second)) fits/second")
+println("Fitted $(length(smld.emitters)) localizations")
 ```
 
-### Analyzing Results
+### Accessing Results
 
-```@example basic
-# Calculate statistics for each parameter
-parameters = [:x, :y, :n, :bg]
-param_names = ["x position", "y position", "intensity", "background"]
+The `fit()` function returns a `SMLMData.BasicSMLD` containing emitter objects:
 
-println("\nFitting Results Summary:")
-println("=" ^ 60)
-println("Parameter     | Mean (MC)  | Std (MC)   | CRLB Std   | Agreement")
-println("-" ^ 60)
+```julia
+# Extract position arrays
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
 
-for (param, name) in zip(parameters, param_names)
-    # Get fitted values and uncertainties
-    fitted_vals = getproperty.(θ_found, param)
-    uncertainties = getproperty.(Σ_found, Symbol("σ_", param))
-    
-    # Calculate statistics
-    mean_fitted = mean(fitted_vals)
-    std_fitted = std(fitted_vals)
-    mean_crlb = mean(uncertainties)
-    
-    # Agreement ratio (should be ~1.0 for good fits)
-    agreement = std_fitted / mean_crlb
-    
-    @printf("%-12s  | %8.4f   | %8.4f   | %8.4f   | %6.3f\n", 
-            name, mean_fitted, std_fitted, mean_crlb, agreement)
-end
+# Extract photometry
+photons = [e.photons for e in smld.emitters]
+backgrounds = [e.bg for e in smld.emitters]
+
+# Extract uncertainties (CRLB)
+precisions_x = [e.sigma_x for e in smld.emitters]
+precisions_y = [e.sigma_y for e in smld.emitters]
+
+# Display statistics
+println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
+println("Mean photons: $(round(mean(photons), digits=1))")
+println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 ```
 
-### Understanding the Results
+## Complete Working Example
 
-The table above shows:
+```julia
+using GaussMLE
+using SMLMData
+using Statistics
 
-- **Mean (MC)**: Average of fitted parameter values
-- **Std (MC)**: Standard deviation of fitted values (Monte Carlo)
-- **CRLB Std**: Average theoretical uncertainty (Cramér-Rao Lower Bound)
-- **Agreement**: Ratio of empirical to theoretical uncertainty
+# Generate sample data (11x11 pixel ROIs, 100 samples)
+println("Generating synthetic data...")
+data = rand(Float32, 11, 11, 100)
 
-**Good fits should show:**
-- Agreement ratios close to 1.0
-- Reasonable parameter ranges
-- Low number of failed fits
+# Create fitter with defaults
+println("Creating fitter with default settings...")
+fitter = GaussMLEFitter()
 
-```@example basic
-# Check for fitting failures
-valid_fits = sum(θ -> θ.n > 0 && θ.bg >= 0, θ_found)
-failure_rate = (n_boxes - valid_fits) / n_boxes * 100
+# Fit
+println("Fitting $(size(data, 3)) ROIs...")
+smld = fit(fitter, data)
 
-println("\nFit Quality Assessment:")
-println("Valid fits: $valid_fits / $n_boxes")
-println("Failure rate: $(round(failure_rate, digits=2))%")
+# Display results
+println("\n=== Results ===")
+println("Type: BasicSMLD")
+println("Fitted: $(length(smld.emitters)) localizations")
 
-# Check parameter ranges
-x_vals = getproperty.(θ_found, :x)
-y_vals = getproperty.(θ_found, :y)
-println("X position range: $(round.(extrema(x_vals), digits=2))")
-println("Y position range: $(round.(extrema(y_vals), digits=2))")
+# Extract statistics
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
+photons = [e.photons for e in smld.emitters]
+backgrounds = [e.bg for e in smld.emitters]
+precisions_x = [e.sigma_x for e in smld.emitters]
+
+println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
+println("Mean photons: $(round(mean(photons), digits=1))")
+println("Mean background: $(round(mean(backgrounds), digits=1))")
+println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
+```
+
+## Understanding the Results
+
+### Emitter Fields
+
+Each emitter in `smld.emitters` contains:
+
+| Field | Description | Units |
+|-------|-------------|-------|
+| `x`, `y` | Position | microns |
+| `photons` | Total photon count | photons |
+| `bg` | Background level | photons/pixel |
+| `sigma_x`, `sigma_y` | Position uncertainty (CRLB) | microns |
+| `sigma_photons`, `sigma_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value | 0-1 |
+| `frame` | Frame number | integer |
+
+### Quality Metrics
+
+```julia
+# Check goodness-of-fit using p-values
+pvalues = [e.pvalue for e in smld.emitters]
+good_fits = count(p -> p > 0.01, pvalues)
+println("Good fits (p > 0.01): $good_fits / $(length(smld.emitters))")
+
+# Check for physical parameter ranges
+valid_photons = count(p -> p > 0, photons)
+valid_bg = count(b -> b >= 0, backgrounds)
+println("Valid photon counts: $valid_photons / $(length(smld.emitters))")
+println("Valid backgrounds: $valid_bg / $(length(smld.emitters))")
+```
+
+## Using ROIBatch for Real Data
+
+For real microscopy data with proper coordinate handling:
+
+```julia
+using GaussMLE
+using SMLMData
+
+# Create camera model (100nm pixels)
+camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)
+
+# Generate synthetic data with proper camera model
+batch = generate_roi_batch(
+    camera,
+    GaussianXYNB(0.13f0),  # PSF model
+    n_rois = 100,
+    roi_size = 11
+)
+
+# Fit with proper coordinate conversion
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
+
+# Positions are now in camera coordinates (microns)
+x_positions = [e.x for e in smld.emitters]
+println("X range: $(extrema(x_positions)) microns")
+```
+
+## Performance Optimization
+
+### Use Float32
+
+```julia
+# Float32 is faster and sufficient precision
+data = Float32.(your_data)
+```
+
+### Batch Processing for Large Datasets
+
+```julia
+# For GPU: configure batch size based on memory
+fitter = GaussMLEFitter(
+    device = :gpu,
+    batch_size = 10_000
+)
+
+# Fit large dataset
+large_data = rand(Float32, 11, 11, 100_000)
+@time smld = fit(fitter, large_data)
+```
+
+### Timing Comparison
+
+```julia
+using GaussMLE
+
+data = rand(Float32, 11, 11, 10_000)
+
+# CPU timing
+fitter_cpu = GaussMLEFitter(device = :cpu)
+t_cpu = @elapsed fit(fitter_cpu, data)
+println("CPU: $(round(10_000/t_cpu)) fits/second")
+
+# GPU timing (if available)
+fitter_gpu = GaussMLEFitter(device = :gpu)
+t_gpu = @elapsed fit(fitter_gpu, data)
+println("GPU: $(round(10_000/t_gpu)) fits/second")
 ```
 
 ## Practical Considerations
 
-### Choosing Box Size
+### Choosing ROI Size
 
-The box size should be large enough to capture the full PSF:
+The ROI should be large enough to capture the full PSF:
 
 ```julia
-# Rule of thumb: box size ≥ 4 × PSF_width
-recommended_size = ceil(Int, 4 * psf_width)
-println("Recommended box size: $recommended_size pixels")
+# Rule of thumb: ROI size >= 4 * PSF_width_in_pixels
+# For 130nm PSF with 100nm pixels: PSF = 1.3 pixels
+# Minimum ROI: 6 pixels (use 7 or 11 for safety)
 ```
 
-### Performance Optimization
+### Handling Edge Cases
 
-```@example basic
-# Compare different data types
-println("\nPerformance comparison:")
-
-# Float64 timing
-data_f64 = Float64.(out)
-args_f64 = GaussMLE.GaussModel.Args_xynb(Float64(1.3))
-time_f64 = @elapsed GaussMLE.GaussFit.fitstack(data_f64, :xynb, args_f64)
-
-# Float32 timing (already done above)
-time_f32 = @elapsed GaussMLE.GaussFit.fitstack(out, :xynb, args)
-
-println("Float64: $(round(time_f64, digits=3))s ($(round(Int, n_boxes/time_f64)) fits/s)")
-println("Float32: $(round(time_f32, digits=3))s ($(round(Int, n_boxes/time_f32)) fits/s)")
-println("Speedup: $(round(time_f64/time_f32, digits=1))x")
-```
-
-### Error Handling
-
-```@example basic
-# Check for common issues
-n_vals = getproperty.(θ_found, :n)
-bg_vals = getproperty.(θ_found, :bg)
-
-# Negative intensities indicate fitting problems
-negative_intensity = sum(n_vals .< 0)
-negative_background = sum(bg_vals .< 0)
-
-if negative_intensity > 0
-    println("Warning: $negative_intensity fits with negative intensity")
-end
-
-if negative_background > 0
-    println("Warning: $negative_background fits with negative background")
-end
-
-# Very high or low values may indicate problems
-high_intensity = sum(n_vals .> 10000)
-high_background = sum(bg_vals .> 1000)
-
-if high_intensity > 0
-    println("Note: $high_intensity fits with very high intensity (>10000)")
-end
+```julia
+# Filter out failed fits
+good_emitters = filter(e -> e.photons > 0 && e.pvalue > 0.001, smld.emitters)
+println("Valid fits: $(length(good_emitters)) / $(length(smld.emitters))")
 ```
 
 ## Next Steps
 
-- Try the [PSF width fitting example](@ref "PSF Width Fitting") for variable PSF scenarios
-- Learn about [GPU acceleration](@ref "GPU Support") for larger datasets  
-- Explore the [API reference](@ref) for advanced options
+- Try the [PSF Width Fitting](@ref "PSF Width Fitting Example") example for variable PSF scenarios
+- Learn about [GPU Support](@ref) for larger datasets
+- See the [API Reference](@ref) for all options

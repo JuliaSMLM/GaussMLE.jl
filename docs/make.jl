@@ -15,6 +15,7 @@ makedocs(
     modules = [GaussMLE],
     authors = "klidke@unm.edu",
     repo = "https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
+    warnonly = [:missing_docs, :cross_references],  # Don't fail on internal docstrings
     pages = [
         "Home" => "index.md",
         "User Guide" => [
