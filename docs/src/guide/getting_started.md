@@ -7,72 +7,50 @@ using Pkg
 Pkg.add("GaussMLE")
 ```
 
-## Re-exports from SMLMData
+GaussMLE re-exports `ROIBatch`, `IdealCamera`, `SCMOSCamera`, and `@filter` from SMLMData.jl.
 
-GaussMLE re-exports commonly needed types from SMLMData.jl, so you typically only need:
-
-```julia
-using GaussMLE  # Includes ROIBatch, camera types, etc.
-```
-
-No explicit `using SMLMData` required for basic workflows.
+!!! info "Unit Convention"
+    PSF parameters and output positions are in **microns**. The camera's `pixel_size` handles all internal conversions.
 
 ## Basic Workflow
 
-The typical workflow for using GaussMLE.jl consists of three main steps:
-
-1. **Create a fitter**: Configure PSF model, device (CPU/GPU), and fitting parameters
-2. **Fit data**: Pass ROI data to the `fit()` function
-3. **Access results**: Iterate over emitters in the returned `BasicSMLD`
-
-### Step 1: Create a Fitter
+### Step 1: Define Camera and PSF
 
 ```julia
 using GaussMLE
 
-# Create fitter with PSF model (sigma must match your microscope)
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
+# Camera model (defines pixel size for unit conversion)
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
 
-# Or configure explicitly
-fitter = GaussMLEFitter(
-    psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
-    device = :cpu,                      # :cpu, :gpu, or :auto
-    iterations = 20                     # Newton-Raphson iterations
-)
+# PSF model (sigma in microns, from your PSF calibration)
+psf = GaussianXYNB(0.13f0)  # 130nm PSF width
 ```
 
-### Step 2: Fit Data
+### Step 2: Create or Load ROIBatch
 
-GaussMLE.jl expects data as a 3D array with dimensions `(roi_size, roi_size, n_rois)`. Each slice along the third dimension represents a small image region (typically 7x7 to 13x13 pixels) containing a single Gaussian blob.
+In a real workflow, `ROIBatch` comes from SMLMBoxer.jl:
 
-```julia
-# Your data: (roi_size, roi_size, n_rois)
-data = rand(Float32, 11, 11, 100)
-
-# Fit the data
-smld = fit(fitter, data)
+```
+Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD
 ```
 
-### Step 3: Access Results
-
-The `fit()` function returns a `SMLMData.BasicSMLD` containing emitter objects:
+For testing, use `generate_roi_batch()`:
 
 ```julia
-# Number of localizations
-println("Fitted $(length(smld.emitters)) localizations")
+batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
+```
 
-# Iterate over emitters
-for emitter in smld.emitters
-    println("Position: ($(emitter.x), $(emitter.y)) microns")
-    println("Photons: $(emitter.photons)")
-    println("Precision: $(emitter.sigma_x) microns")
+### Step 3: Fit and Access Results
+
+```julia
+fitter = GaussMLEFitter(psf_model = psf)
+smld = fit(fitter, batch)
+
+# Results are in microns (camera coordinates)
+for e in smld.emitters[1:3]
+    println("Position: ($(e.x), $(e.y)) μm")
+    println("Precision: $(e.σ_x * 1000) nm")
 end
-
-# Extract arrays for analysis
-x_positions = [e.x for e in smld.emitters]
-y_positions = [e.y for e in smld.emitters]
-photons = [e.photons for e in smld.emitters]
-precisions = [e.sigma_x for e in smld.emitters]
 ```
 
 ## Complete Example
@@ -81,20 +59,21 @@ precisions = [e.sigma_x for e in smld.emitters]
 using GaussMLE
 using Statistics
 
-# ROIBatch typically comes from SMLMBoxer.jl (extracts ROIs from raw movie data)
-# For testing, use generate_roi_batch() or raw arrays:
-data = rand(Float32, 11, 11, 100)
+# 1. Camera defines pixel size
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
 
-# Create fitter with PSF model (sigma from PSF calibration)
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
+# 2. PSF from calibration (in microns)
+psf = GaussianXYNB(0.13f0)  # 130nm
 
-# Fit the data
-smld = fit(fitter, data)
+# 3. Generate test data (or load from SMLMBoxer)
+batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
-# Display results
+# 4. Fit
+fitter = GaussMLEFitter(psf_model = psf)
+smld = fit(fitter, batch)
+
+# 5. Results in microns
 println("Fitted: $(length(smld.emitters)) localizations")
-
-# Extract statistics
 x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 photons = [e.photons for e in smld.emitters]
@@ -158,15 +137,6 @@ precise = @filter(smld, σ_x < 0.015 && σ_y < 0.015 && bg < 50)
 println("Kept $(length(good.emitters)) / $(length(smld.emitters)) localizations")
 ```
 
-## Unit Convention
-
-**All user-facing parameters use physical units (microns)**:
-
-- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
-- Output positions: microns
-- Output uncertainties: microns
-- Internally converted to pixels for computation based on camera pixel size
-
 ## Working with ROIBatch
 
 In a typical SMLM pipeline, `ROIBatch` comes from SMLMBoxer.jl which detects candidates and extracts ROIs from raw movie frames:
@@ -175,7 +145,43 @@ In a typical SMLM pipeline, `ROIBatch` comes from SMLMBoxer.jl which detects can
 Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD → Analysis
 ```
 
-You can also create ROIBatch manually:
+### Wrapping Raw Data in ROIBatch
+
+If you have raw 3D array data and want proper unit conversion, wrap it in `ROIBatch` with a camera model. This is the recommended approach even for simple cases:
+
+```julia
+using GaussMLE
+
+# Your raw data: (roi_size, roi_size, n_rois) Float32 array
+data = rand(Float32, 11, 11, 100)  # 100 ROIs of 11×11 pixels
+n_rois = size(data, 3)
+
+# Camera provides pixel_size for unit conversion
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+# Create ROIBatch - all ROIs at camera position (1,1) if corners don't matter
+batch = ROIBatch(
+    data,
+    ones(Int32, n_rois),       # x_corners: all at column 1
+    ones(Int32, n_rois),       # y_corners: all at row 1
+    collect(Int32, 1:n_rois),  # frame_indices: 1, 2, 3, ...
+    camera
+)
+
+# Fit with proper unit handling
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
+
+# Results in microns (relative to ROI corner)
+println("Position: ($(smld.emitters[1].x), $(smld.emitters[1].y)) μm")
+```
+
+!!! note "When corners matter"
+    For sCMOS cameras, the corners must be the actual camera positions because the fitter indexes into the pixel-specific variance map. For IdealCamera with uniform noise, corners can all be (1,1) since no variance map lookup is needed.
+
+### Creating ROIBatch from Known Positions
+
+You can also create ROIBatch manually with specific corner positions:
 
 ```julia
 using GaussMLE

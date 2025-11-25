@@ -26,6 +26,7 @@ makedocs(
         "Examples" => [
             "Basic Fitting" => "examples/basic.md",
             "PSF Width Fitting" => "examples/sigma.md",
+            "3D Astigmatic" => "examples/astigmatic.md",
         ],
         "API Reference" => "api.md",
         "Theory" => "theory.md",

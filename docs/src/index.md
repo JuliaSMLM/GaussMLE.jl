@@ -13,28 +13,30 @@ Pkg.add("GaussMLE")
 
 ```julia
 using GaussMLE
-using Statistics
 
-# ROIBatch typically comes from SMLMBoxer.jl which extracts ROIs from raw data
-# For testing/development, use generate_roi_batch() or raw arrays:
-data = rand(Float32, 11, 11, 100)  # (roi_size, roi_size, n_rois)
+# 1. Define camera (provides pixel size for unit conversion)
+camera = IdealCamera(0:511, 0:511, 0.1)  # 512×512 sensor, 100nm pixels
 
-# Create fitter with PSF model (sigma must match your microscope PSF)
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
+# 2. Create ROIBatch (typically from SMLMBoxer.jl, here using test generator)
+batch = generate_roi_batch(
+    camera,
+    GaussianXYNB(0.13f0),  # PSF σ = 130nm
+    n_rois = 100,
+    roi_size = 11
+)
 
-# Fit data - returns BasicSMLD with emitters
-smld = fit(fitter, data)
+# 3. Create fitter and fit
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
 
-# Access results
-println("Fitted $(length(smld.emitters)) localizations")
+# 4. Results in microns (camera pixel_size used for conversion)
 for e in smld.emitters[1:3]
-    println("Position: ($(e.x), $(e.y)) μm, Photons: $(e.photons)")
+    println("Position: ($(e.x), $(e.y)) μm ± ($(e.σ_x*1000), $(e.σ_y*1000)) nm")
 end
 ```
 
 !!! note "Re-exports from SMLMData"
-    GaussMLE re-exports commonly needed types (ROIBatch, camera types) from SMLMData.jl,
-    so you typically only need `using GaussMLE`.
+    GaussMLE re-exports `ROIBatch`, `IdealCamera`, `SCMOSCamera`, and `@filter` from SMLMData.jl.
 
 ## Overview
 

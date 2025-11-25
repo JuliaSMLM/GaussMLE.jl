@@ -41,25 +41,27 @@ No explicit `using SMLMData` required for basic workflows.
 ```julia
 using GaussMLE
 
-# 1. ROIBatch typically comes from SMLMBoxer.jl (extracts ROIs from raw data)
-#    For testing, use generate_roi_batch()
+# 1. Define camera (provides pixel_size for unit conversion)
+camera = IdealCamera(0:511, 0:511, 0.1)  # 512×512 sensor, 100nm pixels
+
+# 2. Create ROIBatch (typically from SMLMBoxer.jl, here using test generator)
 batch = generate_roi_batch(
-    IdealCamera(512, 512, 0.1),  # 100nm pixels
-    GaussianXYNB(0.13f0);        # 130nm PSF width
+    camera,
+    GaussianXYNB(0.13f0),  # PSF σ = 130nm (in microns)
     n_rois = 100,
     roi_size = 11
 )
 
-# 2. Create fitter with PSF model (sigma must match your microscope)
+# 3. Create fitter with PSF model (sigma must match your microscope)
 fitter = GaussMLEFitter(
     psf_model = GaussianXYNB(0.13f0),  # σ = 130nm in microns
     iterations = 20
 )
 
-# 3. Fit - returns SMLMData.BasicSMLD
+# 4. Fit - returns SMLMData.BasicSMLD
 smld = fit(fitter, batch)
 
-# 4. Access results
+# 5. Access results (positions in microns, from camera pixel_size)
 for emitter in smld.emitters
     println("Position: ($(emitter.x), $(emitter.y)) μm")
     println("Photons: $(emitter.photons)")
@@ -272,16 +274,50 @@ end
 
 ## Common Patterns
 
-### Basic Fitting
+### Wrapping Raw Data in ROIBatch
+
+If you have raw 3D array data and want proper unit conversion, wrap it in `ROIBatch`:
 
 ```julia
 using GaussMLE
 
-# Minimal example with fixed PSF
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, data)  # data is (11, 11, n_rois) Float32 array
+# Your raw data: (roi_size, roi_size, n_rois) Float32 array
+data = rand(Float32, 11, 11, 100)
+n_rois = size(data, 3)
 
-# Extract positions
+# Camera provides pixel_size for unit conversion
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+# Create ROIBatch - all ROIs at (1,1) if corners don't matter
+batch = ROIBatch(
+    data,
+    ones(Int32, n_rois),       # x_corners: all at column 1
+    ones(Int32, n_rois),       # y_corners: all at row 1
+    collect(Int32, 1:n_rois),  # frame_indices
+    camera
+)
+
+# Fit with proper unit handling
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
+```
+
+**Note:** For IdealCamera, corners can all be (1,1) since no variance map lookup is needed. For sCMOS cameras, corners must be actual camera positions.
+
+### Basic Fitting with ROIBatch
+
+```julia
+using GaussMLE
+
+# Create camera and test data
+camera = IdealCamera(0:511, 0:511, 0.1)  # 100nm pixels
+batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=100, roi_size=11)
+
+# Fit
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+smld = fit(fitter, batch)
+
+# Extract positions (in microns)
 positions = [(e.x, e.y) for e in smld.emitters]
 ```
 
