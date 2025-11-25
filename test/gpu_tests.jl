@@ -134,21 +134,26 @@ using KernelAbstractions
             @testset "GaussianXYNB GPU" begin
                 psf_model = GaussMLE.GaussianXYNB(0.13f0)
                 constraints = GaussMLE.default_constraints(psf_model, box_size)
-                
+
                 # Move data to GPU
                 d_data = CuArray(data)
-                
+
                 # Allocate GPU output arrays
                 d_results = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
-                
+
+                # Create dummy corners and variance for new kernel signature
+                d_x_corners = CuArray(Int32[1 + (i-1) * box_size for i in 1:n_test_blobs])
+                d_y_corners = CuArray(fill(Int32(1), n_test_blobs))
+                d_variance_map = CUDA.zeros(Float32, 512, 512)
+
                 # Run unified kernel on GPU
                 backend = CUDABackend()
                 kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-                
+
                 kernel(d_results, d_uncertainties, d_log_likelihoods,
-                       d_data, psf_model, GaussMLE.IdealCamera(), nothing,
+                       d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                        constraints, iterations,
                        ndrange=n_test_blobs)
                 
@@ -175,29 +180,37 @@ using KernelAbstractions
             @testset "CPU vs GPU Consistency" begin
                 psf_model = GaussMLE.GaussianXYNB(0.13f0)
                 constraints = GaussMLE.default_constraints(psf_model, box_size)
-                
+
+                # Create dummy corners and variance for new kernel signature
+                x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+                y_corners = fill(Int32(1), n_test_blobs)
+                variance_map = zeros(Float32, 512, 512)
+
                 # Run on CPU
                 results_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
                 uncertainties_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
                 log_likelihoods_cpu = Vector{Float32}(undef, n_test_blobs)
-                
+
                 backend_cpu = KernelAbstractions.CPU()
                 kernel_cpu = GaussMLE.unified_gaussian_mle_kernel!(backend_cpu)
                 kernel_cpu(results_cpu, uncertainties_cpu, log_likelihoods_cpu,
-                          data, psf_model, GaussMLE.IdealCamera(), nothing,
+                          data, psf_model, Val(false), variance_map, x_corners, y_corners,
                           constraints, iterations,
                           ndrange=n_test_blobs)
-                
+
                 # Run on GPU
                 d_data = CuArray(data)
                 d_results = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
-                
+                d_x_corners = CuArray(x_corners)
+                d_y_corners = CuArray(y_corners)
+                d_variance_map = CuArray(variance_map)
+
                 backend_gpu = CUDABackend()
                 kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
                 kernel_gpu(d_results, d_uncertainties, d_log_likelihoods,
-                          d_data, psf_model, GaussMLE.IdealCamera(), nothing,
+                          d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                           constraints, iterations,
                           ndrange=n_test_blobs)
                 

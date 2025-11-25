@@ -10,6 +10,7 @@ using Printf
 
 # Include validation utilities
 include("validation_utils.jl")
+include("validation_utils_roibatch.jl")
 
 # Test configuration
 const GPU_AVAILABLE = CUDA.functional()
@@ -96,5 +97,5 @@ end  # end finally block
 
 # Re-throw test exception if any occurred
 if test_exception !== nothing
-    rethrow(test_exception)
+    throw(test_exception)
 end

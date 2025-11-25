@@ -41,6 +41,15 @@ end
     return cf, df
 end
 
+# Scalar variance (uniform sCMOS readnoise)
+@inline function compute_likelihood_terms(data::T, model::T, variance::T, i, j) where T
+    # Total variance = Poisson variance + uniform readout variance
+    total_var = model + variance
+    cf = (data - model) / total_var
+    df = one(T) / total_var
+    return cf, df
+end
+
 # Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
 @inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
     return compute_likelihood_terms(data, model, camera.variance_map, i, j)
@@ -67,6 +76,17 @@ end
     # L(fitted): -0.5×[log(2π×var) + residual²/var]
     # LLR = -0.5×residual²/var (constant terms cancel)
     total_var = model + variance_map[i, j]
+    if total_var > zero(T)
+        residual = data - model
+        return -T(0.5) * (residual^2 / total_var)
+    else
+        return zero(T)
+    end
+end
+
+# Scalar variance (uniform sCMOS readnoise)
+@inline function compute_log_likelihood(data::T, model::T, variance::T, i, j) where T
+    total_var = model + variance
     if total_var > zero(T)
         residual = data - model
         return -T(0.5) * (residual^2 / total_var)

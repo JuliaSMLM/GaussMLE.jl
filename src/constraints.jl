@@ -38,10 +38,11 @@ function default_constraints(::GaussianXYNBSXSY, box_size)
 end
 
 function default_constraints(::AstigmaticXYZNB, box_size)
+    # Note: x,y in pixels, z in microns (physical units for axial position)
     return ParameterConstraints{5}(
-        Params{5}(-2.0f0, -2.0f0, -1000.0f0, 1.0f0, 0.01f0),    # lower bounds
-        Params{5}(box_size+2, box_size+2, 1000.0f0, Inf32, Inf32), # upper bounds
-        Params{5}(1.0f0, 1.0f0, 100.0f0, 100.0f0, 2.0f0)        # max step
+        Params{5}(-2.0f0, -2.0f0, -1.0f0, 1.0f0, 0.01f0),       # lower: z = -1μm
+        Params{5}(box_size+2, box_size+2, 1.0f0, Inf32, Inf32), # upper: z = +1μm
+        Params{5}(1.0f0, 1.0f0, 0.1f0, 100.0f0, 2.0f0)          # max_step: z = 0.1μm
     )
 end
 

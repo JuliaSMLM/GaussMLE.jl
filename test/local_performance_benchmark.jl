@@ -151,7 +151,7 @@ function generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_siz
         σy_vals = 1.3f0 .+ 0.1f0 * randn(Float32, n_rois)'
         true_params = vcat(true_params, σx_vals, σy_vals)
     elseif psf isa GaussMLE.AstigmaticXYZNB
-        z_vals = 200.0f0 * randn(Float32, n_rois)'
+        z_vals = 0.2f0 * randn(Float32, n_rois)'  # z in microns (±200nm = ±0.2μm)
         # Insert z after y (x, y, z, N, bg)
         true_params = vcat(true_params[1:2, :], z_vals, true_params[3:4, :])
     end
@@ -207,8 +207,10 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         fits_per_second = benchmark / t_elapsed
 
         # Extract ROI-local coordinates using actual batch corners
+        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for extract_roi_coords
         pixel_size = benchmark_batch.camera.pixel_edges_x[2] - benchmark_batch.camera.pixel_edges_x[1]
-        coords = extract_roi_coords(smld, benchmark_batch.corners, ROI_SIZE, pixel_size)
+        corners = vcat(benchmark_batch.x_corners', benchmark_batch.y_corners')
+        coords = extract_roi_coords(smld, corners, ROI_SIZE, pixel_size)
 
         param_names = get_param_names(config.psf_model)
         n_params = length(param_names)
@@ -227,9 +229,9 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         # Handle model-specific parameters
         if :z in param_names
             # AstigmaticXYZNB: x, y, z, N, bg
-            # Extract z from Emitter3DFit (convert from microns to pixels)
-            params[3, :] = Float32[e.z / pixel_size for e in smld.emitters]
-            uncertainties[3, :] = Float32[e.σ_z / pixel_size for e in smld.emitters]
+            # Extract z from Emitter3DFit (keep in microns to match true_params)
+            params[3, :] = Float32[e.z for e in smld.emitters]
+            uncertainties[3, :] = Float32[e.σ_z for e in smld.emitters]
             params[4, :] = coords.photons
             params[5, :] = coords.bg
             uncertainties[4, :] = [e.σ_photons for e in smld.emitters]

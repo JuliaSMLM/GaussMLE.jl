@@ -319,13 +319,13 @@ to_pixel_units(psf::GaussianXYNBSXSY{T}, pixel_size::Real) where T = psf
 function to_pixel_units(psf::AstigmaticXYZNB{T}, pixel_size::Real) where T
     px = T(pixel_size)
     AstigmaticXYZNB{T}(
-        psf.σx₀ / px,
-        psf.σy₀ / px,
-        psf.Ax,  # Dimensionless
-        psf.Ay,  # Dimensionless
-        psf.Bx,  # Dimensionless
-        psf.By,  # Dimensionless
-        psf.γ / px,
-        psf.d / px
+        psf.σx₀ / px,  # Lateral width: microns → pixels
+        psf.σy₀ / px,  # Lateral width: microns → pixels
+        psf.Ax,        # Dimensionless
+        psf.Ay,        # Dimensionless
+        psf.Bx,        # Dimensionless
+        psf.By,        # Dimensionless
+        psf.γ,         # Keep in microns (z is physical, not pixels)
+        psf.d          # Keep in microns (z is physical, not pixels)
     )
 end

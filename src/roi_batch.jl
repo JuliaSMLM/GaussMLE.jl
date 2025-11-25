@@ -270,11 +270,11 @@ function to_emitter(
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
-    # Convert to microns
+    # Convert x,y to microns (lateral positions are in pixels internally)
     x_microns = (result.x_camera[idx] - 1) * pixel_size_x
     y_microns = (result.y_camera[idx] - 1) * pixel_size_y
-    z_pixels = result.parameters[3, idx]
-    z_microns = z_pixels * pixel_size_x
+    # z is already in microns (axial position uses physical units, not pixels)
+    z_microns = result.parameters[3, idx]
 
     # Parameter order: [x, y, z, photons, bg]
     photons = result.parameters[4, idx]
@@ -283,7 +283,7 @@ function to_emitter(
     # Uncertainties
     σ_x = result.uncertainties[1, idx] * pixel_size_x
     σ_y = result.uncertainties[2, idx] * pixel_size_y
-    σ_z = result.uncertainties[3, idx] * pixel_size_x
+    σ_z = result.uncertainties[3, idx]  # Already in microns
     σ_photons = result.uncertainties[4, idx]
     σ_bg = result.uncertainties[5, idx]
 

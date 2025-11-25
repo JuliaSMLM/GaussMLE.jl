@@ -230,6 +230,29 @@ GPU kernels cannot use standard library matrix operations, so custom implementat
 
 All use relative tolerances (`1e-10 * maximum(abs, A)`) matching SMITE.
 
+#### Astigmatic Model Unit Convention
+
+The astigmatic model uses **mixed units** (matching SMITE convention):
+- **x, y**: pixels internally, converted to microns for output
+- **z**: microns throughout (axial position is physical, not pixel-based)
+- **σx₀, σy₀**: microns (converted to pixels internally)
+- **γ, d**: microns (NOT converted - z-related parameters stay physical)
+
+This means in `to_pixel_units(::AstigmaticXYZNB)`:
+```julia
+σx₀ / pixel_size  # Convert lateral width to pixels
+σy₀ / pixel_size  # Convert lateral width to pixels
+γ                  # Keep in microns (z is physical)
+d                  # Keep in microns (z is physical)
+```
+
+The math is dimensionally consistent:
+- `z - γ` → microns - microns = microns
+- `(z - γ) / d` → dimensionless
+- `dσ/dz` → pixels/micron
+- `du/dz` → photons/micron
+- CRLB[z] → microns
+
 ### Source Structure
 
 - `src/unified_kernel.jl` - Main fitting kernel with custom linear algebra

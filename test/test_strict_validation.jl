@@ -18,7 +18,9 @@ Using the new camera-aware simulator for reliable test data generation
         roi_size = size(roi_batch.data, 1)
 
         # Extract ROI-local coordinates using actual corners from ROIBatch
-        coords = extract_roi_coords(smld, roi_batch.corners, roi_size, pixel_size)
+        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for extract_roi_coords
+        corners = vcat(roi_batch.x_corners', roi_batch.y_corners')
+        coords = extract_roi_coords(smld, corners, roi_size, pixel_size)
 
         # Map parameter index to extracted coordinates
         fitted = if param_idx == 1
