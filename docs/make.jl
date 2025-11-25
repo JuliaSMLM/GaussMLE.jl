@@ -15,6 +15,7 @@ makedocs(
     modules = [GaussMLE],
     authors = "klidke@unm.edu",
     repo = "https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
+    warnonly = [:missing_docs, :cross_references],  # Don't fail on internal docstrings
     pages = [
         "Home" => "index.md",
         "User Guide" => [
@@ -25,6 +26,7 @@ makedocs(
         "Examples" => [
             "Basic Fitting" => "examples/basic.md",
             "PSF Width Fitting" => "examples/sigma.md",
+            "3D Astigmatic" => "examples/astigmatic.md",
         ],
         "API Reference" => "api.md",
         "Theory" => "theory.md",

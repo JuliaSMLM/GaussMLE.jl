@@ -10,8 +10,8 @@ using SMLMData
 using Random
 using Distributions  # For p-value computation (chi-squared CDF)
 
-# Import ROIBatch and SingleROI from SMLMData (ecosystem standard)
-using SMLMData: ROIBatch, SingleROI
+# Import commonly used types from SMLMData (ecosystem standard)
+using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter
 
 import Adapt
 
@@ -46,6 +46,6 @@ export generate_roi_batch
 export Emitter2DFitGaussMLE, Emitter2DFitSigma, Emitter2DFitSigmaXY, Emitter3DFitGaussMLE
 
 # Re-export SMLMData types for convenience
-export ROIBatch, SingleROI
+export ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter
 
 end # module
