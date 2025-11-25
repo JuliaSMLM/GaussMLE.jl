@@ -16,7 +16,6 @@ julia --project=. examples/basic_fitting.jl
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 ```
 
@@ -84,16 +83,16 @@ println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 
-# Generate sample data (11x11 pixel ROIs, 100 samples)
+# ROIBatch typically comes from SMLMBoxer.jl (extracts ROIs from raw movie frames)
+# For testing, use generate_roi_batch() or raw arrays:
 println("Generating synthetic data...")
 data = rand(Float32, 11, 11, 100)
 
-# Create fitter with defaults
-println("Creating fitter with default settings...")
-fitter = GaussMLEFitter()
+# Create fitter with PSF model (sigma from PSF calibration)
+println("Creating fitter with 130nm PSF width...")
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
@@ -150,14 +149,19 @@ println("Valid backgrounds: $valid_bg / $(length(smld.emitters))")
 
 ## Using ROIBatch for Real Data
 
-For real microscopy data with proper coordinate handling:
+In a typical SMLM pipeline, `ROIBatch` comes from SMLMBoxer.jl which detects candidates and extracts ROIs from raw movie frames:
+
+```
+Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD → Analysis
+```
+
+For testing with proper coordinate handling:
 
 ```julia
 using GaussMLE
-using SMLMData
 
 # Create camera model (100nm pixels)
-camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)
+camera = IdealCamera(0:1023, 0:1023, 0.1)
 
 # Generate synthetic data with proper camera model
 batch = generate_roi_batch(

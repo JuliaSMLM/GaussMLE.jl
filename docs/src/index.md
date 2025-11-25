@@ -6,17 +6,6 @@ Fast Maximum Likelihood Estimation of Gaussian PSF parameters for single-molecul
 
 ```julia
 using Pkg
-
-# Install SMLMData.jl dependency first
-Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
-
-# Then install GaussMLE.jl
-Pkg.add(url="https://github.com/JuliaSMLM/GaussMLE.jl")
-```
-
-Once registered in Julia General:
-```julia
-using Pkg
 Pkg.add("GaussMLE")
 ```
 
@@ -24,25 +13,28 @@ Pkg.add("GaussMLE")
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 
-# Your data: (roi_size, roi_size, n_rois)
-data = rand(Float32, 11, 11, 100)
+# ROIBatch typically comes from SMLMBoxer.jl which extracts ROIs from raw data
+# For testing/development, use generate_roi_batch() or raw arrays:
+data = rand(Float32, 11, 11, 100)  # (roi_size, roi_size, n_rois)
 
-# Fit with defaults (fixed sigma Gaussian, auto GPU/CPU)
-fitter = GaussMLEFitter()
+# Create fitter with PSF model (sigma must match your microscope PSF)
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
+
+# Fit data - returns BasicSMLD with emitters
 smld = fit(fitter, data)
 
-# Access results from BasicSMLD
+# Access results
 println("Fitted $(length(smld.emitters)) localizations")
-
-# Extract arrays for analysis
-x_positions = [e.x for e in smld.emitters]
-precisions = [e.sigma_x for e in smld.emitters]
-println("Mean position: $(mean(x_positions)) microns")
-println("Mean precision: $(mean(precisions)*1000) nm")
+for e in smld.emitters[1:3]
+    println("Position: ($(e.x), $(e.y)) μm, Photons: $(e.photons)")
+end
 ```
+
+!!! note "Re-exports from SMLMData"
+    GaussMLE re-exports commonly needed types (ROIBatch, camera types) from SMLMData.jl,
+    so you typically only need `using GaussMLE`.
 
 ## Overview
 
@@ -73,6 +65,14 @@ println("Mean precision: $(mean(precisions)*1000) nm")
 | `GaussianXYNBS()` | x, y, N, bg, sigma | Variable PSF width |
 | `GaussianXYNBSXSY()` | x, y, N, bg, sigma_x, sigma_y | Anisotropic PSF |
 | `AstigmaticXYZNB{T}(...)` | x, y, z, N, bg | 3D astigmatic imaging |
+
+## Typical SMLM Pipeline
+
+In a real workflow, ROIs come from a boxer that detects candidates in raw movie frames:
+
+```
+Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD → Analysis
+```
 
 ## Examples
 
@@ -105,10 +105,9 @@ smld = fit(fitter, large_dataset)
 
 ```julia
 using GaussMLE
-using SMLMData
 
-# Create sCMOS camera with calibration
-camera = SMLMData.SCMOSCamera(
+# Create sCMOS camera with calibration maps
+camera = SCMOSCamera(
     offset_map,      # Per-pixel offset (ADU)
     gain_map,        # Per-pixel gain (e-/ADU)
     readnoise_map,   # Per-pixel readnoise (e-)

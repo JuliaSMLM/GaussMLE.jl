@@ -14,7 +14,6 @@ Use `GaussianXYNBS` when:
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 
 # Create variable-sigma model (no fixed parameters)
@@ -39,7 +38,6 @@ println("Mean sigma uncertainty: $(mean(sigma_uncertainties)) microns")
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 
 println("=== PSF Width Fitting Example ===\n")
@@ -181,12 +179,13 @@ println("  Speed ratio: $(round(t_fixed/t_var, digits=2))x")
 
 ## Using with ROIBatch
 
+In a typical SMLM pipeline, `ROIBatch` comes from SMLMBoxer.jl. For testing:
+
 ```julia
 using GaussMLE
-using SMLMData
 
 # Create camera
-camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
 
 # Generate test data
 batch = generate_roi_batch(

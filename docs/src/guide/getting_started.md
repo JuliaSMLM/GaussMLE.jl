@@ -2,23 +2,20 @@
 
 ## Installation
 
-GaussMLE.jl requires SMLMData.jl as a dependency:
-
-```julia
-using Pkg
-
-# Install SMLMData.jl dependency first
-Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
-
-# Then install GaussMLE.jl
-Pkg.add(url="https://github.com/JuliaSMLM/GaussMLE.jl")
-```
-
-Once registered in Julia General:
 ```julia
 using Pkg
 Pkg.add("GaussMLE")
 ```
+
+## Re-exports from SMLMData
+
+GaussMLE re-exports commonly needed types from SMLMData.jl, so you typically only need:
+
+```julia
+using GaussMLE  # Includes ROIBatch, camera types, etc.
+```
+
+No explicit `using SMLMData` required for basic workflows.
 
 ## Basic Workflow
 
@@ -32,10 +29,9 @@ The typical workflow for using GaussMLE.jl consists of three main steps:
 
 ```julia
 using GaussMLE
-using SMLMData
 
-# Create fitter with default settings (fixed-sigma Gaussian, auto device selection)
-fitter = GaussMLEFitter()
+# Create fitter with PSF model (sigma must match your microscope)
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
 
 # Or configure explicitly
 fitter = GaussMLEFitter(
@@ -83,14 +79,14 @@ precisions = [e.sigma_x for e in smld.emitters]
 
 ```julia
 using GaussMLE
-using SMLMData
 using Statistics
 
-# Generate synthetic test data
+# ROIBatch typically comes from SMLMBoxer.jl (extracts ROIs from raw movie data)
+# For testing, use generate_roi_batch() or raw arrays:
 data = rand(Float32, 11, 11, 100)
 
-# Create fitter with fixed PSF width (130nm = 0.13 microns)
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+# Create fitter with PSF model (sigma from PSF calibration)
+fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))  # 130nm PSF width
 
 # Fit the data
 smld = fit(fitter, data)
@@ -153,14 +149,19 @@ All emitter types share these fields:
 
 ## Working with ROIBatch
 
-For real microscopy data, use `SMLMData.ROIBatch` which includes camera information and ROI positions:
+In a typical SMLM pipeline, `ROIBatch` comes from SMLMBoxer.jl which detects candidates and extracts ROIs from raw movie frames:
+
+```
+Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD → Analysis
+```
+
+You can also create ROIBatch manually:
 
 ```julia
 using GaussMLE
-using SMLMData
 
 # Create camera model (65nm pixels)
-camera = SMLMData.IdealCamera(0:2047, 0:2047, 0.065)
+camera = IdealCamera(0:2047, 0:2047, 0.065)
 
 # Create ROIBatch with camera and corner positions
 batch = ROIBatch(
@@ -182,10 +183,9 @@ For testing and development, use `generate_roi_batch()`:
 
 ```julia
 using GaussMLE
-using SMLMData
 
 # Create camera
-camera = SMLMData.IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
 
 # Generate synthetic data with Poisson noise
 batch = generate_roi_batch(
