@@ -1,7 +1,7 @@
 name = "GaussMLE"
 uuid = "39799108-5025-4d0e-9a62-95a61c8c6061"
 authors = ["klidke@unm.edu"]
-version = "0.1.0"
+version = "0.2.0"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
