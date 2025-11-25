@@ -108,12 +108,24 @@ Fit Gaussian PSF to ROI data.
 
 | PSF Model | Emitter Type | Key Fields |
 |-----------|--------------|------------|
-| `GaussianXYNB` | `Emitter2DFitGaussMLE` | x, y, photons, bg, σ_x, σ_y, pvalue |
-| `GaussianXYNBS` | `Emitter2DFitSigma` | + sigma, σ_sigma (fitted PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + sigma_x, sigma_y, σ_sigma_x, σ_sigma_y |
-| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | + z, σ_z |
+| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg, σ_x, σ_y |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | + σ, σ_σ (fitted PSF width) |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σ_x_psf, σ_y_psf (fitted PSF widths) |
+| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg, σ_x, σ_y, σ_z |
 
 All emitter types subtype `SMLMData.AbstractEmitter`.
+
+### Emitter2DFit Fields
+
+| Field | Description | Units |
+|-------|-------------|-------|
+| `x`, `y` | Fitted position | microns |
+| `photons` | Total photon count | photons |
+| `bg` | Background level | photons/pixel |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `frame` | Frame number | integer |
+| `dataset`, `track_id`, `id` | Metadata fields | integer |
 
 ## PSF Models
 
@@ -179,7 +191,7 @@ camera = IdealCamera(512, 512, 0.1)  # nx, ny, pixel_size (μm)
 
 ### `SCMOSCamera`
 
-Poisson + per-pixel readout noise.
+Poisson + per-pixel readout noise, following [Huang et al. (2013)](https://doi.org/10.1038/nmeth.2488).
 
 ```julia
 camera = SCMOSCamera(
@@ -239,9 +251,7 @@ fitter = GaussMLEFitter(device = :gpu, batch_size = 10_000)
 fitter = GaussMLEFitter(device = :cpu)
 ```
 
-**Performance:**
-- CPU: ~2-3k fits/s (single thread), ~10-20k fits/s (multi-threaded)
-- GPU: ~300-800k fits/s (CUDA)
+GPU provides significant speedup for large batches (>1000 ROIs).
 
 ## Goodness-of-Fit
 
@@ -275,15 +285,22 @@ smld = fit(fitter, data)  # data is (11, 11, n_rois) Float32 array
 positions = [(e.x, e.y) for e in smld.emitters]
 ```
 
-### Quality Filtering
+### Quality Filtering with @filter
+
+Use SMLMData's `@filter` macro for quality control:
 
 ```julia
-# Filter by precision and p-value
-good = filter(smld.emitters) do e
-    e.σ_x < 0.030 &&      # <30nm precision
-    e.pvalue > 0.01 &&    # Good fit
-    e.photons > 500       # Sufficient signal
-end
+using GaussMLE
+
+smld = fit(fitter, data)
+
+# Filter by precision and photon count
+good = @filter(smld, σ_x < 0.030 && photons > 500)
+
+# Filter by multiple criteria
+precise = @filter(smld, σ_x < 0.020 && σ_y < 0.020 && bg < 50)
+
+println("Kept $(length(good.emitters)) / $(length(smld.emitters)) localizations")
 ```
 
 ### sCMOS with ROIBatch
@@ -338,6 +355,14 @@ z_values = [e.z for e in smld.emitters]
 - **SMLMBoxer.jl**: ROI extraction from raw movies
 - **SMLMSim.jl**: Advanced simulation
 - **SMLMMetrics.jl**: Performance metrics
+
+## References
+
+**MLE Algorithm:**
+> Smith, C.S., Joseph, N., Rieger, B., & Lidke, K.A. (2010). Fast, single-molecule localization that achieves theoretically minimum uncertainty. *Nature Methods*, 7(5), 373-375. DOI: 10.1038/nmeth.1449
+
+**sCMOS Camera Model:**
+> Huang, F., Hartwich, T.M.P., Rivera-Molina, F.E., et al. (2013). Video-rate nanoscopy using sCMOS camera-specific single-molecule localization algorithms. *Nature Methods*, 10(7), 653-658. DOI: 10.1038/nmeth.2488
 
 ## Troubleshooting
 

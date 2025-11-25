@@ -270,7 +270,7 @@ end
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
 # Val{false} → IdealCamera (Poisson only)
 @inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where T
-    return compute_likelihood_terms(data, model, IdealCamera())
+    return compute_likelihood_terms(data, model, IdealCameraInternal())
 end
 
 # Val{true} → SCMOSCamera (Poisson + variance)
@@ -364,7 +364,7 @@ end
         # Log-likelihood contribution (dispatch based on camera_model Val)
         # camera_model is Val{false} for IdealCamera, Val{true} for sCMOS
         log_likelihood += if camera_model isa Val{false}
-            compute_log_likelihood(data_ij, model, IdealCamera())
+            compute_log_likelihood(data_ij, model, IdealCameraInternal())
         else
             # sCMOS: convert ROI-local (i,j) to camera coordinates
             cam_i = corner_y + i - 1

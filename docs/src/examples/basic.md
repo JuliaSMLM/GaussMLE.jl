@@ -118,33 +118,36 @@ println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 
 ## Understanding the Results
 
-### Emitter Fields
+### Emitter2DFit Fields
 
-Each emitter in `smld.emitters` contains:
+Each emitter in `smld.emitters` is an `Emitter2DFit` containing:
 
 | Field | Description | Units |
 |-------|-------------|-------|
-| `x`, `y` | Position | microns |
+| `x`, `y` | Fitted position | microns |
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
-| `sigma_x`, `sigma_y` | Position uncertainty (CRLB) | microns |
-| `sigma_photons`, `sigma_bg` | Photometry uncertainties | photons |
-| `pvalue` | Goodness-of-fit p-value | 0-1 |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
 | `frame` | Frame number | integer |
+| `dataset`, `track_id`, `id` | Metadata fields | integer |
 
-### Quality Metrics
+### Quality Filtering with @filter
+
+Use SMLMData's `@filter` macro for quality control:
 
 ```julia
-# Check goodness-of-fit using p-values
-pvalues = [e.pvalue for e in smld.emitters]
-good_fits = count(p -> p > 0.01, pvalues)
-println("Good fits (p > 0.01): $good_fits / $(length(smld.emitters))")
+using GaussMLE
 
-# Check for physical parameter ranges
-valid_photons = count(p -> p > 0, photons)
-valid_bg = count(b -> b >= 0, backgrounds)
-println("Valid photon counts: $valid_photons / $(length(smld.emitters))")
-println("Valid backgrounds: $valid_bg / $(length(smld.emitters))")
+smld = fit(fitter, data)
+
+# Filter by precision and photon count
+good = @filter(smld, σ_x < 0.020 && photons > 500)
+
+# Filter by multiple criteria
+precise = @filter(smld, σ_x < 0.015 && σ_y < 0.015 && bg < 50)
+
+println("Kept $(length(good.emitters)) / $(length(smld.emitters)) localizations")
 ```
 
 ## Using ROIBatch for Real Data
@@ -236,9 +239,9 @@ The ROI should be large enough to capture the full PSF:
 ### Handling Edge Cases
 
 ```julia
-# Filter out failed fits
-good_emitters = filter(e -> e.photons > 0 && e.pvalue > 0.001, smld.emitters)
-println("Valid fits: $(length(good_emitters)) / $(length(smld.emitters))")
+# Filter out failed fits using @filter
+good = @filter(smld, photons > 0)
+println("Valid fits: $(length(good.emitters)) / $(length(smld.emitters))")
 ```
 
 ## Next Steps

@@ -121,22 +121,42 @@ Different PSF models return different emitter types, all subtypes of `SMLMData.A
 
 | PSF Model | Emitter Type | Additional Fields |
 |-----------|--------------|-------------------|
-| `GaussianXYNB` | `Emitter2DFitGaussMLE` | `pvalue` (goodness-of-fit) |
-| `GaussianXYNBS` | `Emitter2DFitSigma` | `sigma`, `sigma_sigma` (fitted PSF width) |
+| `GaussianXYNB` | `Emitter2DFit` | (base type) |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | `σ`, `σ_σ` (fitted PSF width) |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `sigma_x`, `sigma_y` (fitted PSF widths) |
-| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `sigma_z` (z-position) |
+| `AstigmaticXYZNB` | `Emitter3DFit` | `z`, `σ_z` (z-position) |
 
-### Common Emitter Fields
+### Emitter2DFit Fields
 
-All emitter types share these fields:
+All 2D emitter types include these fields:
 
-- `x`, `y`: Position in microns
-- `photons`: Total photon count
-- `bg`: Background level
-- `sigma_x`, `sigma_y`: Position uncertainties (CRLB, microns)
-- `sigma_photons`, `sigma_bg`: Photometry uncertainties
-- `frame`: Frame number
-- `pvalue`: Goodness-of-fit p-value
+| Field | Description | Units |
+|-------|-------------|-------|
+| `x`, `y` | Fitted position | microns |
+| `photons` | Total photon count | photons |
+| `bg` | Background level | photons/pixel |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `frame` | Frame number | integer |
+| `dataset`, `track_id`, `id` | Metadata fields | integer |
+
+### Filtering Results
+
+Use SMLMData's `@filter` macro for quality control:
+
+```julia
+using GaussMLE
+
+smld = fit(fitter, data)
+
+# Filter by precision and photon count
+good = @filter(smld, σ_x < 0.020 && photons > 500)
+
+# Filter by multiple criteria
+precise = @filter(smld, σ_x < 0.015 && σ_y < 0.015 && bg < 50)
+
+println("Kept $(length(good.emitters)) / $(length(smld.emitters)) localizations")
+```
 
 ## Unit Convention
 

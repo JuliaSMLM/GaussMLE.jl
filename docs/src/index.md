@@ -87,7 +87,7 @@ fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
 smld = fit(fitter, data)
 
 # Access fitted sigma from Emitter2DFitSigma type
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 println("Mean sigma: $(mean(sigmas)) microns")
 ```
 
@@ -102,6 +102,8 @@ smld = fit(fitter, large_dataset)
 ```
 
 ### sCMOS Camera
+
+The sCMOS noise model follows [Huang et al. (2013)](https://doi.org/10.1038/nmeth.2488):
 
 ```julia
 using GaussMLE
@@ -146,26 +148,59 @@ z_precision = [e.sigma_z for e in smld.emitters]
 
 ## Output Format
 
-### BasicSMLD with Custom Emitter Types
+### BasicSMLD with Emitter Types
 
-`fit()` returns `SMLMData.BasicSMLD` with PSF-specific emitter types. All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
+`fit()` returns `SMLMData.BasicSMLD` containing a vector of emitter structs:
 
-| PSF Model | Emitter Type | Additional Fields |
+```julia
+smld = fit(fitter, data)
+
+# Access emitters
+for e in smld.emitters
+    println("x=$(e.x), y=$(e.y), photons=$(e.photons), σ_x=$(e.σ_x)")
+end
+```
+
+**Emitter type depends on PSF model:**
+
+| PSF Model | Emitter Type | Fitted Parameters |
 |-----------|--------------|-------------------|
-| `GaussianXYNB` | `Emitter2DFitGaussMLE` | `pvalue` |
-| `GaussianXYNBS` | `Emitter2DFitSigma` | `sigma`, `sigma_sigma` |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `sigma_x`, `sigma_y` |
-| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `sigma_z`, `pvalue` |
+| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | + σ (PSF width) |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + sigma_x, sigma_y |
+| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg |
 
-### Common Emitter Fields
+### Emitter2DFit Fields
 
-All emitter types include:
-- `x`, `y`: Position (microns)
-- `photons`, `bg`: Photometry
-- `sigma_x`, `sigma_y`: Position uncertainties (CRLB, microns)
-- `sigma_photons`, `sigma_bg`: Photometry uncertainties
-- `frame`: Frame number
-- `pvalue`: Goodness-of-fit p-value
+The base 2D emitter type (`Emitter2DFit`) contains:
+
+| Field | Description | Units |
+|-------|-------------|-------|
+| `x`, `y` | Fitted position | microns |
+| `photons` | Total photon count | photons |
+| `bg` | Background level | photons/pixel |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `frame` | Frame number | integer |
+| `dataset`, `track_id`, `id` | Metadata fields | integer |
+
+### Filtering with SMLMData
+
+Use the `@filter` macro from SMLMData for quality control:
+
+```julia
+using GaussMLE
+
+smld = fit(fitter, data)
+
+# Filter by precision and photon count
+good = @filter(smld, σ_x < 0.020 && photons > 500)
+
+# Filter by multiple criteria
+precise = @filter(smld, σ_x < 0.015 && σ_y < 0.015 && bg < 50)
+
+println("Kept $(length(good.emitters)) / $(length(smld.emitters)) localizations")
+```
 
 ## Mathematical Foundation
 
@@ -180,18 +215,15 @@ The fitting uses Newton-Raphson optimization with:
 - **Diagonal Hessian**: For fast parameter updates
 - **Full Fisher Information**: For accurate CRLB uncertainties
 
-## Performance
+## References
 
-Typical performance on modern hardware:
+This package implements algorithms from:
 
-- **CPU**: ~100K fits/second (AMD Ryzen 9 5950X, 11x11 ROIs)
-- **GPU**: ~10M fits/second (NVIDIA RTX 4090, batch size 50K)
+**MLE Algorithm:**
+> Smith, C.S., Joseph, N., Rieger, B., & Lidke, K.A. (2010). Fast, single-molecule localization that achieves theoretically minimum uncertainty. *Nature Methods*, 7(5), 373-375. [DOI: 10.1038/nmeth.1449](https://doi.org/10.1038/nmeth.1449)
 
-## Algorithm Reference
-
-Implements the MLE algorithm from:
-
-> Smith, C., Joseph, N., Rieger, B. et al. "Fast, single-molecule localization that achieves theoretically minimum uncertainty." *Nat Methods* **7**, 373-375 (2010). [DOI: 10.1038/nmeth.1449](https://doi.org/10.1038/nmeth.1449)
+**sCMOS Camera Model:**
+> Huang, F., Hartwich, T.M.P., Rivera-Molina, F.E., et al. (2013). Video-rate nanoscopy using sCMOS camera-specific single-molecule localization algorithms. *Nature Methods*, 10(7), 653-658. [DOI: 10.1038/nmeth.2488](https://doi.org/10.1038/nmeth.2488)
 
 ## Related Packages
 

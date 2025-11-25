@@ -7,7 +7,7 @@ Users interact with SMLMData.IdealCamera and SMLMData.SCMOSCamera.
 
 # Lightweight marker type for Poisson-only likelihood dispatch
 # Not exported - internal use only
-struct IdealCamera end
+struct IdealCameraInternal end
 
 # Internal sCMOS representation with preprocessed variance
 # Not exported - internal use only
@@ -16,7 +16,7 @@ struct SCMOSCameraInternal{T}
 end
 
 # Noise model interface for likelihood calculations
-@inline function compute_likelihood_terms(data::T, model::T, ::IdealCamera) where T
+@inline function compute_likelihood_terms(data::T, model::T, ::IdealCameraInternal) where T
     # Poisson noise only
     # Cap values to prevent numerical instability (following SMITE)
     # Note: SMITE uses 10e-3 = 0.01, not 1e-3 = 0.001
@@ -57,7 +57,7 @@ end
 
 # Log-likelihood ratio (LLR) computation: log L(fitted) - log L(saturated)
 # For goodness-of-fit testing via χ² = -2×LLR ~ χ²(df)
-@inline function compute_log_likelihood(data::T, model::T, ::IdealCamera) where T
+@inline function compute_log_likelihood(data::T, model::T, ::IdealCameraInternal) where T
     if model > zero(T) && data > zero(T)
         # LLR for Poisson: data×log(model) - model - (data×log(data) - data)
         # Matches SMITE's Div calculation (smi_cuda_gaussMLEv2.cu)

@@ -27,8 +27,8 @@ data = rand(Float32, 11, 11, 100)
 smld = fit(fitter, data)
 
 # Access fitted PSF width from emitters (Emitter2DFitSigma type)
-sigmas = [e.sigma for e in smld.emitters]
-sigma_uncertainties = [e.sigma_sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
+sigma_uncertainties = [e.σ_σ for e in smld.emitters]
 
 println("Mean PSF width: $(mean(sigmas)) microns")
 println("Mean sigma uncertainty: $(mean(sigma_uncertainties)) microns")
@@ -65,7 +65,7 @@ x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 photons = [e.photons for e in smld.emitters]
 backgrounds = [e.bg for e in smld.emitters]
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 
 # Uncertainties
 sigma_x = [e.sigma_x for e in smld.emitters]
@@ -96,10 +96,10 @@ The `GaussianXYNBS` model returns `Emitter2DFitSigma` emitters with these fields
 | `x`, `y` | Position | microns |
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
-| `sigma` | **Fitted PSF width** | microns |
-| `sigma_x`, `sigma_y` | Position uncertainty | microns |
-| `sigma_photons`, `sigma_bg` | Photometry uncertainties | photons |
-| `sigma_sigma` | **PSF width uncertainty** | microns |
+| `σ` | **Fitted PSF width** | microns |
+| `σ_x`, `σ_y` | Position uncertainty | microns |
+| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_σ` | **PSF width uncertainty** | microns |
 | `pvalue` | Goodness-of-fit | 0-1 |
 | `frame` | Frame number | integer |
 
@@ -116,7 +116,7 @@ fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
 smld = fit(fitter, data)
 
 # Extract PSF widths
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 
 # Analyze distribution
 println("PSF Width Analysis:")
@@ -125,13 +125,10 @@ println("  Median: $(round(median(sigmas), digits=4)) microns")
 println("  Std: $(round(std(sigmas), digits=4)) microns")
 println("  IQR: $(round.(quantile(sigmas, [0.25, 0.75]), digits=4)) microns")
 
-# Filter by PSF width (typical range: 100-200nm)
-expected_sigma = 0.13  # 130nm expected
-tolerance = 0.05       # 50nm tolerance
-
-valid = filter(e -> abs(e.sigma - expected_sigma) < tolerance, smld.emitters)
-println("\nValid localizations (sigma within $(tolerance*1000)nm of expected):")
-println("  $(length(valid)) / $(length(smld.emitters)) ($(round(100*length(valid)/length(smld.emitters), digits=1))%)")
+# Filter by PSF width using @filter (typical range: 80-180nm)
+valid = @filter(smld, σ > 0.08 && σ < 0.18)
+println("\nValid localizations (sigma in expected range):")
+println("  $(length(valid.emitters)) / $(length(smld.emitters))")
 ```
 
 ## Comparing Fixed vs Variable PSF Models
@@ -200,7 +197,7 @@ fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
 smld = fit(fitter, batch)
 
 # Extract results - positions in camera coordinates
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 println("Fitted PSF widths: $(round.(extrema(sigmas), digits=4)) microns")
 ```
 
@@ -233,7 +230,7 @@ If fitted PSF widths are unreasonable:
 
 ```julia
 # Check for extreme values
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 
 extreme_low = count(s -> s < 0.05, sigmas)   # < 50nm
 extreme_high = count(s -> s > 0.5, sigmas)   # > 500nm
