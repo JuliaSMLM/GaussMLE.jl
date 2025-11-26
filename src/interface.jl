@@ -42,7 +42,16 @@ end
 # Helper to extract variance map from SMLMData.SCMOSCamera
 function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where T
     # SMLMData uses 'readnoise' field (std dev), we need variance (readnoise²)
-    return T.(camera.readnoise .^ 2)
+    # Handle both scalar and matrix readnoise
+    variance = camera.readnoise .^ 2
+    if variance isa Real
+        # Scalar readnoise: expand to full sensor matrix
+        ny = length(camera.pixel_edges_y) - 1
+        nx = length(camera.pixel_edges_x) - 1
+        return fill(T(variance), ny, nx)
+    else
+        return T.(variance)
+    end
 end
 
 """
