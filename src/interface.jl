@@ -55,27 +55,32 @@ function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where T
 end
 
 """
-    GaussMLEFitter{D,P,C,PC}
+    GaussMLEFitter{P,PC}
 
 Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob parameters.
 
 # Fields
-- `device::D<:ComputeDevice`: Compute device (CPU or GPU)
+- `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
-- `camera_model::C`: Camera noise model (IdealCamera or SCMOSCamera)
 - `iterations::Int`: Number of Newton-Raphson iterations
 - `constraints::PC<:ParameterConstraints`: Parameter bounds and step limits
 - `batch_size::Int`: Batch size for GPU processing
+- `auto_timeout::Float64`: Seconds to wait for GPU in auto mode
+- `gpu_timeout::Float64`: Seconds to wait for GPU in explicit gpu mode
+- `on_wait`: Callback for GPU wait progress feedback
 
 # See also
 [`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
 """
-struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, PC<:ParameterConstraints}
-    device::D
+struct GaussMLEFitter{P<:PSFModel, PC<:ParameterConstraints, W}
+    backend::Symbol
     psf_model::P
     iterations::Int
     constraints::PC
     batch_size::Int
+    auto_timeout::Float64
+    gpu_timeout::Float64
+    on_wait::W
 end
 
 """
@@ -89,10 +94,18 @@ Camera noise model is determined by the ROIBatch type:
 
 # Keyword Arguments
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
-- `device = nothing`: Compute device (`:cpu`, `:gpu`, `:auto`, or nothing for auto-detect)
+- `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `iterations = 20`: Number of Newton-Raphson iterations
 - `constraints = nothing`: Parameter constraints (uses defaults if nothing)
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
+- `auto_timeout = 30.0`: Seconds to wait for GPU in auto mode before falling back to CPU
+- `gpu_timeout = Inf`: Seconds to wait for GPU in explicit gpu mode
+- `on_wait = nothing`: Callback `(elapsed, available, required) -> nothing` for GPU wait progress
+
+# Backend Semantics
+- `:cpu` - Always use CPU, no waiting
+- `:gpu` - Explicit GPU request, wait up to gpu_timeout, error if unavailable
+- `:auto` - Try GPU with auto_timeout, fall back to CPU with warning
 
 # Examples
 ```julia
@@ -100,12 +113,19 @@ Camera noise model is determined by the ROIBatch type:
 fitter = GaussMLEFitter()
 
 # Force CPU execution
-cpu_fitter = GaussMLEFitter(device = :cpu)
+cpu_fitter = GaussMLEFitter(backend = :cpu)
 
 # Variable sigma model with more iterations
 fitter = GaussMLEFitter(
     psf_model = GaussianXYNBS(),
     iterations = 30
+)
+
+# Explicit GPU with custom timeout
+fitter = GaussMLEFitter(
+    backend = :gpu,
+    gpu_timeout = 60.0,
+    on_wait = (e, a, r) -> @info "Waiting..." elapsed=e
 )
 ```
 
@@ -114,34 +134,59 @@ fitter = GaussMLEFitter(
 """
 function GaussMLEFitter(;
     psf_model = GaussianXYNB(0.13f0),
-    device = nothing,  # auto-detect if nothing
+    backend::Symbol = :auto,
+    device = nothing,  # deprecated, use backend
     iterations = 20,
     constraints = nothing,
-    batch_size = 10_000
+    batch_size = 10_000,
+    auto_timeout = 30.0,
+    gpu_timeout = Inf,
+    on_wait = nothing
 )
-    # Handle symbol device specification
-    device = if device == :cpu
-        CPU()
-    elseif device == :gpu
-        if !CUDA.functional()
-            @warn "GPU requested but CUDA is not available, falling back to CPU"
-            CPU()
+    # Handle deprecated device kwarg
+    if device !== nothing
+        @warn "device kwarg is deprecated, use backend instead" maxlog=1
+        backend = if device isa Symbol
+            device
+        elseif device isa CPU
+            :cpu
+        elseif device isa GPU
+            :gpu
         else
-            GPU()
+            :auto
         end
-    elseif device == :auto || isnothing(device)
-        auto_device()
-    else
-        device  # Already a ComputeDevice
     end
-    device = select_device(device)
+
+    backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
     # Default constraints based on typical box size
     if isnothing(constraints)
         constraints = default_constraints(psf_model, 11)  # typical 11x11 box
     end
 
-    return GaussMLEFitter(device, psf_model, iterations, constraints, batch_size)
+    return GaussMLEFitter(backend, psf_model, iterations, constraints, batch_size,
+                          Float64(auto_timeout), Float64(gpu_timeout), on_wait)
+end
+
+"""
+    estimate_batch_memory(batch_size, box_size, n_params)
+
+Estimate GPU memory needed for one batch of MLE fitting.
+
+Memory components:
+- data: batch_size × box_size² × 4 bytes
+- results: batch_size × n_params × 4 bytes
+- uncertainties: batch_size × n_params × 4 bytes
+- variance_map: box_size² × 4 bytes (shared)
+- corners: batch_size × 2 × 4 bytes
+"""
+function estimate_batch_memory(batch_size::Integer, box_size::Integer, n_params::Integer)
+    data_bytes = batch_size * box_size^2 * 4
+    results_bytes = batch_size * n_params * 4
+    uncertainties_bytes = batch_size * n_params * 4
+    variance_bytes = box_size^2 * 4
+    corners_bytes = batch_size * 2 * 4
+    return data_bytes + results_bytes + uncertainties_bytes + variance_bytes + corners_bytes
 end
 
 """
@@ -204,57 +249,65 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     x_corners = Int32[1 + (i-1) * box_size for i in 1:n_fits]
     y_corners = fill(Int32(1), n_fits)
 
+    # Select backend with GPU memory wait
+    actual_batch = min(fitter.batch_size, n_fits)
+    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+    device = select_backend(fitter.backend, required_memory;
+                           auto_timeout=fitter.auto_timeout,
+                           gpu_timeout=fitter.gpu_timeout,
+                           on_wait=fitter.on_wait)
+
     # Use unified kernel for both CPU and GPU
-    if fitter.device isa CPU
+    if device isa CPU
         # Use unified kernel on CPU
-        backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(backend)
+        ka_backend = KernelAbstractions.CPU()
+        kernel = unified_gaussian_mle_kernel!(ka_backend)
         kernel(results, uncertainties, log_likelihoods,
                data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
-        KernelAbstractions.synchronize(backend)
+        KernelAbstractions.synchronize(ka_backend)
     else
         # Use unified kernel on GPU
         # Process in batches for memory efficiency
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size = batch_end - batch_start + 1
-            
+            batch_size_actual = batch_end - batch_start + 1
+
             # Get batch data
             batch_data = data_f32[:, :, batch_start:batch_end]
-            
+
             # Move batch to device using KernelAbstractions adapt
-            d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
+            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
 
             # Move variance map to device (same for all batches)
-            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(var_map))
+            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(var_map))
             copyto!(d_variance_map, var_map)
 
             # Move batch corners to device
             batch_x_corners = x_corners[batch_start:batch_end]
             batch_y_corners = y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_y_corners))
+            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
             copyto!(d_x_corners, batch_x_corners)
             copyto!(d_y_corners, batch_y_corners)
 
             # Allocate device arrays for results
-            d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
-            d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size))
-            d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size)
+            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
             # Launch unified kernel (works on GPU!)
-            kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
+            kernel = unified_gaussian_mle_kernel!(backend(device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
-                   ndrange=batch_size)
-            
+                   ndrange=batch_size_actual)
+
             # Wait for kernel completion
-            KernelAbstractions.synchronize(GaussMLE.backend(fitter.device))
-            
+            KernelAbstractions.synchronize(backend(device))
+
             # Copy results back (need to copy to host arrays first)
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
@@ -323,14 +376,22 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     # Use unified kernel on CPU/GPU
     data_f32 = convert(Array{Float32,3}, roi_batch.data)
 
-    if fitter.device isa CPU
-        backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(backend)
+    # Select backend with GPU memory wait
+    actual_batch = min(fitter.batch_size, n_fits)
+    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+    device = select_backend(fitter.backend, required_memory;
+                           auto_timeout=fitter.auto_timeout,
+                           gpu_timeout=fitter.gpu_timeout,
+                           on_wait=fitter.on_wait)
+
+    if device isa CPU
+        ka_backend = KernelAbstractions.CPU()
+        kernel = unified_gaussian_mle_kernel!(ka_backend)
         kernel(results, uncertainties, log_likelihoods,
                data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
-        KernelAbstractions.synchronize(backend)
+        KernelAbstractions.synchronize(ka_backend)
     else
         # GPU batch processing
         for batch_start in 1:fitter.batch_size:n_fits
@@ -338,30 +399,30 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
             batch_size_actual = batch_end - batch_start + 1
 
             batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
+            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
 
-            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
+            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
             copyto!(d_variance_map, variance_map)
 
             batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
             batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_y_corners))
+            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
             copyto!(d_x_corners, batch_x_corners)
             copyto!(d_y_corners, batch_y_corners)
 
-            d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size_actual)
+            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
-            kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
+            kernel = unified_gaussian_mle_kernel!(backend(device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
 
-            KernelAbstractions.synchronize(GaussMLE.backend(fitter.device))
+            KernelAbstractions.synchronize(backend(device))
 
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
@@ -410,14 +471,22 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     # Use unified kernel on CPU/GPU (data already in electrons)
     data_f32 = convert(Array{Float32,3}, data_electrons)
 
-    if fitter.device isa CPU
-        backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(backend)
+    # Select backend with GPU memory wait
+    actual_batch = min(fitter.batch_size, n_fits)
+    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+    device = select_backend(fitter.backend, required_memory;
+                           auto_timeout=fitter.auto_timeout,
+                           gpu_timeout=fitter.gpu_timeout,
+                           on_wait=fitter.on_wait)
+
+    if device isa CPU
+        ka_backend = KernelAbstractions.CPU()
+        kernel = unified_gaussian_mle_kernel!(ka_backend)
         kernel(results, uncertainties, log_likelihoods,
                data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
-        KernelAbstractions.synchronize(backend)
+        KernelAbstractions.synchronize(ka_backend)
     else
         # GPU batch processing
         for batch_start in 1:fitter.batch_size:n_fits
@@ -425,30 +494,30 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
             batch_size_actual = batch_end - batch_start + 1
 
             batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(batch_data))
+            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
             copyto!(d_batch_data, batch_data)
 
-            d_variance_map = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, size(variance_map))
+            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
             copyto!(d_variance_map, variance_map)
 
             batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
             batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Int32, length(batch_y_corners))
+            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
             copyto!(d_x_corners, batch_x_corners)
             copyto!(d_y_corners, batch_y_corners)
 
-            d_results = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, (n_params, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(GaussMLE.backend(fitter.device), Float32, batch_size_actual)
+            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
-            kernel = unified_gaussian_mle_kernel!(GaussMLE.backend(fitter.device))
+            kernel = unified_gaussian_mle_kernel!(backend(device))
             kernel(d_results, d_uncertainties, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
 
-            KernelAbstractions.synchronize(GaussMLE.backend(fitter.device))
+            KernelAbstractions.synchronize(backend(device))
 
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
