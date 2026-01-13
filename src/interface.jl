@@ -448,8 +448,8 @@ end
 
 # Fit method for ROIBatch with SMLMData.SCMOSCamera
 function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}) where {T,N,A}
-    # Preprocess: ADU → electrons and extract variance map
-    data_electrons = to_electrons(roi_batch.data, roi_batch.camera)
+    # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
+    data_electrons = to_electrons(roi_batch.data, roi_batch.camera, roi_batch.x_corners, roi_batch.y_corners)
     variance_map = extract_variance_map(roi_batch.camera, Float32)
 
     n_fits = size(data_electrons, 3)
