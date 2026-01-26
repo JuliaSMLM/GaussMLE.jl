@@ -239,6 +239,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
+    covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
 
     # Determine camera model from variance_map keyword
@@ -262,7 +263,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
         # Use unified kernel on CPU
         ka_backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, log_likelihoods,
+        kernel(results, uncertainties, covariances, log_likelihoods,
                data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
@@ -296,11 +297,12 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             # Allocate device arrays for results
             d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
             d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
             d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
             # Launch unified kernel (works on GPU!)
             kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_log_likelihoods,
+            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
@@ -311,6 +313,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
             # Copy results back (need to copy to host arrays first)
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            covariances[:, batch_start:batch_end] = Array(d_covariances)
             log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
         end
     end
@@ -337,7 +340,7 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     camera_smld = SMLMData.IdealCamera(0:1023, 0:1023, pixel_size)
 
     batch = SMLMData.ROIBatch(data_f32, x_corners_smld, y_corners_smld, frame_indices, camera_smld)
-    loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, batch, fitter.psf_model)
+    loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, batch, fitter.psf_model)
 
     # Return BasicSMLD
     return to_smld(loc_result, batch)
@@ -367,6 +370,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
+    covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
 
     # IdealCamera: Poisson noise only (no variance map)
@@ -387,7 +391,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     if device isa CPU
         ka_backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, log_likelihoods,
+        kernel(results, uncertainties, covariances, log_likelihoods,
                data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
@@ -414,10 +418,11 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
 
             d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
             d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
             d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
             kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_log_likelihoods,
+            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
@@ -426,6 +431,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
 
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            covariances[:, batch_start:batch_end] = Array(d_covariances)
             log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
         end
     end
@@ -442,7 +448,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     end
 
     # Use real ROIBatch for coordinate conversion (preserves corners!)
-    loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
+    loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
     return to_smld(loc_result, roi_batch)
 end
 
@@ -463,6 +469,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
+    covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
 
     # SCMOSCamera: Poisson + readnoise variance
@@ -482,7 +489,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     if device isa CPU
         ka_backend = KernelAbstractions.CPU()
         kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, log_likelihoods,
+        kernel(results, uncertainties, covariances, log_likelihoods,
                data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
                fitter.constraints, fitter.iterations,
                ndrange=n_fits)
@@ -509,10 +516,11 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
 
             d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
             d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
             d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
             kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_log_likelihoods,
+            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                    d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
                    fitter.constraints, fitter.iterations,
                    ndrange=batch_size_actual)
@@ -521,6 +529,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
 
             results[:, batch_start:batch_end] = Array(d_results)
             uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            covariances[:, batch_start:batch_end] = Array(d_covariances)
             log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
         end
     end
@@ -537,7 +546,7 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     end
 
     # Use original ROIBatch for coordinate conversion (preserves corners and original camera!)
-    loc_result = create_localization_result(results, uncertainties, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
+    loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
     return to_smld(loc_result, roi_batch)
 end
 
