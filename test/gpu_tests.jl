@@ -42,31 +42,33 @@ using KernelAbstractions
         @testset "GaussianXYNB (N=4)" begin
             psf_model = GaussMLE.GaussianXYNB(0.13f0)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
-            
+
             # Allocate output arrays
             results = Matrix{Float32}(undef, 4, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 4, n_test_blobs)
+            covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
-            
+
             # Run unified kernel on CPU
             backend = KernelAbstractions.CPU()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-            
+
             # Create dummy corners and variance for new kernel signature
             x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, log_likelihoods,
+            kernel(results, uncertainties, covariances, log_likelihoods,
                    data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
-            
+
             # Check results are reasonable
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
+            @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
-            
+
             # Check parameters are in expected ranges
             @test all(2 .< results[1, :] .< 6)  # x position
             @test all(2 .< results[2, :] .< 6)  # y position
@@ -77,52 +79,56 @@ using KernelAbstractions
         @testset "GaussianXYNBS (N=5)" begin
             psf_model = GaussMLE.GaussianXYNBS{Float32}()
             constraints = GaussMLE.default_constraints(psf_model, box_size)
-            
+
             results = Matrix{Float32}(undef, 5, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 5, n_test_blobs)
+            covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
-            
+
             backend = KernelAbstractions.CPU()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-            
+
             # Create dummy corners and variance for new kernel signature
             x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, log_likelihoods,
+            kernel(results, uncertainties, covariances, log_likelihoods,
                    data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
-            
+
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
+            @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
         end
         
         @testset "GaussianXYNBSXSY (N=6)" begin
             psf_model = GaussMLE.GaussianXYNBSXSY{Float32}()
             constraints = GaussMLE.default_constraints(psf_model, box_size)
-            
+
             results = Matrix{Float32}(undef, 6, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 6, n_test_blobs)
+            covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
-            
+
             backend = KernelAbstractions.CPU()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-            
+
             # Create dummy corners and variance for new kernel signature
             x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, log_likelihoods,
+            kernel(results, uncertainties, covariances, log_likelihoods,
                    data, psf_model, Val(false), variance_map, x_corners, y_corners,
                    constraints, iterations,
                    ndrange=n_test_blobs)
-            
+
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
+            @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
         end
     end
@@ -141,6 +147,7 @@ using KernelAbstractions
                 # Allocate GPU output arrays
                 d_results = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
+                d_covariances = CUDA.zeros(Float32, 3, n_test_blobs)
                 d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
 
                 # Create dummy corners and variance for new kernel signature
@@ -152,24 +159,26 @@ using KernelAbstractions
                 backend = CUDABackend()
                 kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
-                kernel(d_results, d_uncertainties, d_log_likelihoods,
+                kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                        d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                        constraints, iterations,
                        ndrange=n_test_blobs)
-                
+
                 # Wait for completion
                 CUDA.synchronize()
-                
+
                 # Copy results back
                 results = Array(d_results)
                 uncertainties = Array(d_uncertainties)
+                covariances = Array(d_covariances)
                 log_likelihoods = Array(d_log_likelihoods)
-                
+
                 # Check results
                 @test all(isfinite.(results))
                 @test all(uncertainties .> 0)
+                @test all(isfinite.(covariances))
                 @test all(isfinite.(log_likelihoods))
-                
+
                 # Check parameters are in expected ranges
                 @test all(2 .< results[1, :] .< 6)  # x position
                 @test all(2 .< results[2, :] .< 6)  # y position
@@ -189,11 +198,12 @@ using KernelAbstractions
                 # Run on CPU
                 results_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
                 uncertainties_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
+                covariances_cpu = Matrix{Float32}(undef, 3, n_test_blobs)
                 log_likelihoods_cpu = Vector{Float32}(undef, n_test_blobs)
 
                 backend_cpu = KernelAbstractions.CPU()
                 kernel_cpu = GaussMLE.unified_gaussian_mle_kernel!(backend_cpu)
-                kernel_cpu(results_cpu, uncertainties_cpu, log_likelihoods_cpu,
+                kernel_cpu(results_cpu, uncertainties_cpu, covariances_cpu, log_likelihoods_cpu,
                           data, psf_model, Val(false), variance_map, x_corners, y_corners,
                           constraints, iterations,
                           ndrange=n_test_blobs)
@@ -202,6 +212,7 @@ using KernelAbstractions
                 d_data = CuArray(data)
                 d_results = CUDA.zeros(Float32, 4, n_test_blobs)
                 d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
+                d_covariances = CUDA.zeros(Float32, 3, n_test_blobs)
                 d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
                 d_x_corners = CuArray(x_corners)
                 d_y_corners = CuArray(y_corners)
@@ -209,20 +220,22 @@ using KernelAbstractions
 
                 backend_gpu = CUDABackend()
                 kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
-                kernel_gpu(d_results, d_uncertainties, d_log_likelihoods,
+                kernel_gpu(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                           d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                           constraints, iterations,
                           ndrange=n_test_blobs)
-                
+
                 CUDA.synchronize()
-                
+
                 results_gpu = Array(d_results)
                 uncertainties_gpu = Array(d_uncertainties)
+                covariances_gpu = Array(d_covariances)
                 log_likelihoods_gpu = Array(d_log_likelihoods)
-                
+
                 # Compare results (should be very close)
                 @test results_cpu ≈ results_gpu rtol=1e-4
                 @test uncertainties_cpu ≈ uncertainties_gpu rtol=1e-3
+                @test covariances_cpu ≈ covariances_gpu rtol=1e-3
                 @test log_likelihoods_cpu ≈ log_likelihoods_gpu rtol=1e-4
             end
         else

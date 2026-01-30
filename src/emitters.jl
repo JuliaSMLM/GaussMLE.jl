@@ -19,7 +19,7 @@ using SMLMData
 
 2D emitter for fixed-σ Gaussian PSF (GaussianXYNB) with goodness-of-fit.
 
-Identical to SMLMData.Emitter2DFit but adds p-value field.
+Identical to SMLMData.Emitter2DFit but adds p-value and covariance fields.
 
 # Fields
 ## Spatial (microns)
@@ -31,6 +31,7 @@ Identical to SMLMData.Emitter2DFit but adds p-value field.
 
 ## Uncertainties (CRLB, microns for spatial)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
+- `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
 
 ## Goodness-of-Fit
@@ -54,6 +55,7 @@ mutable struct Emitter2DFitGaussMLE{T} <: SMLMData.AbstractEmitter
     # Uncertainties
     σ_x::T
     σ_y::T
+    σ_xy::T  # Position covariance (microns²)
     σ_photons::T
     σ_bg::T
 
@@ -85,6 +87,7 @@ end
 
 ## Uncertainties (CRLB)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
+- `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
 - `σ_σ::T`: PSF width uncertainty (microns)
 
@@ -109,6 +112,7 @@ mutable struct Emitter2DFitSigma{T} <: SMLMData.AbstractEmitter
     # Uncertainties (microns for spatial, same units for photometry)
     σ_x::T
     σ_y::T
+    σ_xy::T  # Position covariance (microns²)
     σ_photons::T
     σ_bg::T
     σ_σ::T  # Uncertainty in fitted sigma
@@ -141,6 +145,7 @@ end
 
 ## Uncertainties (CRLB)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
+- `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
 - `σ_σx::T`, `σ_σy::T`: PSF width uncertainties (microns)
 
@@ -166,6 +171,7 @@ mutable struct Emitter2DFitSigmaXY{T} <: SMLMData.AbstractEmitter
     # Uncertainties (microns for spatial, same units for photometry)
     σ_x::T
     σ_y::T
+    σ_xy::T  # Position covariance (microns²)
     σ_photons::T
     σ_bg::T
     σ_σx::T  # Uncertainty in fitted sigma_x
@@ -186,7 +192,7 @@ end
 
 3D emitter for astigmatic PSF (AstigmaticXYZNB) with goodness-of-fit.
 
-Identical to SMLMData.Emitter3DFit but adds p-value field.
+Identical to SMLMData.Emitter3DFit but adds p-value and covariance fields.
 
 # Fields
 ## Spatial (microns)
@@ -198,6 +204,7 @@ Identical to SMLMData.Emitter3DFit but adds p-value field.
 
 ## Uncertainties (CRLB, microns for spatial)
 - `σ_x::T`, `σ_y::T`, `σ_z::T`: Position uncertainties (microns)
+- `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of Fisher matrix inverse
 - `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
 
 ## Goodness-of-Fit
@@ -223,6 +230,9 @@ mutable struct Emitter3DFitGaussMLE{T} <: SMLMData.AbstractEmitter
     σ_x::T
     σ_y::T
     σ_z::T
+    σ_xy::T   # Position covariance x-y (microns²)
+    σ_xz::T   # Position covariance x-z (microns²)
+    σ_yz::T   # Position covariance y-z (microns²)
     σ_photons::T
     σ_bg::T
 

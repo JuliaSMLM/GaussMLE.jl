@@ -285,6 +285,7 @@ end
 @kernel function unified_gaussian_mle_kernel!(
     results::AbstractArray{T,2},
     uncertainties::AbstractArray{T,2},
+    covariances::AbstractArray{T,2},  # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
     log_likelihoods::AbstractArray{T,1},
     @Const(data::AbstractArray{T,3}),
     @Const(psf_model::PSFModel{N,T}),
@@ -414,6 +415,18 @@ end
             results[k, idx] = θ[k]
             uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
         end
+        # Extract spatial covariances from Fisher matrix inverse
+        # covariances[1,idx] = σ_xy (all models)
+        # covariances[2,idx] = σ_xz (3D only, zero otherwise)
+        # covariances[3,idx] = σ_yz (3D only, zero otherwise)
+        @inbounds covariances[1, idx] = H_inv[1,2]
+        if psf_model isa AstigmaticXYZNB
+            @inbounds covariances[2, idx] = H_inv[1,3]
+            @inbounds covariances[3, idx] = H_inv[2,3]
+        else
+            @inbounds covariances[2, idx] = zero(T)
+            @inbounds covariances[3, idx] = zero(T)
+        end
     else
         # Fallback: use LU decomposition
         if static_matrix_inverse!(H_inv, H)
@@ -421,12 +434,23 @@ end
                 results[k, idx] = θ[k]
                 uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
             end
+            @inbounds covariances[1, idx] = H_inv[1,2]
+            if psf_model isa AstigmaticXYZNB
+                @inbounds covariances[2, idx] = H_inv[1,3]
+                @inbounds covariances[3, idx] = H_inv[2,3]
+            else
+                @inbounds covariances[2, idx] = zero(T)
+                @inbounds covariances[3, idx] = zero(T)
+            end
         else
-            # Singular matrix - set large uncertainties
+            # Singular matrix - set zero covariances
             @inbounds for k in 1:N
                 results[k, idx] = θ[k]
                 uncertainties[k, idx] = T(Inf)
             end
+            @inbounds covariances[1, idx] = zero(T)
+            @inbounds covariances[2, idx] = zero(T)
+            @inbounds covariances[3, idx] = zero(T)
         end
     end
 

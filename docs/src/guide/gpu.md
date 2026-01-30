@@ -13,42 +13,88 @@ GaussMLE.jl includes GPU acceleration support through CUDA.jl and KernelAbstract
 ```julia
 using GaussMLE
 
-# Auto-detect device (uses GPU if available)
+# Auto-detect backend (uses GPU if available)
 fitter = GaussMLEFitter()
 
 # Force CPU
-fitter_cpu = GaussMLEFitter(device = :cpu)
+fitter_cpu = GaussMLEFitter(backend = :cpu)
 
-# Force GPU (falls back to CPU if unavailable)
-fitter_gpu = GaussMLEFitter(device = :gpu)
+# Force GPU (errors if unavailable)
+fitter_gpu = GaussMLEFitter(backend = :gpu)
+
+# Auto with custom timeout (waits 30s for GPU, then falls back to CPU)
+fitter_auto = GaussMLEFitter(backend = :auto, auto_timeout = 30.0)
 ```
 
-## Device Selection
+## Backend Selection
 
-### Automatic Detection
+### Backend Options
 
-By default, `GaussMLEFitter()` automatically selects the best available device:
+The `backend` parameter controls compute device selection:
+
+- `:auto` (default) - Try GPU, fall back to CPU if unavailable or timeout
+- `:cpu` - Always use CPU, no waiting
+- `:gpu` - Explicit GPU request, error if unavailable
 
 ```julia
 using GaussMLE
 
-# Auto-detect (preferred)
+# Auto-detect (preferred for most use cases)
 fitter = GaussMLEFitter()
 
-# Explicit auto-detect (same behavior)
-fitter = GaussMLEFitter(device = :auto)
+# Explicit auto-detect (same as default)
+fitter = GaussMLEFitter(backend = :auto)
+
+# Force CPU
+fitter = GaussMLEFitter(backend = :cpu)
+
+# Force GPU (errors if unavailable)
+fitter = GaussMLEFitter(backend = :gpu)
 ```
 
-### Manual Device Selection
+### GPU Memory Wait and Timeout
 
-Use symbols for convenience:
+When running parallel GPU operations or when GPU memory is temporarily busy, GaussMLE can wait for memory to become available:
 
 ```julia
-# Force CPU
-fitter = GaussMLEFitter(device = :cpu)
+# Auto mode: wait up to 30s (default), then fall back to CPU
+fitter = GaussMLEFitter(backend = :auto, auto_timeout = 30.0)
 
-# Force GPU (warns and falls back to CPU if unavailable)
-fitter = GaussMLEFitter(device = :gpu)
+# Explicit GPU: wait up to 60s, error if still unavailable
+fitter = GaussMLEFitter(backend = :gpu, gpu_timeout = 60.0)
+
+# Explicit GPU: wait indefinitely (default gpu_timeout = Inf)
+fitter = GaussMLEFitter(backend = :gpu)
+```
+
+### Progress Callback
+
+For long waits, you can provide a callback to monitor progress:
+
+```julia
+fitter = GaussMLEFitter(
+    backend = :auto,
+    auto_timeout = 60.0,
+    on_wait = (elapsed, available, required) ->
+        @info "Waiting for GPU memory..." elapsed=round(elapsed, digits=1) available=Base.format_bytes(available) required=Base.format_bytes(required)
+)
+```
+
+### Multi-GPU Selection
+
+On systems with multiple GPUs, GaussMLE automatically selects the GPU with the most free memory:
+
+```julia
+using CUDA
+
+# Check available GPUs
+for (i, dev) in enumerate(CUDA.devices())
+    CUDA.device!(i-1)
+    println("GPU $i: $(CUDA.name(dev)) - $(Base.format_bytes(CUDA.free_memory())) free")
+end
+
+# GaussMLE automatically picks the best one
+fitter = GaussMLEFitter(backend = :gpu)  # Selects GPU with most free memory
 ```
 
 ### Checking GPU Availability
@@ -75,7 +121,7 @@ using GaussMLE
 
 # Configure batch size (default: 10,000 ROIs per batch)
 fitter = GaussMLEFitter(
-    device = :gpu,
+    backend = :gpu,
     batch_size = 5000  # Process 5000 ROIs at a time
 )
 
@@ -100,13 +146,13 @@ n_rois = 10_000
 data = rand(Float32, 11, 11, n_rois)
 
 # CPU benchmark
-fitter_cpu = GaussMLEFitter(device = :cpu)
+fitter_cpu = GaussMLEFitter(backend = :cpu)
 t_cpu = @elapsed smld_cpu = fit(fitter_cpu, data)
 rate_cpu = n_rois / t_cpu
 println("CPU: $(round(rate_cpu)) ROIs/second")
 
 # GPU benchmark
-fitter_gpu = GaussMLEFitter(device = :gpu, batch_size = 5000)
+fitter_gpu = GaussMLEFitter(backend = :gpu, batch_size = 5000)
 t_gpu = @elapsed smld_gpu = fit(fitter_gpu, data)
 rate_gpu = n_rois / t_gpu
 println("GPU: $(round(rate_gpu)) ROIs/second")
@@ -166,10 +212,16 @@ If you encounter out-of-memory errors:
 
 1. **Reduce batch size**:
 ```julia
-fitter = GaussMLEFitter(device = :gpu, batch_size = 2000)
+fitter = GaussMLEFitter(backend = :gpu, batch_size = 2000)
 ```
 
-2. **Process in chunks**:
+2. **Use auto mode with fallback**:
+```julia
+# Will wait for memory, fall back to CPU if unavailable
+fitter = GaussMLEFitter(backend = :auto, auto_timeout = 10.0)
+```
+
+3. **Process in chunks**:
 ```julia
 # Manual chunking for very large datasets
 chunk_size = 10_000
@@ -191,8 +243,8 @@ using Statistics
 
 data = rand(Float32, 11, 11, 1000)
 
-fitter_cpu = GaussMLEFitter(device = :cpu)
-fitter_gpu = GaussMLEFitter(device = :gpu)
+fitter_cpu = GaussMLEFitter(backend = :cpu)
+fitter_gpu = GaussMLEFitter(backend = :gpu)
 
 smld_cpu = fit(fitter_cpu, data)
 smld_gpu = fit(fitter_gpu, data)
@@ -226,10 +278,13 @@ end
 
 ```julia
 # Reduce batch size
-fitter = GaussMLEFitter(device = :gpu, batch_size = 1000)
+fitter = GaussMLEFitter(backend = :gpu, batch_size = 1000)
 
-# Or fall back to CPU
-fitter = GaussMLEFitter(device = :cpu)
+# Or use auto mode for automatic CPU fallback
+fitter = GaussMLEFitter(backend = :auto, auto_timeout = 5.0)
+
+# Or explicitly use CPU
+fitter = GaussMLEFitter(backend = :cpu)
 ```
 
 ### Slow GPU Performance

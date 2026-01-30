@@ -77,8 +77,15 @@ println("Mean PSF width: $(mean(σ_values)*1000) nm ± $(mean(σ_uncertainties)*
 ```julia
 using GaussMLE
 
-# Force GPU (auto-fallback to CPU if unavailable)
-fitter = GaussMLEFitter(device=:gpu, batch_size=5000)
+# Auto-detect backend (uses GPU if available)
+fitter = GaussMLEFitter()
+
+# Force GPU with custom timeout
+fitter = GaussMLEFitter(backend=:gpu, batch_size=5000)
+
+# Auto-detect with fallback timeout (waits 30s for GPU, then falls back to CPU)
+fitter = GaussMLEFitter(backend=:auto, auto_timeout=30.0)
+
 smld = fit(fitter, large_dataset)  # Returns BasicSMLD
 ```
 
@@ -128,7 +135,7 @@ precisions = [e.σ_x for e in smld.emitters]
 - `generate_roi_batch(camera, psf; kwargs...)` - Generate synthetic data
 
 ### Main Type
-- `GaussMLEFitter(; psf_model, camera_model, device, iterations, constraints, batch_size)`
+- `GaussMLEFitter(; psf_model, backend, iterations, constraints, batch_size, auto_timeout, gpu_timeout, on_wait)`
 
 ### PSF Models
 - `GaussianXYNB(σ)` - Fixed σ (4 params: x, y, N, bg)
@@ -184,8 +191,16 @@ Internal functions use `GaussMLE.` prefix:
 # Custom constraints
 constraints = GaussMLE.ParameterConstraints{4}(lower, upper, max_step)
 
-# Direct device types (prefer symbols :cpu/:gpu)
+# Direct device types (prefer backend symbols :cpu/:gpu/:auto)
 device = GaussMLE.GPU()
+
+# GPU wait callback for progress feedback
+fitter = GaussMLEFitter(
+    backend = :gpu,
+    gpu_timeout = 60.0,
+    on_wait = (elapsed, available, required) ->
+        @info "Waiting for GPU memory..." elapsed available required
+)
 ```
 
 ## Examples

@@ -48,11 +48,11 @@ for i in 1:n_emitters
     frame = rand(1:n_frames)
 
     push!(emitters_true, SMLMData.Emitter2DFit{Float64}(
-        x, y,
-        1500.0,  # photons
-        10.0,    # background
-        0.0, 0.0, 0.0, 0.0,  # uncertainties (unknown for ground truth)
-        frame, 1, 0, i
+        x=x, y=y,
+        photons=1500.0,
+        bg=10.0,
+        σ_x=0.0, σ_y=0.0, σ_photons=0.0, σ_bg=0.0,  # uncertainties (unknown for ground truth)
+        frame=frame, dataset=1, track_id=0, id=i
     ))
 end
 

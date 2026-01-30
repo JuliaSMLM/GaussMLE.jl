@@ -9,6 +9,7 @@ This file contains only GaussMLE-specific types and conversions.
 struct LocalizationResult{T,P<:PSFModel}
     parameters::Matrix{T}       # ROI coordinates (as before)
     uncertainties::Matrix{T}     # Uncertainties
+    covariances::Matrix{T}       # Off-diagonal covariances [σ_xy, σ_xz, σ_yz] (3 x n_fits)
     log_likelihoods::Vector{T}  # Log-likelihood ratios
     pvalues::Vector{T}          # Goodness-of-fit p-values
 
@@ -37,6 +38,7 @@ end
 function create_localization_result(
     parameters::Matrix{T},
     uncertainties::Matrix{T},
+    covariances::Matrix{T},
     log_likelihoods::Vector{T},
     pvalues::Vector{T},
     roi_batch::SMLMData.ROIBatch,
@@ -61,6 +63,7 @@ function create_localization_result(
     LocalizationResult(
         parameters,
         uncertainties,
+        covariances,
         log_likelihoods,
         pvalues,
         x_camera,
@@ -81,6 +84,7 @@ function Base.iterate(r::LocalizationResult, state=1)
     fit = (
         parameters = r.parameters[:, state],
         uncertainties = r.uncertainties[:, state],
+        covariances = r.covariances[:, state],
         log_likelihood = r.log_likelihoods[state],
         x_camera = r.x_camera[state],
         y_camera = r.y_camera[state],
@@ -103,6 +107,7 @@ function Base.getindex(r::LocalizationResult, i::Int)
     return (
         parameters = r.parameters[:, i],
         uncertainties = r.uncertainties[:, i],
+        covariances = r.covariances[:, i],
         log_likelihood = r.log_likelihoods[i],
         x_camera = r.x_camera[i],
         y_camera = r.y_camera[i],
@@ -134,9 +139,11 @@ function to_emitter(
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
-    # Convert to microns
-    x_microns = (result.x_camera[idx] - 1) * pixel_size_x
-    y_microns = (result.y_camera[idx] - 1) * pixel_size_y
+    # Convert to microns (using camera origin for proper coordinate mapping)
+    # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
+    # integral_gaussian_1d integrates from i-0.5 to i+0.5, so pixel centers are at integer positions
+    x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
+    y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
 
     # Parameter order: [x, y, photons, bg]
     photons = result.parameters[3, idx]
@@ -145,6 +152,8 @@ function to_emitter(
     # Uncertainties (convert spatial to microns)
     σ_x = result.uncertainties[1, idx] * pixel_size_x
     σ_y = result.uncertainties[2, idx] * pixel_size_y
+    # Covariance: H_inv[1,2] in pixels², convert to microns²
+    σ_xy = result.covariances[1, idx] * pixel_size_x * pixel_size_y
     σ_photons = result.uncertainties[3, idx]
     σ_bg = result.uncertainties[4, idx]
 
@@ -154,7 +163,7 @@ function to_emitter(
     Emitter2DFitGaussMLE{T}(
         T(x_microns), T(y_microns),
         photons, bg,
-        T(σ_x), T(σ_y),
+        T(σ_x), T(σ_y), T(σ_xy),
         σ_photons, σ_bg,
         pvalue,
         Int(result.frame_indices[idx]),
@@ -175,9 +184,10 @@ function to_emitter(
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
-    # Convert to microns
-    x_microns = (result.x_camera[idx] - 1) * pixel_size_x
-    y_microns = (result.y_camera[idx] - 1) * pixel_size_y
+    # Convert to microns (using camera origin for proper coordinate mapping)
+    # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
+    x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
+    y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
 
     # Parameter order: [x, y, photons, bg, σ]
     photons = result.parameters[3, idx]
@@ -188,6 +198,8 @@ function to_emitter(
     # Uncertainties
     σ_x = result.uncertainties[1, idx] * pixel_size_x
     σ_y = result.uncertainties[2, idx] * pixel_size_y
+    # Covariance: H_inv[1,2] in pixels², convert to microns²
+    σ_xy = result.covariances[1, idx] * pixel_size_x * pixel_size_y
     σ_photons = result.uncertainties[3, idx]
     σ_bg = result.uncertainties[4, idx]
     σ_σ = result.uncertainties[5, idx] * pixel_size_x  # σ uncertainty in microns
@@ -199,7 +211,7 @@ function to_emitter(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σ_microns),
-        T(σ_x), T(σ_y),
+        T(σ_x), T(σ_y), T(σ_xy),
         σ_photons, σ_bg,
         T(σ_σ),
         pvalue,
@@ -221,9 +233,10 @@ function to_emitter(
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
-    # Convert to microns
-    x_microns = (result.x_camera[idx] - 1) * pixel_size_x
-    y_microns = (result.y_camera[idx] - 1) * pixel_size_y
+    # Convert to microns (using camera origin for proper coordinate mapping)
+    # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
+    x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
+    y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
 
     # Parameter order: [x, y, photons, bg, σx, σy]
     photons = result.parameters[3, idx]
@@ -236,6 +249,8 @@ function to_emitter(
     # Uncertainties
     σ_x = result.uncertainties[1, idx] * pixel_size_x
     σ_y = result.uncertainties[2, idx] * pixel_size_y
+    # Covariance: H_inv[1,2] in pixels², convert to microns²
+    σ_xy = result.covariances[1, idx] * pixel_size_x * pixel_size_y
     σ_photons = result.uncertainties[3, idx]
     σ_bg = result.uncertainties[4, idx]
     σ_σx = result.uncertainties[5, idx] * pixel_size_x
@@ -248,7 +263,7 @@ function to_emitter(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σx_microns), T(σy_microns),
-        T(σ_x), T(σ_y),
+        T(σ_x), T(σ_y), T(σ_xy),
         σ_photons, σ_bg,
         T(σ_σx), T(σ_σy),
         pvalue,
@@ -270,9 +285,10 @@ function to_emitter(
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
-    # Convert x,y to microns (lateral positions are in pixels internally)
-    x_microns = (result.x_camera[idx] - 1) * pixel_size_x
-    y_microns = (result.y_camera[idx] - 1) * pixel_size_y
+    # Convert x,y to microns (using camera origin for proper coordinate mapping)
+    # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
+    x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
+    y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
     # z is already in microns (axial position uses physical units, not pixels)
     z_microns = result.parameters[3, idx]
 
@@ -284,6 +300,12 @@ function to_emitter(
     σ_x = result.uncertainties[1, idx] * pixel_size_x
     σ_y = result.uncertainties[2, idx] * pixel_size_y
     σ_z = result.uncertainties[3, idx]  # Already in microns
+    # Covariances from Fisher matrix inverse:
+    # H_inv[1,2] in pixels², H_inv[1,3] and H_inv[2,3] in pixel×micron
+    # Convert all to microns²
+    σ_xy = result.covariances[1, idx] * pixel_size_x * pixel_size_y
+    σ_xz = result.covariances[2, idx] * pixel_size_x  # pixel×micron → microns²
+    σ_yz = result.covariances[3, idx] * pixel_size_y  # pixel×micron → microns²
     σ_photons = result.uncertainties[4, idx]
     σ_bg = result.uncertainties[5, idx]
 
@@ -293,7 +315,7 @@ function to_emitter(
     Emitter3DFitGaussMLE{T}(
         T(x_microns), T(y_microns), T(z_microns),
         photons, bg,
-        T(σ_x), T(σ_y), T(σ_z),
+        T(σ_x), T(σ_y), T(σ_z), T(σ_xy), T(σ_xz), T(σ_yz),
         σ_photons, σ_bg,
         pvalue,
         Int(result.frame_indices[idx]),

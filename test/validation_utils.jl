@@ -44,12 +44,12 @@ function extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, ro
 
         # Forward transform (see roi_batch.jl):
         #   x_camera = corner_x + x_roi - 1
-        #   x_microns = (x_camera - 1) * pixel_size
-        # Combined: x_microns = (corner_x + x_roi - 2) * pixel_size
+        #   x_microns = (x_camera - 0.5) * pixel_size
+        # Combined: x_microns = (corner_x + x_roi - 1.5) * pixel_size
         # Reverse transform:
-        #   x_roi = (x_microns / pixel_size) - corner_x + 2
-        x_roi[i] = (e.x / pixel_size) - corner_x + 2.0f0
-        y_roi[i] = (e.y / pixel_size) - corner_y + 2.0f0
+        #   x_roi = (x_microns / pixel_size) - corner_x + 1.5
+        x_roi[i] = (e.x / pixel_size) - corner_x + 1.5f0
+        y_roi[i] = (e.y / pixel_size) - corner_y + 1.5f0
 
         photons[i] = e.photons
         bg[i] = e.bg
