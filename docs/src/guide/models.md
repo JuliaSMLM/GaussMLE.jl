@@ -22,7 +22,7 @@ psf = GaussianXYNB(0.13f0)  # sigma in microns
 
 # Use in fitter
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 ```
 
 **Use this model when:**
@@ -48,7 +48,7 @@ psf = GaussianXYNBS()
 
 # Use in fitter
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access fitted sigma from emitters
 sigmas = [e.sigma for e in smld.emitters]
@@ -79,7 +79,7 @@ psf = GaussianXYNBSXSY()
 
 # Use in fitter
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access fitted sigma_x and sigma_y
 sigma_x = [e.sigma_x for e in smld.emitters]
@@ -116,7 +116,7 @@ psf = AstigmaticXYZNB{Float32}(
 
 # Use in fitter
 fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access z-position from emitters
 z_positions = [e.z for e in smld.emitters]
@@ -200,7 +200,7 @@ psf = GaussianXYNB(0.13f0)
 fitter = GaussMLEFitter(psf_model = psf)
 
 # Fit data
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract results
 x_positions = [e.x for e in smld.emitters]
@@ -219,7 +219,7 @@ using Statistics
 psf = GaussianXYNBS()
 
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Analyze PSF width distribution
 sigmas = [e.sigma for e in smld.emitters]
@@ -247,7 +247,7 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract 3D positions
 x = [e.x for e in smld.emitters]
@@ -296,8 +296,8 @@ using Statistics
 fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
 fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
 
-smld_fixed = fit(fitter_fixed, data)
-smld_var = fit(fitter_var, data)
+smld_fixed, _ = fit(data, fitter_fixed)
+smld_var, _ = fit(data, fitter_var)
 
 # Compare position estimates
 x_fixed = [e.x for e in smld_fixed.emitters]

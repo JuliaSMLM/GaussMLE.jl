@@ -91,11 +91,10 @@ fitter = GaussMLE.GaussMLEFitter(
 
 # Run fitting
 verbose && println("Fitting with $(device) device...")
-t_start = time()
 
-results = GaussMLE.fit(fitter, data; variance_map=variance_map)
+results, info = GaussMLE.fit(data, fitter; variance_map=variance_map)
 
-t_elapsed = time() - t_start
+t_elapsed = info.elapsed_ns / 1e9
 fits_per_second = n_samples / t_elapsed
 
 # Extract results

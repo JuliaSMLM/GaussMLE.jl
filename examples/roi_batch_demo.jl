@@ -60,8 +60,8 @@ fitter = GaussMLEFitter(
     iterations = 20
 )
 
-results_ideal = fit(fitter, roi_batch)
-println("  Fitting complete!")
+results_ideal, info = fit(roi_batch, fitter)
+println("  Fitting complete in $(round(info.elapsed_ns/1e6, digits=2)) ms!")
 
 # Show results for first few ROIs
 println("\n  First 3 ROI results (ideal camera):")
@@ -109,7 +109,7 @@ roi_batch_scmos = generate_roi_batch(
 )
 
 # Fit with sCMOS model
-results_scmos = fit(fitter, roi_batch_scmos)
+results_scmos, _ = fit(roi_batch_scmos, fitter)
 println("  sCMOS fitting complete!")
 
 # Compare uncertainties

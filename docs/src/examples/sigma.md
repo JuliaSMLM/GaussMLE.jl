@@ -24,7 +24,7 @@ fitter = GaussMLEFitter(psf_model = psf)
 
 # Fit data
 data = rand(Float32, 11, 11, 100)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access fitted PSF width from emitters (Emitter2DFitSigma type)
 sigmas = [e.σ for e in smld.emitters]
@@ -54,7 +54,7 @@ fitter = GaussMLEFitter(
 
 # Fit the data
 println("Fitting $n_rois ROIs with variable PSF width...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # The emitters are Emitter2DFitSigma type with sigma field
 println("\n=== Results ===")
@@ -113,7 +113,7 @@ using Statistics
 
 # Fit with variable sigma
 fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract PSF widths
 sigmas = [e.σ for e in smld.emitters]
@@ -142,11 +142,11 @@ data = rand(Float32, 11, 11, 1000)
 
 # Fixed PSF model
 fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld_fixed = fit(fitter_fixed, data)
+smld_fixed, _ = fit(data, fitter_fixed)
 
 # Variable PSF model
 fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
-smld_var = fit(fitter_var, data)
+smld_var, _ = fit(data, fitter_var)
 
 # Compare position estimates
 x_fixed = [e.x for e in smld_fixed.emitters]
@@ -165,8 +165,8 @@ println("  Variable PSF: $(round(sigma_x_var*1000, digits=2)) nm")
 println("  Ratio: $(round(sigma_x_var/sigma_x_fixed, digits=2))x")
 
 # Performance comparison
-t_fixed = @elapsed fit(fitter_fixed, data)
-t_var = @elapsed fit(fitter_var, data)
+t_fixed = @elapsed fit(data, fitter_fixed)
+t_var = @elapsed fit(data, fitter_var)
 
 println("\nPerformance:")
 println("  Fixed PSF:    $(round(1000/t_fixed)) fits/second")
@@ -194,7 +194,7 @@ batch = generate_roi_batch(
 
 # Fit
 fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Extract results - positions in camera coordinates
 sigmas = [e.σ for e in smld.emitters]
@@ -211,7 +211,7 @@ using Statistics
 
 # Anisotropic model - fits sigma_x and sigma_y independently
 fitter = GaussMLEFitter(psf_model = GaussianXYNBSXSY())
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Returns Emitter2DFitSigmaXY with sigma_x and sigma_y fields
 sigma_x_psf = [e.sigma_x for e in smld.emitters]  # Note: this is position uncertainty

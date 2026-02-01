@@ -47,7 +47,10 @@ data = rand(Float32, 11, 11, 100)
 
 # Fit with defaults (fixed σ Gaussian, auto GPU/CPU)
 fitter = GaussMLEFitter()
-smld = fit(fitter, data)  # Returns BasicSMLD
+smld, info = fit(data, fitter)  # Returns (BasicSMLD, FitInfo)
+
+# Check fit metadata
+println("Fit $(info.n_fits) ROIs in $(info.elapsed_ns/1e6) ms on $(info.backend)")
 
 # Access results (ecosystem-standard format)
 println("Fitted $(length(smld.emitters)) localizations")
@@ -64,7 +67,7 @@ using GaussMLE
 
 # Fit PSF width per localization
 fitter = GaussMLEFitter(psf_model=GaussianXYNBS())
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract PSF widths from Emitter2DFitSigma
 σ_values = [e.σ for e in smld.emitters]  # Microns
@@ -86,7 +89,8 @@ fitter = GaussMLEFitter(backend=:gpu, batch_size=5000)
 # Auto-detect with fallback timeout (waits 30s for GPU, then falls back to CPU)
 fitter = GaussMLEFitter(backend=:auto, auto_timeout=30.0)
 
-smld = fit(fitter, large_dataset)  # Returns BasicSMLD
+smld, info = fit(large_dataset, fitter)
+println("Used $(info.backend) - $(info.n_fits) fits in $(info.elapsed_ns/1e9) seconds")
 ```
 
 ### sCMOS Camera
@@ -99,11 +103,11 @@ using SMLMData
 camera = SMLMData.SCMOSCamera(...)
 
 # Generate test data or use real ROIs
-batch = generate_roi_batch(camera, GaussianXYNB(1.3f0), n_rois=1000)
+batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=1000)
 
 # Fit - automatic ADU→electrons preprocessing
-fitter = GaussMLEFitter(camera_model=camera)
-smld = fit(fitter, batch)  # Returns BasicSMLD with camera coordinates
+fitter = GaussMLEFitter()
+smld, info = fit(batch, fitter)  # Returns (BasicSMLD, FitInfo)
 ```
 
 ### 3D Astigmatic Localization
@@ -111,31 +115,33 @@ smld = fit(fitter, batch)  # Returns BasicSMLD with camera coordinates
 ```julia
 using GaussMLE
 
-# Astigmatic PSF calibration
+# Astigmatic PSF calibration (all spatial params in microns)
 psf_3d = AstigmaticXYZNB{Float32}(
-    1.3f0, 1.3f0,    # σx₀, σy₀
-    0.05f0, 0.05f0,  # Ax, Ay
-    0.3f0, 0.3f0,    # Bx, By
-    50.0f0,          # γ
-    100.0f0          # d
+    0.13f0, 0.13f0,   # σx₀, σy₀
+    0.05f0, -0.05f0,  # Ax, Ay
+    0.01f0, -0.01f0,  # Bx, By
+    0.2f0,            # γ
+    0.5f0             # d
 )
 
 fitter = GaussMLEFitter(psf_model=psf_3d)
-smld = fit(fitter, data)  # Returns BasicSMLD
+smld, info = fit(data, fitter)
 
-# Access 3D positions
-x_positions = [e.x for e in smld.emitters]
-precisions = [e.σ_x for e in smld.emitters]
+# Access 3D positions (all in microns)
+z_positions = [e.z for e in smld.emitters]
+z_precisions = [e.σ_z for e in smld.emitters]
 ```
 
-## Exported API (11 Functions/Types)
+## Exported API (12 Functions/Types)
 
 ### Core Functions
-- `fit(fitter, data)` → **Returns SMLMData.BasicSMLD** (ecosystem standard!)
+- `fit(data, fitter)` → **Returns `(BasicSMLD, FitInfo)`** tuple
+- `fit(batch; model=..., iterations=...)` → Convenience form with kwargs
 - `generate_roi_batch(camera, psf; kwargs...)` - Generate synthetic data
 
-### Main Type
+### Main Types
 - `GaussMLEFitter(; psf_model, backend, iterations, constraints, batch_size, auto_timeout, gpu_timeout, on_wait)`
+- `FitInfo` - Metadata about fit (elapsed_ns, backend, device_id, n_fits, n_converged)
 
 ### PSF Models
 - `GaussianXYNB(σ)` - Fixed σ (4 params: x, y, N, bg)
@@ -153,10 +159,13 @@ precisions = [e.σ_x for e in smld.emitters]
 
 ### Output Format
 
-**fit() returns SMLMData.BasicSMLD** with model-specific emitter types:
+**fit() returns `(BasicSMLD, FitInfo)` tuple** with model-specific emitter types:
 
 ```julia
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
+
+# FitInfo provides execution metadata
+println("$(info.n_fits) fits in $(info.elapsed_ns/1e6) ms on $(info.backend)")
 
 # All models: Access standard localization parameters
 x_positions = [e.x for e in smld.emitters]  # Microns
@@ -165,19 +174,19 @@ precisions = [e.σ_x for e in smld.emitters]  # Microns
 
 # GaussianXYNBS: Access fitted PSF width (Emitter2DFitSigma)
 fitter = GaussMLEFitter(psf_model=GaussianXYNBS())
-smld = fit(fitter, data)
+smld, _ = fit(data, fitter)
 σ_values = [e.σ for e in smld.emitters]  # Microns
 σ_errors = [e.σ_σ for e in smld.emitters]  # CRLB uncertainties
 
 # GaussianXYNBSXSY: Access anisotropic PSF widths (Emitter2DFitSigmaXY)
 fitter = GaussMLEFitter(psf_model=GaussianXYNBSXSY())
-smld = fit(fitter, data)
+smld, _ = fit(data, fitter)
 σx_values = [e.σx for e in smld.emitters]  # Microns
 σy_values = [e.σy for e in smld.emitters]  # Microns
 
 # AstigmaticXYZNB: Access 3D positions (Emitter3DFit)
 fitter = GaussMLEFitter(psf_model=AstigmaticXYZNB{Float32}(...))
-smld = fit(fitter, data)
+smld, _ = fit(data, fitter)
 z_positions = [e.z for e in smld.emitters]  # Microns
 z_errors = [e.σ_z for e in smld.emitters]  # CRLB uncertainties
 ```

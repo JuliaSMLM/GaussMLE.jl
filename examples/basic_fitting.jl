@@ -22,11 +22,12 @@ fitter = GaussMLEFitter()
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Display results
 println("\n=== Results ===")
 println("Type: $(typeof(smld).name.name)")
+println("Fit info: $(info.n_fits) fits on $(info.backend) in $(round(info.elapsed_ns/1e6, digits=2)) ms")
 println("Fitted: $(length(smld.emitters)) localizations")
 
 # Extract statistics

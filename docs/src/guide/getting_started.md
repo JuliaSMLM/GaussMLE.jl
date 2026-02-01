@@ -44,7 +44,10 @@ batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
 ```julia
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
+
+# Check fit metadata
+println("$(info.n_fits) fits in $(info.elapsed_ns/1e6) ms on $(info.backend)")
 
 # Results are in microns (camera coordinates)
 for e in smld.emitters[1:3]
@@ -68,16 +71,19 @@ psf = GaussianXYNB(0.13f0)  # 130nm
 # 3. Generate test data (or load from SMLMBoxer)
 batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
-# 4. Fit
+# 4. Fit (returns tuple)
 fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
-# 5. Results in microns
+# 5. Check fit metadata
+println("$(info.n_fits) fits in $(info.elapsed_ns/1e6) ms on $(info.backend)")
+
+# 6. Results in microns
 println("Fitted: $(length(smld.emitters)) localizations")
 x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 photons = [e.photons for e in smld.emitters]
-precisions_x = [e.sigma_x for e in smld.emitters]
+precisions_x = [e.σ_x for e in smld.emitters]
 
 println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
 println("Mean photons: $(round(mean(photons), digits=1))")
@@ -86,13 +92,22 @@ println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 
 ## Understanding the Output
 
-### BasicSMLD Structure
+### (BasicSMLD, FitInfo) Tuple
 
-The `fit()` function returns a `SMLMData.BasicSMLD` containing:
+The `fit()` function returns a tuple of `(BasicSMLD, FitInfo)`:
 
-- `emitters`: Vector of emitter objects with fitted parameters
-- `camera`: Camera model used for fitting
-- `metadata`: Additional information
+- `BasicSMLD`: Contains emitters with fitted parameters, camera, and metadata
+- `FitInfo`: Contains execution metadata (timing, backend, counts)
+
+### FitInfo Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `elapsed_ns` | `UInt64` | Wall-clock time in nanoseconds |
+| `backend` | `Symbol` | Actual backend used (`:cpu` or `:gpu`) |
+| `device_id` | `Int` | GPU device index or -1 for CPU |
+| `n_fits` | `Int` | Number of ROIs attempted |
+| `n_converged` | `Int` | Number converged |
 
 ### Emitter Types
 
@@ -126,7 +141,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)
@@ -170,7 +185,7 @@ batch = ROIBatch(
 
 # Fit with proper unit handling
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Results in microns (relative to ROI corner)
 println("Position: ($(smld.emitters[1].x), $(smld.emitters[1].y)) μm")
@@ -200,7 +215,7 @@ batch = ROIBatch(
 
 # Fit with proper coordinate conversion
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 ## Generating Test Data
@@ -223,7 +238,7 @@ batch = generate_roi_batch(
 
 # Fit the generated data
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 ## Performance Tips

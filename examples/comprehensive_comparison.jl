@@ -86,9 +86,8 @@ function run_single_benchmark(psf_model, device, camera_type)
         )
         
         # Run fitting with timing
-        t_start = time()
-        results = GaussMLE.fit(fitter, batch)
-        t_elapsed = time() - t_start
+        results, info = GaussMLE.fit(batch, fitter)
+        t_elapsed = info.elapsed_ns / 1e9
         
         # Extract and analyze results
         params = results.parameters

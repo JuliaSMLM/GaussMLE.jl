@@ -20,18 +20,20 @@ data = rand(Float32, 11, 11, n_rois)
 
 # CPU fitting
 println("\n--- CPU Fitting ---")
-fitter_cpu = GaussMLEFitter(device=:cpu)
+fitter_cpu = GaussMLEFitter(backend=:cpu)
 println("Running CPU fit...")
-t_cpu = @elapsed smld_cpu = fit(fitter_cpu, data)
+smld_cpu, info_cpu = fit(data, fitter_cpu)
+t_cpu = info_cpu.elapsed_ns / 1e9
 rate_cpu = length(smld_cpu.emitters) / t_cpu
 @printf("Time: %.3f seconds\n", t_cpu)
 @printf("Rate: %.0f ROIs/second\n", rate_cpu)
 
 # GPU fitting
 println("\n--- GPU Fitting ---")
-fitter_gpu = GaussMLEFitter(device=:gpu, batch_size=5000)
+fitter_gpu = GaussMLEFitter(backend=:gpu, batch_size=5000)
 println("Running GPU fit (batch size: 5000)...")
-t_gpu = @elapsed smld_gpu = fit(fitter_gpu, data)
+smld_gpu, info_gpu = fit(data, fitter_gpu)
+t_gpu = info_gpu.elapsed_ns / 1e9
 rate_gpu = length(smld_gpu.emitters) / t_gpu
 @printf("Time: %.3f seconds\n", t_gpu)
 @printf("Rate: %.0f ROIs/second\n", rate_gpu)

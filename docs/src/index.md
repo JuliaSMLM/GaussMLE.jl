@@ -25,11 +25,14 @@ batch = generate_roi_batch(
     roi_size = 11
 )
 
-# 3. Create fitter and fit
+# 3. Create fitter and fit (returns tuple)
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
-# 4. Results in microns (camera pixel_size used for conversion)
+# 4. Check fit metadata
+println("$(info.n_fits) fits in $(info.elapsed_ns/1e6) ms on $(info.backend)")
+
+# 5. Results in microns (camera pixel_size used for conversion)
 for e in smld.emitters[1:3]
     println("Position: ($(e.x), $(e.y)) μm ± ($(e.σ_x*1000), $(e.σ_y*1000)) nm")
 end
@@ -86,7 +89,7 @@ using Statistics
 
 # Fit PSF width per localization
 fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access fitted sigma from Emitter2DFitSigma type
 sigmas = [e.σ for e in smld.emitters]
@@ -99,8 +102,9 @@ println("Mean sigma: $(mean(sigmas)) microns")
 using GaussMLE
 
 # Force GPU (auto-fallback if unavailable)
-fitter = GaussMLEFitter(device = :gpu, batch_size = 5000)
-smld = fit(fitter, large_dataset)
+fitter = GaussMLEFitter(backend = :gpu, batch_size = 5000)
+smld, info = fit(large_dataset, fitter)
+println("Used $(info.backend) - $(info.n_fits) fits in $(info.elapsed_ns/1e9) seconds")
 ```
 
 ### sCMOS Camera
@@ -123,7 +127,7 @@ batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois = 1000)
 
 # Fit - automatically uses variance map from camera
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 ### 3D Astigmatic Localization
@@ -133,35 +137,48 @@ using GaussMLE
 
 # Astigmatic PSF calibration (all spatial params in microns)
 psf_3d = AstigmaticXYZNB{Float32}(
-    0.13f0, 0.13f0,  # sigma_x0, sigma_y0
-    0.05f0, 0.05f0,  # Ax, Ay
-    0.3f0, 0.3f0,    # Bx, By
-    0.05f0,          # gamma
-    0.4f0            # d
+    0.13f0, 0.13f0,   # sigma_x0, sigma_y0
+    0.05f0, -0.05f0,  # Ax, Ay
+    0.01f0, -0.01f0,  # Bx, By
+    0.2f0,            # gamma
+    0.5f0             # d
 )
 
 fitter = GaussMLEFitter(psf_model = psf_3d)
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
-# Z positions from Emitter3DFitGaussMLE type
+# Z positions from Emitter3DFit type
 z_positions = [e.z for e in smld.emitters]
-z_precision = [e.sigma_z for e in smld.emitters]
+z_precision = [e.σ_z for e in smld.emitters]
 ```
 
 ## Output Format
 
-### BasicSMLD with Emitter Types
+### (BasicSMLD, FitInfo) Tuple
 
-`fit()` returns `SMLMData.BasicSMLD` containing a vector of emitter structs:
+`fit()` returns a tuple of `(SMLMData.BasicSMLD, FitInfo)`:
 
 ```julia
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
+
+# FitInfo contains execution metadata
+println("$(info.n_fits) fits in $(info.elapsed_ns/1e6) ms on $(info.backend)")
 
 # Access emitters
 for e in smld.emitters
     println("x=$(e.x), y=$(e.y), photons=$(e.photons), σ_x=$(e.σ_x)")
 end
 ```
+
+### FitInfo Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `elapsed_ns` | `UInt64` | Wall-clock time in nanoseconds |
+| `backend` | `Symbol` | Actual backend used (`:cpu` or `:gpu`) |
+| `device_id` | `Int` | GPU device index or -1 for CPU |
+| `n_fits` | `Int` | Number of ROIs attempted |
+| `n_converged` | `Int` | Number converged |
 
 **Emitter type depends on PSF model:**
 
@@ -193,7 +210,7 @@ Use the `@filter` macro from SMLMData for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)

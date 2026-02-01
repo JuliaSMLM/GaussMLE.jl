@@ -51,10 +51,13 @@ Consolidated test of new simulator and ROIBatch features
             iterations = 20
         )
 
-        smld = GaussMLE.fit(fitter, batch)
+        smld, info = GaussMLE.fit(batch, fitter)
 
         @test smld isa SMLMData.BasicSMLD
         @test length(smld.emitters) == 20
+        @test info isa GaussMLE.FitInfo
+        @test info.n_fits == 20
+        @test info.backend in (:cpu, :gpu)
 
         # Extract parameters from emitters
         photons_vals = [e.photons for e in smld.emitters]
@@ -79,7 +82,7 @@ Consolidated test of new simulator and ROIBatch features
                                            seed=42)
 
         fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-        smld = GaussMLE.fit(fitter, batch)
+        smld, _ = GaussMLE.fit(batch, fitter)
 
         @test smld isa SMLMData.BasicSMLD
         @test length(smld) == 2
@@ -105,7 +108,7 @@ Consolidated test of new simulator and ROIBatch features
         for psf in psf_models
             batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=5, seed=42)
             fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-            smld = GaussMLE.fit(fitter, batch)
+            smld, _ = GaussMLE.fit(batch, fitter)
 
             @test length(smld.emitters) == 5
             # Check that uncertainties are finite

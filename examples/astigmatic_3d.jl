@@ -33,7 +33,8 @@ fitter = GaussMLEFitter(psf_model=psf_3d, iterations=30)
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
+println("  Completed in $(round(info.elapsed_ns/1e6, digits=2)) ms on $(info.backend)")
 
 # Extract results
 println("\n=== Results ===")

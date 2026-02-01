@@ -98,8 +98,8 @@ fitter = GaussMLE.GaussMLEFitter(
 
 println("  Fitter: GaussianXYNB(σ=1.3), 20 iterations")
 
-smld_output = fit(fitter, batch)
-println("  ✓ Fitted $(length(smld_output.emitters)) localizations → BasicSMLD")
+smld_output, info = fit(batch, fitter)
+println("  ✓ Fitted $(length(smld_output.emitters)) localizations in $(round(info.elapsed_ns/1e6, digits=1)) ms")
 
 # Step 4: Analyze Results
 println("\nStep 4: Analyze Results")

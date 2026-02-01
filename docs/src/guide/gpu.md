@@ -127,7 +127,7 @@ fitter = GaussMLEFitter(
 
 # Large dataset - automatically batched
 large_data = rand(Float32, 11, 11, 100_000)
-smld = fit(fitter, large_data)
+smld, info = fit(large_data, fitter)
 ```
 
 The batch size should be tuned based on:
@@ -147,13 +147,13 @@ data = rand(Float32, 11, 11, n_rois)
 
 # CPU benchmark
 fitter_cpu = GaussMLEFitter(backend = :cpu)
-t_cpu = @elapsed smld_cpu = fit(fitter_cpu, data)
+t_cpu = @elapsed (smld_cpu, _) = fit(data, fitter_cpu)
 rate_cpu = n_rois / t_cpu
 println("CPU: $(round(rate_cpu)) ROIs/second")
 
 # GPU benchmark
 fitter_gpu = GaussMLEFitter(backend = :gpu, batch_size = 5000)
-t_gpu = @elapsed smld_gpu = fit(fitter_gpu, data)
+t_gpu = @elapsed (smld_gpu, _) = fit(data, fitter_gpu)
 rate_gpu = n_rois / t_gpu
 println("GPU: $(round(rate_gpu)) ROIs/second")
 
@@ -229,7 +229,7 @@ results = []
 for i in 1:chunk_size:size(data, 3)
     chunk_end = min(i + chunk_size - 1, size(data, 3))
     chunk = data[:, :, i:chunk_end]
-    push!(results, fit(fitter, chunk))
+    push!(results, fit(chunk, fitter))
 end
 ```
 
@@ -246,8 +246,8 @@ data = rand(Float32, 11, 11, 1000)
 fitter_cpu = GaussMLEFitter(backend = :cpu)
 fitter_gpu = GaussMLEFitter(backend = :gpu)
 
-smld_cpu = fit(fitter_cpu, data)
-smld_gpu = fit(fitter_gpu, data)
+smld_cpu, _ = fit(data, fitter_cpu)
+smld_gpu, _ = fit(data, fitter_gpu)
 
 # Compare results
 x_cpu = [e.x for e in smld_cpu.emitters]
@@ -298,10 +298,10 @@ If GPU is slower than expected:
 ```julia
 # Warm-up the GPU kernel
 small_data = rand(Float32, 11, 11, 10)
-_ = fit(fitter, small_data)
+_ = fit(small_data, fitter)
 
 # Then benchmark with real data
-@time smld = fit(fitter, data)
+@time smld, info = fit(data, fitter)
 ```
 
 ## Architecture Details

@@ -51,7 +51,7 @@ For real data, each ROI should contain a single fluorescent emitter centered app
 
 ```julia
 # Perform the fitting
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 println("Fitted $(length(smld.emitters)) localizations")
 ```
@@ -96,7 +96,7 @@ fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Display results
 println("\n=== Results ===")
@@ -139,7 +139,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)
@@ -176,7 +176,7 @@ batch = generate_roi_batch(
 
 # Fit with proper coordinate conversion
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Positions are now in camera coordinates (microns)
 x_positions = [e.x for e in smld.emitters]
@@ -203,7 +203,7 @@ fitter = GaussMLEFitter(
 
 # Fit large dataset
 large_data = rand(Float32, 11, 11, 100_000)
-@time smld = fit(fitter, large_data)
+@time smld, info = fit(large_data, fitter)
 ```
 
 ### Timing Comparison
@@ -215,12 +215,12 @@ data = rand(Float32, 11, 11, 10_000)
 
 # CPU timing
 fitter_cpu = GaussMLEFitter(device = :cpu)
-t_cpu = @elapsed fit(fitter_cpu, data)
+t_cpu = @elapsed fit(data, fitter_cpu)
 println("CPU: $(round(10_000/t_cpu)) fits/second")
 
 # GPU timing (if available)
 fitter_gpu = GaussMLEFitter(device = :gpu)
-t_gpu = @elapsed fit(fitter_gpu, data)
+t_gpu = @elapsed fit(data, fitter_gpu)
 println("GPU: $(round(10_000/t_gpu)) fits/second")
 ```
 

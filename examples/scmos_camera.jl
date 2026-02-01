@@ -58,7 +58,7 @@ fitter_ideal = GaussMLEFitter(
     psf_model = GaussianXYNB(0.13f0),
     iterations = 25
 )
-smld_ideal = fit(fitter_ideal, data)
+smld_ideal, _ = fit(data, fitter_ideal)
 x_ideal = [e.x for e in smld_ideal.emitters]
 σ_ideal = [e.σ_x for e in smld_ideal.emitters]
 println("  Mean x: $(round(mean(x_ideal), digits=2)) μm")
@@ -72,7 +72,7 @@ fitter_scmos = GaussMLEFitter(
 )
 
 # Fit with variance map
-smld_scmos = fit(fitter_scmos, data, variance_map = variance_map)
+smld_scmos, _ = fit(data, fitter_scmos; variance_map = variance_map)
 x_scmos = [e.x for e in smld_scmos.emitters]
 σ_scmos = [e.σ_x for e in smld_scmos.emitters]
 println("  Mean x: $(round(mean(x_scmos), digits=2)) μm")

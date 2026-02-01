@@ -125,8 +125,8 @@ fitter = GaussMLEFitter(
 println("  Fitter configuration:")
 println("    ", fitter)
 
-results = fit(fitter, batch)
-println("\n  ✓ Fitted $(results.n_fits) localizations")
+results, info = fit(batch, fitter)
+println("\n  ✓ Fitted $(info.n_fits) localizations in $(round(info.elapsed_ns/1e6, digits=1)) ms")
 println("  Result type: $(typeof(results).name.name)")
 
 # Step 5: Convert to SMLD (ecosystem standard)

@@ -82,7 +82,7 @@ function validate_roibatch_fitting(
 
     # Fit
     fitter = GaussMLE.GaussMLEFitter(psf_model=psf_model, device=device, iterations=20)
-    smld = GaussMLE.fit(fitter, roi_batch)
+    smld, _ = GaussMLE.fit(roi_batch, fitter)
 
     # Extract fitted params in ROI coordinates
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]

@@ -318,7 +318,7 @@ function run_model_validation(
     )
     
     # Fit the data
-    smld = GaussMLE.fit(fitter, data)
+    smld, _ = GaussMLE.fit(data, fitter)
 
     # Validate each parameter
     validation_results = Dict{Symbol, Any}()

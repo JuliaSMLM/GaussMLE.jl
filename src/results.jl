@@ -3,6 +3,38 @@ Results structure for Gaussian MLE fitting
 """
 
 """
+    FitInfo
+
+Metadata about a fitting operation, returned alongside results.
+
+# Fields
+- `elapsed_ns::UInt64`: Wall-clock time for the fit call in nanoseconds
+- `backend::Symbol`: Actual compute backend used (`:cpu` or `:gpu`, never `:auto`)
+- `device_id::Int`: GPU device index (0-based), or -1 for CPU
+- `n_fits::Int`: Number of ROIs attempted
+- `n_converged::Int`: Number of ROIs that converged (currently equals n_fits; reserved for future use)
+
+# Examples
+```julia
+smld, info = fit(batch, fitter)
+println("Fit \$(info.n_fits) ROIs in \$(info.elapsed_ns / 1e6) ms on \$(info.backend)")
+```
+"""
+struct FitInfo
+    elapsed_ns::UInt64
+    backend::Symbol
+    device_id::Int
+    n_fits::Int
+    n_converged::Int
+end
+
+function Base.show(io::IO, info::FitInfo)
+    ms = info.elapsed_ns / 1e6
+    device_str = info.backend == :cpu ? "CPU" : "GPU:$(info.device_id)"
+    print(io, "FitInfo($(info.n_fits) fits, $(round(ms, digits=2)) ms, $device_str)")
+end
+
+"""
     GaussMLEResults{T,P}
 
 Results from Maximum Likelihood Estimation fitting.

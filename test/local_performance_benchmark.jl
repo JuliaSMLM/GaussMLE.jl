@@ -197,11 +197,11 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         )
 
         # Warmup run (compile kernels, cache data)
-        GaussMLE.fit(fitter, warmup_batch)
+        GaussMLE.fit(warmup_batch, fitter)
 
         # Benchmark run with timing
         t_start = time()
-        smld = GaussMLE.fit(fitter, benchmark_batch)
+        smld, _ = GaussMLE.fit(benchmark_batch, fitter)
         t_elapsed = time() - t_start
 
         fits_per_second = benchmark / t_elapsed
