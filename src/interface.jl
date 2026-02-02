@@ -190,37 +190,39 @@ function estimate_batch_memory(batch_size::Integer, box_size::Integer, n_params:
 end
 
 """
-    fit(fitter::GaussMLEFitter, data::AbstractArray{T,3}; variance_map=nothing) -> GaussMLEResults
+    fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter; variance_map=nothing) -> (BasicSMLD, FitInfo)
 
 Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 
 # Arguments
-- `fitter::GaussMLEFitter`: Configured fitter object
 - `data::AbstractArray{T,3}`: ROI data as (roi_size, roi_size, n_rois) array
+- `fitter::GaussMLEFitter`: Configured fitter object
 
 # Keyword Arguments
 - `variance_map=nothing`: Optional sCMOS variance map (will override fitter's camera model)
 
 # Returns
-- `GaussMLEResults`: Fitted parameters, uncertainties, and log-likelihoods
+- `Tuple{BasicSMLD, FitInfo}`: Fitted localizations and fit metadata
 
 # Examples
 ```julia
 # Fit 1000 ROIs
 data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-results = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access results
-println("Mean x position: ", mean(results.x))
-println("Mean localization precision: ", mean(results.x_error))
+println("Fitted \$(info.n_fits) ROIs in \$(info.elapsed_ns / 1e6) ms")
+println("Mean x position: ", mean([e.x for e in smld.emitters]))
 ```
 
 # See also
-[`GaussMLEFitter`](@ref), [`GaussMLEResults`](@ref)
+[`GaussMLEFitter`](@ref), [`FitInfo`](@ref)
 """
-function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
+function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
              variance_map=nothing) where T
+    # Start timing
+    t0 = time_ns()
 
     # Validate input
     validate_fit_input(data, nothing)
@@ -257,6 +259,10 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
                            auto_timeout=fitter.auto_timeout,
                            gpu_timeout=fitter.gpu_timeout,
                            on_wait=fitter.on_wait)
+
+    # Track actual backend and device_id for FitInfo
+    actual_backend = device isa CPU ? :cpu : :gpu
+    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
     # Use unified kernel for both CPU and GPU
     if device isa CPU
@@ -342,22 +348,29 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     batch = SMLMData.ROIBatch(data_f32, x_corners_smld, y_corners_smld, frame_indices, camera_smld)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, batch, fitter.psf_model)
 
-    # Return BasicSMLD
-    return to_smld(loc_result, batch)
+    # Calculate elapsed time and create FitInfo
+    elapsed_ns = time_ns() - t0
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)  # n_converged = n_fits (all iterations run)
+
+    # Return tuple (BasicSMLD, FitInfo)
+    return (to_smld(loc_result, batch), info)
 end
 
 # Convenience function for single ROI fitting
-function fit(fitter::GaussMLEFitter, roi::AbstractMatrix{T}) where T
+function fit(roi::AbstractMatrix{T}, fitter::GaussMLEFitter) where T
     # Reshape to 3D array with single ROI
     data = reshape(roi, size(roi, 1), size(roi, 2), 1)
-    smld = fit(fitter, data)
+    smld, info = fit(data, fitter)
 
-    # Return first emitter
-    return smld.emitters[1]
+    # Return first emitter and info
+    return (smld.emitters[1], info)
 end
 
-# Fit method for ROIBatch - returns BasicSMLD with real camera coordinates
-function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}) where {T,N,A}
+# Fit method for ROIBatch - returns (BasicSMLD, FitInfo) with real camera coordinates
+function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLEFitter) where {T,N,A}
+    # Start timing
+    t0 = time_ns()
+
     # Fit the raw data with Poisson-only likelihood
     n_fits = size(roi_batch.data, 3)
     n_params = length(fitter.psf_model)
@@ -387,6 +400,10 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
                            auto_timeout=fitter.auto_timeout,
                            gpu_timeout=fitter.gpu_timeout,
                            on_wait=fitter.on_wait)
+
+    # Track actual backend and device_id for FitInfo
+    actual_backend = device isa CPU ? :cpu : :gpu
+    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
     if device isa CPU
         ka_backend = KernelAbstractions.CPU()
@@ -449,11 +466,18 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
 
     # Use real ROIBatch for coordinate conversion (preserves corners!)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
-    return to_smld(loc_result, roi_batch)
+
+    # Calculate elapsed time and create FitInfo
+    elapsed_ns = time_ns() - t0
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)
+
+    return (to_smld(loc_result, roi_batch), info)
 end
 
 # Fit method for ROIBatch with SMLMData.SCMOSCamera
-function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}) where {T,N,A}
+function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLEFitter) where {T,N,A}
+    # Start timing
+    t0 = time_ns()
     # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
     data_electrons = to_electrons(roi_batch.data, roi_batch.camera, roi_batch.x_corners, roi_batch.y_corners)
     variance_map = extract_variance_map(roi_batch.camera, Float32)
@@ -485,6 +509,10 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
                            auto_timeout=fitter.auto_timeout,
                            gpu_timeout=fitter.gpu_timeout,
                            on_wait=fitter.on_wait)
+
+    # Track actual backend and device_id for FitInfo
+    actual_backend = device isa CPU ? :cpu : :gpu
+    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
     if device isa CPU
         ka_backend = KernelAbstractions.CPU()
@@ -547,9 +575,69 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
 
     # Use original ROIBatch for coordinate conversion (preserves corners and original camera!)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
-    return to_smld(loc_result, roi_batch)
+
+    # Calculate elapsed time and create FitInfo
+    elapsed_ns = time_ns() - t0
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)
+
+    return (to_smld(loc_result, roi_batch), info)
+end
+
+"""
+    fit(batch::ROIBatch; model=GaussianXYNB(), max_iterations=20, backend=:auto, ...) -> (BasicSMLD, FitInfo)
+
+Convenience form of fit() that creates a GaussMLEFitter from keyword arguments.
+
+# Arguments
+- `batch::ROIBatch`: Input ROI data with camera calibration
+
+# Keyword Arguments
+- `model=GaussianXYNB(0.13f0)`: PSF model to use
+- `max_iterations=20`: Number of Newton-Raphson iterations
+- `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
+- `constraints=nothing`: Parameter constraints (uses defaults if nothing)
+- `batch_size=10_000`: Batch size for GPU processing
+- `auto_timeout=30.0`: Seconds to wait for GPU in auto mode
+- `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
+- `on_wait=nothing`: Callback for GPU wait progress
+
+# Returns
+- `Tuple{BasicSMLD, FitInfo}`: Fitted localizations and fit metadata
+
+# Examples
+```julia
+# Simple fit with defaults
+smld, info = fit(batch)
+
+# Custom model and iterations
+smld, info = fit(batch; model=GaussianXYNBS(), max_iterations=30)
+```
+
+# See also
+[`GaussMLEFitter`](@ref), [`FitInfo`](@ref)
+"""
+function fit(batch::ROIBatch;
+             model = GaussianXYNB(0.13f0),
+             max_iterations = 20,
+             backend = :auto,
+             constraints = nothing,
+             batch_size = 10_000,
+             auto_timeout = 30.0,
+             gpu_timeout = Inf,
+             on_wait = nothing)
+    fitter = GaussMLEFitter(;
+        psf_model = model,
+        backend = backend,
+        iterations = max_iterations,
+        constraints = constraints,
+        batch_size = batch_size,
+        auto_timeout = auto_timeout,
+        gpu_timeout = gpu_timeout,
+        on_wait = on_wait
+    )
+    return fit(batch, fitter)
 end
 
 
 # Export API
-export GaussMLEFitter, fit
+export GaussMLEFitter, fit, FitInfo

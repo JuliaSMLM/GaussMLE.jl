@@ -58,10 +58,13 @@ fitter = GaussMLEFitter(
     iterations = 20
 )
 
-# 4. Fit - returns SMLMData.BasicSMLD
-smld = fit(fitter, batch)
+# 4. Fit - returns (SMLMData.BasicSMLD, FitInfo) tuple
+smld, info = fit(batch, fitter)
 
-# 5. Access results (positions in microns, from camera pixel_size)
+# 5. Access fit metadata
+println("Fitted $(info.n_fits) ROIs in $(info.elapsed_ns / 1e6) ms on $(info.backend)")
+
+# 6. Access results (positions in microns, from camera pixel_size)
 for emitter in smld.emitters
     println("Position: ($(emitter.x), $(emitter.y)) μm")
     println("Photons: $(emitter.photons)")
@@ -108,15 +111,33 @@ fitter = GaussMLEFitter(;
 - Automatically selects GPU with most free memory
 - Memory wait with 1.5× safety margin for fragmentation
 
-### `fit(fitter, data)` → `SMLMData.BasicSMLD`
+### `fit(data, fitter)` → `(SMLMData.BasicSMLD, FitInfo)`
 
-Fit Gaussian PSF to ROI data.
+Fit Gaussian PSF to ROI data. Data-first argument order for pipeline ergonomics.
 
 **Signatures:**
-- `fit(fitter, data::Array{T,3})` - Fit raw 3D array (roi_size × roi_size × n_rois)
-- `fit(fitter, batch::ROIBatch)` - Fit ROIBatch (preferred for real data)
+- `fit(data::Array{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(batch::ROIBatch, fitter)` - Fit ROIBatch (preferred for real data)
+- `fit(batch::ROIBatch; model=..., max_iterations=...)` - Convenience form with kwargs
 
-**Returns:** `SMLMData.BasicSMLD` with emitters (type depends on PSF model)
+**Returns:** `(SMLMData.BasicSMLD, FitInfo)` tuple
+
+### `FitInfo`
+
+Metadata about the fit operation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `elapsed_ns` | `UInt64` | Elapsed time in nanoseconds |
+| `backend` | `Symbol` | Actual execution backend (`:cpu` or `:gpu`, never `:auto`) |
+| `device_id` | `Int` | GPU device index (0-based) or -1 for CPU |
+| `n_fits` | `Int` | Number of ROIs attempted |
+| `n_converged` | `Int` | Number of ROIs that converged |
+
+```julia
+smld, info = fit(batch, fitter)
+println("Executed on $(info.backend) in $(info.elapsed_ns / 1e6) ms")
+```
 
 ### Output Emitter Types
 
@@ -323,7 +344,7 @@ batch = ROIBatch(
 
 # Fit with proper unit handling
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 **Note:** For IdealCamera, corners can all be (1,1) since no variance map lookup is needed. For sCMOS cameras, corners must be actual camera positions.
@@ -339,7 +360,7 @@ batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=100, roi_size=11
 
 # Fit
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Extract positions (in microns)
 positions = [(e.x, e.y) for e in smld.emitters]
@@ -352,7 +373,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.030 && photons > 500)
@@ -372,7 +393,7 @@ using GaussMLE
 # batch = SMLMBoxer.extract_rois(movie, camera, detections)
 
 fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)  # Automatically handles ADU→electrons
+smld, info = fit(batch, fitter)  # Automatically handles ADU→electrons
 ```
 
 ### 3D Localization
@@ -389,7 +410,7 @@ psf_3d = AstigmaticXYZNB{Float32}(
 )
 
 fitter = GaussMLEFitter(psf_model = psf_3d, iterations = 30)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Z positions in microns
 z_values = [e.z for e in smld.emitters]

@@ -253,7 +253,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             device = GaussMLE.CPU()
         )
 
-        smld = GaussMLE.fit(fitter, batch)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # Extract fitted params and compute statistics
         pixel_size = batch.camera.pixel_edges_x[2] - batch.camera.pixel_edges_x[1]
@@ -356,7 +356,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         )
 
         fitter = GaussMLE.GaussMLEFitter(psf_model = psf_model, device = GaussMLE.CPU())
-        smld = GaussMLE.fit(fitter, batch)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # Extract uncertainties for each group
         σ_x_A = [smld.emitters[i].σ_x for i in 1:n_per_group]
@@ -422,7 +422,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             
             # Fit
             fitter = GaussMLE.GaussMLEFitter(psf_model = psf_model, device = GaussMLE.CPU())
-            smld = GaussMLE.fit(fitter, data)
+            smld, _info = GaussMLE.fit(data, fitter)
 
             # Check that fitting doesn't fail catastrophically
             x_vals = [e.x for e in smld.emitters]

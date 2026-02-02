@@ -313,12 +313,12 @@ function run_model_validation(
     # Create fitter
     fitter = GaussMLE.GaussMLEFitter(
         psf_model = psf_model,
-        device = device,
+        backend = device isa GaussMLE.CPU ? :cpu : :gpu,
         iterations = 20
     )
-    
-    # Fit the data
-    smld = GaussMLE.fit(fitter, data)
+
+    # Fit the data (data-first API, returns tuple)
+    smld, _info = GaussMLE.fit(data, fitter)
 
     # Validate each parameter
     validation_results = Dict{Symbol, Any}()

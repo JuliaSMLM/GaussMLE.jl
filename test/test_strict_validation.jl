@@ -116,8 +116,8 @@ Using the new camera-aware simulator for reliable test data generation
                                            seed=42)
         
         # Fit
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-        smld = GaussMLE.fit(fitter, batch)
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, backend=:cpu, iterations=20)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # Validate each parameter
         verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
@@ -171,8 +171,8 @@ Using the new camera-aware simulator for reliable test data generation
                                            corners=dummy_corners,
                                            seed=43)
         
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-        smld = GaussMLE.fit(fitter, batch)
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, backend=:cpu, iterations=20)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # More relaxed tolerances for low SNR
         x_val = validate_fits(smld, batch, true_params, param_idx=1, bias_tol=0.2f0, std_ratio_tol=0.35f0)
@@ -228,8 +228,8 @@ Using the new camera-aware simulator for reliable test data generation
                                            corners=dummy_corners,
                                            seed=44)
         
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-        smld = GaussMLE.fit(fitter, batch)
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, backend=:cpu, iterations=20)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # Check convergence - no infinite uncertainties
         σ_x_vals = [e.σ_x for e in smld.emitters]
@@ -288,8 +288,8 @@ Using the new camera-aware simulator for reliable test data generation
                                            corners=dummy_corners_scmos,
                                            seed=45)
 
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-        smld = GaussMLE.fit(fitter, batch)
+        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, backend=:cpu, iterations=20)
+        smld, _info = GaussMLE.fit(batch, fitter)
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
         # Standard tolerances apply
@@ -337,8 +337,8 @@ Using the new camera-aware simulator for reliable test data generation
                                                corners=dummy_corners_nbs,
                                                seed=46)
         
-        fitter_nbs = GaussMLE.GaussMLEFitter(psf_model=psf_nbs, device=GaussMLE.CPU(), iterations=20)
-        smld_nbs = GaussMLE.fit(fitter_nbs, batch_nbs)
+        fitter_nbs = GaussMLE.GaussMLEFitter(psf_model=psf_nbs, backend=:cpu, iterations=20)
+        smld_nbs, _info = GaussMLE.fit(batch_nbs, fitter_nbs)
 
         # Validate sigma parameter (more challenging than position/photons)
         # Note: sigma validation not fully implemented in helper, skip for now
@@ -362,8 +362,8 @@ Using the new camera-aware simulator for reliable test data generation
                                                 corners=dummy_corners_nbs,  # Reuse same dummy corners
                                                 seed=47)
 
-        fitter_sxsy = GaussMLE.GaussMLEFitter(psf_model=psf_sxsy, device=GaussMLE.CPU(), iterations=20)
-        smld_sxsy = GaussMLE.fit(fitter_sxsy, batch_sxsy)
+        fitter_sxsy = GaussMLE.GaussMLEFitter(psf_model=psf_sxsy, backend=:cpu, iterations=20)
+        smld_sxsy, _info = GaussMLE.fit(batch_sxsy, fitter_sxsy)
 
         @test all([isfinite(e.σ_x) && isfinite(e.σ_y) for e in smld_sxsy.emitters])
 
@@ -412,8 +412,8 @@ Using the new camera-aware simulator for reliable test data generation
                                                corners=dummy_corners_photon,
                                                seed=48)
             
-            fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
-            smld = GaussMLE.fit(fitter, batch)
+            fitter = GaussMLE.GaussMLEFitter(psf_model=psf, backend=:cpu, iterations=20)
+            smld, _info = GaussMLE.fit(batch, fitter)
 
             pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
             σ_x_vals = [e.σ_x / pixel_size for e in smld.emitters]  # Convert to pixels
