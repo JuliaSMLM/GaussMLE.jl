@@ -13,11 +13,15 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
 - `device_id::Int`: GPU device index (0-based) or -1 for CPU
 - `n_fits::Int`: Number of ROIs attempted
 - `n_converged::Int`: Number of ROIs that converged (currently equals n_fits since all iterations run)
+- `batch_size::Int`: Actual batch size used for processing
+- `n_batches::Int`: Number of batches processed (1 if all-at-once)
+- `memory_per_batch::Int`: Estimated memory bytes per batch
 
 # Example
 ```julia
 smld, info = fit(batch, fitter)
 println("Fit \$(info.n_fits) ROIs in \$(info.elapsed_ns / 1e6) ms on \$(info.backend)")
+println("Processed in \$(info.n_batches) batches of \$(info.batch_size)")
 ```
 
 # See also
@@ -29,12 +33,16 @@ struct FitInfo
     device_id::Int
     n_fits::Int
     n_converged::Int
+    batch_size::Int
+    n_batches::Int
+    memory_per_batch::Int
 end
 
 function Base.show(io::IO, info::FitInfo)
     elapsed_ms = info.elapsed_ns / 1e6
     device_str = info.backend == :gpu ? "GPU:$(info.device_id)" : "CPU"
-    print(io, "FitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str)")
+    mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits=1)) MB" : "$(round(info.memory_per_batch / 1024, digits=1)) KB"
+    print(io, "FitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
 end
 
 export FitInfo

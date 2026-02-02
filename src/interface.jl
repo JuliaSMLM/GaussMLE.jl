@@ -286,14 +286,20 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
     actual_backend = device isa CPU ? :cpu : :gpu
     device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
+    # Track batch info for FitInfo
+    actual_batch_size = 0
+    actual_n_batches = 0
+
     # Use unified kernel for both CPU and GPU
     if device isa CPU
         # CPU with memory-aware batching
         ka_backend = KernelAbstractions.CPU()
         cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
 
         if cpu_batch_size >= n_fits
             # Process all at once
+            actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend)
             kernel(results, uncertainties, covariances, log_likelihoods,
                    data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
@@ -302,6 +308,7 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
             KernelAbstractions.synchronize(ka_backend)
         else
             # Batch processing for memory efficiency
+            actual_n_batches = cld(n_fits, cpu_batch_size)
             for batch_start in 1:cpu_batch_size:n_fits
                 batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
                 batch_size_actual = batch_end - batch_start + 1
@@ -331,6 +338,8 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
     else
         # Use unified kernel on GPU
         # Process in batches for memory efficiency
+        actual_batch_size = min(fitter.batch_size, n_fits)
+        actual_n_batches = cld(n_fits, fitter.batch_size)
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
             batch_size_actual = batch_end - batch_start + 1
@@ -404,7 +413,8 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
 
     # Calculate elapsed time and create FitInfo
     elapsed_ns = time_ns() - t0
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)  # n_converged = n_fits (all iterations run)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     # Return tuple (BasicSMLD, FitInfo)
     return (to_smld(loc_result, batch), info)
@@ -459,13 +469,19 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
     actual_backend = device isa CPU ? :cpu : :gpu
     device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
+    # Track batch info for FitInfo
+    actual_batch_size = 0
+    actual_n_batches = 0
+
     if device isa CPU
         # CPU with memory-aware batching
         ka_backend = KernelAbstractions.CPU()
         cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
 
         if cpu_batch_size >= n_fits
             # Process all at once
+            actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend)
             kernel(results, uncertainties, covariances, log_likelihoods,
                    data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
@@ -474,6 +490,7 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
             KernelAbstractions.synchronize(ka_backend)
         else
             # Batch processing for memory efficiency
+            actual_n_batches = cld(n_fits, cpu_batch_size)
             for batch_start in 1:cpu_batch_size:n_fits
                 batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
                 batch_size_actual = batch_end - batch_start + 1
@@ -502,6 +519,8 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
         end
     else
         # GPU batch processing
+        actual_batch_size = min(fitter.batch_size, n_fits)
+        actual_n_batches = cld(n_fits, fitter.batch_size)
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
             batch_size_actual = batch_end - batch_start + 1
@@ -556,7 +575,8 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
 
     # Calculate elapsed time and create FitInfo
     elapsed_ns = time_ns() - t0
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     return (to_smld(loc_result, roi_batch), info)
 end
@@ -601,13 +621,19 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
     actual_backend = device isa CPU ? :cpu : :gpu
     device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
 
+    # Track batch info for FitInfo
+    actual_batch_size = 0
+    actual_n_batches = 0
+
     if device isa CPU
         # CPU with memory-aware batching
         ka_backend = KernelAbstractions.CPU()
         cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
 
         if cpu_batch_size >= n_fits
             # Process all at once
+            actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend)
             kernel(results, uncertainties, covariances, log_likelihoods,
                    data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
@@ -616,6 +642,7 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
             KernelAbstractions.synchronize(ka_backend)
         else
             # Batch processing for memory efficiency
+            actual_n_batches = cld(n_fits, cpu_batch_size)
             for batch_start in 1:cpu_batch_size:n_fits
                 batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
                 batch_size_actual = batch_end - batch_start + 1
@@ -644,6 +671,8 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
         end
     else
         # GPU batch processing
+        actual_batch_size = min(fitter.batch_size, n_fits)
+        actual_n_batches = cld(n_fits, fitter.batch_size)
         for batch_start in 1:fitter.batch_size:n_fits
             batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
             batch_size_actual = batch_end - batch_start + 1
@@ -698,7 +727,8 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
 
     # Calculate elapsed time and create FitInfo
     elapsed_ns = time_ns() - t0
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     return (to_smld(loc_result, roi_batch), info)
 end
