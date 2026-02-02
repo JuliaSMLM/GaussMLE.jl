@@ -212,6 +212,145 @@ function compute_cpu_batch_size(n_fits::Integer, box_size::Integer, n_params::In
 end
 
 """
+    _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
+                     data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
+                     fitter) -> (actual_backend, device_id, actual_batch_size, actual_n_batches)
+
+Internal helper that runs the MLE kernel on CPU or GPU with appropriate batching.
+Handles all backend selection and batch management logic.
+
+# Arguments
+- Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods
+- Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners, y_corners
+- fitter: GaussMLEFitter with backend/batching configuration
+
+# Returns
+Tuple of (actual_backend::Symbol, device_id::Int, actual_batch_size::Int, actual_n_batches::Int)
+for use in FitInfo construction.
+"""
+function _run_mle_kernel!(
+    results::Matrix{Float32},
+    uncertainties::Matrix{Float32},
+    covariances::Matrix{Float32},
+    log_likelihoods::Vector{Float32},
+    data::Array{Float32,3},
+    psf_pixels,
+    use_scmos::Val,
+    variance_map::Matrix{Float32},
+    x_corners::AbstractVector{Int32},
+    y_corners::AbstractVector{Int32},
+    fitter::GaussMLEFitter
+)
+    n_fits = size(data, 3)
+    n_params = size(results, 1)
+    box_size = size(data, 1)
+
+    # Select backend with GPU memory wait
+    actual_batch = min(fitter.batch_size, n_fits)
+    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+    device = select_backend(fitter.backend, required_memory;
+                           auto_timeout=fitter.auto_timeout,
+                           gpu_timeout=fitter.gpu_timeout,
+                           on_wait=fitter.on_wait)
+
+    # Track actual backend and device_id for FitInfo
+    actual_backend = device isa CPU ? :cpu : :gpu
+    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
+
+    # Track batch info for FitInfo
+    actual_batch_size = 0
+    actual_n_batches = 0
+
+    if device isa CPU
+        # CPU with memory-aware batching
+        ka_backend = KernelAbstractions.CPU()
+        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
+
+        if cpu_batch_size >= n_fits
+            # Process all at once
+            actual_n_batches = 1
+            kernel = unified_gaussian_mle_kernel!(ka_backend)
+            kernel(results, uncertainties, covariances, log_likelihoods,
+                   data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
+                   fitter.constraints, fitter.iterations,
+                   ndrange=n_fits)
+            KernelAbstractions.synchronize(ka_backend)
+        else
+            # Batch processing for memory efficiency
+            actual_n_batches = cld(n_fits, cpu_batch_size)
+            for batch_start in 1:cpu_batch_size:n_fits
+                batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
+                batch_size_actual = batch_end - batch_start + 1
+
+                batch_data = data[:, :, batch_start:batch_end]
+                batch_x_corners = x_corners[batch_start:batch_end]
+                batch_y_corners = y_corners[batch_start:batch_end]
+
+                # Views into pre-allocated result arrays
+                batch_results = @view results[:, batch_start:batch_end]
+                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
+                batch_covariances = @view covariances[:, batch_start:batch_end]
+                batch_llr = @view log_likelihoods[batch_start:batch_end]
+
+                kernel = unified_gaussian_mle_kernel!(ka_backend)
+                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
+                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
+                       fitter.constraints, fitter.iterations,
+                       ndrange=batch_size_actual)
+                KernelAbstractions.synchronize(ka_backend)
+
+                # Help GC between batches
+                batch_data = nothing
+                GC.gc(false)
+            end
+        end
+    else
+        # GPU batch processing
+        actual_batch_size = min(fitter.batch_size, n_fits)
+        actual_n_batches = cld(n_fits, fitter.batch_size)
+        for batch_start in 1:fitter.batch_size:n_fits
+            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+            batch_size_actual = batch_end - batch_start + 1
+
+            batch_data = data[:, :, batch_start:batch_end]
+            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
+            copyto!(d_batch_data, batch_data)
+
+            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
+            copyto!(d_variance_map, variance_map)
+
+            batch_x_corners = x_corners[batch_start:batch_end]
+            batch_y_corners = y_corners[batch_start:batch_end]
+            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
+            copyto!(d_x_corners, batch_x_corners)
+            copyto!(d_y_corners, batch_y_corners)
+
+            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
+            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
+
+            kernel = unified_gaussian_mle_kernel!(backend(device))
+            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
+                   fitter.constraints, fitter.iterations,
+                   ndrange=batch_size_actual)
+
+            KernelAbstractions.synchronize(backend(device))
+
+            results[:, batch_start:batch_end] = Array(d_results)
+            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+            covariances[:, batch_start:batch_end] = Array(d_covariances)
+            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+        end
+    end
+
+    return (actual_backend, device_id, actual_batch_size, actual_n_batches)
+end
+
+"""
     fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter; variance_map=nothing) -> (BasicSMLD, FitInfo)
 
 Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
@@ -274,118 +413,12 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
     x_corners = Int32[1 + (i-1) * box_size for i in 1:n_fits]
     y_corners = fill(Int32(1), n_fits)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    # Track actual backend and device_id for FitInfo
-    actual_backend = device isa CPU ? :cpu : :gpu
-    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
-
-    # Track batch info for FitInfo
-    actual_batch_size = 0
-    actual_n_batches = 0
-
-    # Use unified kernel for both CPU and GPU
-    if device isa CPU
-        # CPU with memory-aware batching
-        ka_backend = KernelAbstractions.CPU()
-        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
-        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
-
-        if cpu_batch_size >= n_fits
-            # Process all at once
-            actual_n_batches = 1
-            kernel = unified_gaussian_mle_kernel!(ka_backend)
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=n_fits)
-            KernelAbstractions.synchronize(ka_backend)
-        else
-            # Batch processing for memory efficiency
-            actual_n_batches = cld(n_fits, cpu_batch_size)
-            for batch_start in 1:cpu_batch_size:n_fits
-                batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
-                batch_size_actual = batch_end - batch_start + 1
-
-                batch_data = data_f32[:, :, batch_start:batch_end]
-                batch_x_corners = x_corners[batch_start:batch_end]
-                batch_y_corners = y_corners[batch_start:batch_end]
-
-                # Views into pre-allocated result arrays
-                batch_results = @view results[:, batch_start:batch_end]
-                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
-                batch_covariances = @view covariances[:, batch_start:batch_end]
-                batch_llr = @view log_likelihoods[batch_start:batch_end]
-
-                kernel = unified_gaussian_mle_kernel!(ka_backend)
-                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                       batch_data, psf_pixels, use_scmos, var_map, batch_x_corners, batch_y_corners,
-                       fitter.constraints, fitter.iterations,
-                       ndrange=batch_size_actual)
-                KernelAbstractions.synchronize(ka_backend)
-
-                # Help GC between batches
-                batch_data = nothing
-                GC.gc(false)
-            end
-        end
-    else
-        # Use unified kernel on GPU
-        # Process in batches for memory efficiency
-        actual_batch_size = min(fitter.batch_size, n_fits)
-        actual_n_batches = cld(n_fits, fitter.batch_size)
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            # Get batch data
-            batch_data = data_f32[:, :, batch_start:batch_end]
-
-            # Move batch to device using KernelAbstractions adapt
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            # Move variance map to device (same for all batches)
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(var_map))
-            copyto!(d_variance_map, var_map)
-
-            # Move batch corners to device
-            batch_x_corners = x_corners[batch_start:batch_end]
-            batch_y_corners = y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            # Allocate device arrays for results
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            # Launch unified kernel (works on GPU!)
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            # Wait for kernel completion
-            KernelAbstractions.synchronize(backend(device))
-
-            # Copy results back (need to copy to host arrays first)
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     # χ² = -2×LLR, df = n_pixels - n_params
@@ -457,107 +490,12 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
     # Use unified kernel on CPU/GPU
     data_f32 = convert(Array{Float32,3}, roi_batch.data)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    # Track actual backend and device_id for FitInfo
-    actual_backend = device isa CPU ? :cpu : :gpu
-    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
-
-    # Track batch info for FitInfo
-    actual_batch_size = 0
-    actual_n_batches = 0
-
-    if device isa CPU
-        # CPU with memory-aware batching
-        ka_backend = KernelAbstractions.CPU()
-        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
-        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
-
-        if cpu_batch_size >= n_fits
-            # Process all at once
-            actual_n_batches = 1
-            kernel = unified_gaussian_mle_kernel!(ka_backend)
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=n_fits)
-            KernelAbstractions.synchronize(ka_backend)
-        else
-            # Batch processing for memory efficiency
-            actual_n_batches = cld(n_fits, cpu_batch_size)
-            for batch_start in 1:cpu_batch_size:n_fits
-                batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
-                batch_size_actual = batch_end - batch_start + 1
-
-                batch_data = data_f32[:, :, batch_start:batch_end]
-                batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-                batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-
-                # Views into pre-allocated result arrays
-                batch_results = @view results[:, batch_start:batch_end]
-                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
-                batch_covariances = @view covariances[:, batch_start:batch_end]
-                batch_llr = @view log_likelihoods[batch_start:batch_end]
-
-                kernel = unified_gaussian_mle_kernel!(ka_backend)
-                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
-                       fitter.constraints, fitter.iterations,
-                       ndrange=batch_size_actual)
-                KernelAbstractions.synchronize(ka_backend)
-
-                # Help GC between batches
-                batch_data = nothing
-                GC.gc(false)
-            end
-        end
-    else
-        # GPU batch processing
-        actual_batch_size = min(fitter.batch_size, n_fits)
-        actual_n_batches = cld(n_fits, fitter.batch_size)
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
-
-            batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-            batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            KernelAbstractions.synchronize(backend(device))
-
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     pvalues = Vector{Float32}(undef, n_fits)
@@ -585,6 +523,7 @@ end
 function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLEFitter) where {T,N,A}
     # Start timing
     t0 = time_ns()
+
     # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
     data_electrons = to_electrons(roi_batch.data, roi_batch.camera, roi_batch.x_corners, roi_batch.y_corners)
     variance_map = extract_variance_map(roi_batch.camera, Float32)
@@ -609,107 +548,12 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
     # Use unified kernel on CPU/GPU (data already in electrons)
     data_f32 = convert(Array{Float32,3}, data_electrons)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    # Track actual backend and device_id for FitInfo
-    actual_backend = device isa CPU ? :cpu : :gpu
-    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
-
-    # Track batch info for FitInfo
-    actual_batch_size = 0
-    actual_n_batches = 0
-
-    if device isa CPU
-        # CPU with memory-aware batching
-        ka_backend = KernelAbstractions.CPU()
-        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
-        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
-
-        if cpu_batch_size >= n_fits
-            # Process all at once
-            actual_n_batches = 1
-            kernel = unified_gaussian_mle_kernel!(ka_backend)
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=n_fits)
-            KernelAbstractions.synchronize(ka_backend)
-        else
-            # Batch processing for memory efficiency
-            actual_n_batches = cld(n_fits, cpu_batch_size)
-            for batch_start in 1:cpu_batch_size:n_fits
-                batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
-                batch_size_actual = batch_end - batch_start + 1
-
-                batch_data = data_f32[:, :, batch_start:batch_end]
-                batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-                batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-
-                # Views into pre-allocated result arrays
-                batch_results = @view results[:, batch_start:batch_end]
-                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
-                batch_covariances = @view covariances[:, batch_start:batch_end]
-                batch_llr = @view log_likelihoods[batch_start:batch_end]
-
-                kernel = unified_gaussian_mle_kernel!(ka_backend)
-                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
-                       fitter.constraints, fitter.iterations,
-                       ndrange=batch_size_actual)
-                KernelAbstractions.synchronize(ka_backend)
-
-                # Help GC between batches
-                batch_data = nothing
-                GC.gc(false)
-            end
-        end
-    else
-        # GPU batch processing
-        actual_batch_size = min(fitter.batch_size, n_fits)
-        actual_n_batches = cld(n_fits, fitter.batch_size)
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
-
-            batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-            batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            KernelAbstractions.synchronize(backend(device))
-
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     pvalues = Vector{Float32}(undef, n_fits)
