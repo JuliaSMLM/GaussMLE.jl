@@ -234,7 +234,7 @@ fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
 smld, info = fit(data, fitter)
 
 # Access results
-println("Fitted \$(info.n_fits) ROIs in \$(info.elapsed_ns / 1e6) ms")
+println("Fitted \$(info.n_fits) ROIs in \$(info.elapsed_s * 1000) ms")
 println("Mean x position: ", mean([e.x for e in smld.emitters]))
 ```
 
@@ -412,9 +412,9 @@ function fit(data::AbstractArray{T,3}, fitter::GaussMLEFitter;
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, batch, fitter.psf_model)
 
     # Calculate elapsed time and create FitInfo
-    elapsed_ns = time_ns() - t0
+    elapsed_s = (time_ns() - t0) / 1e9
     memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+    info = FitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     # Return tuple (BasicSMLD, FitInfo)
     return (to_smld(loc_result, batch), info)
@@ -574,9 +574,9 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
 
     # Calculate elapsed time and create FitInfo
-    elapsed_ns = time_ns() - t0
+    elapsed_s = (time_ns() - t0) / 1e9
     memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+    info = FitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     return (to_smld(loc_result, roi_batch), info)
 end
@@ -726,9 +726,9 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
 
     # Calculate elapsed time and create FitInfo
-    elapsed_ns = time_ns() - t0
+    elapsed_s = (time_ns() - t0) / 1e9
     memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
-    info = FitInfo(elapsed_ns, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+    info = FitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
 
     return (to_smld(loc_result, roi_batch), info)
 end

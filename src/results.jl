@@ -8,7 +8,7 @@ Results structure for Gaussian MLE fitting
 Metadata about a fit operation, returned as the second element of the fit() tuple.
 
 # Fields
-- `elapsed_ns::UInt64`: Elapsed time in nanoseconds (from `time_ns()`)
+- `elapsed_s::Float64`: Elapsed time in seconds
 - `backend::Symbol`: Actual execution backend (`:cpu` or `:gpu`, never `:auto`)
 - `device_id::Int`: GPU device index (0-based) or -1 for CPU
 - `n_fits::Int`: Number of ROIs attempted
@@ -20,7 +20,7 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
 # Example
 ```julia
 smld, info = fit(batch, fitter)
-println("Fit \$(info.n_fits) ROIs in \$(info.elapsed_ns / 1e6) ms on \$(info.backend)")
+println("Fit \$(info.n_fits) ROIs in \$(info.elapsed_s * 1000) ms on \$(info.backend)")
 println("Processed in \$(info.n_batches) batches of \$(info.batch_size)")
 ```
 
@@ -28,7 +28,7 @@ println("Processed in \$(info.n_batches) batches of \$(info.batch_size)")
 [`fit`](@ref), [`GaussMLEFitter`](@ref)
 """
 struct FitInfo
-    elapsed_ns::UInt64
+    elapsed_s::Float64
     backend::Symbol
     device_id::Int
     n_fits::Int
@@ -39,7 +39,7 @@ struct FitInfo
 end
 
 function Base.show(io::IO, info::FitInfo)
-    elapsed_ms = info.elapsed_ns / 1e6
+    elapsed_ms = info.elapsed_s * 1000
     device_str = info.backend == :gpu ? "GPU:$(info.device_id)" : "CPU"
     mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits=1)) MB" : "$(round(info.memory_per_batch / 1024, digits=1)) KB"
     print(io, "FitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")

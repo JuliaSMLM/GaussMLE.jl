@@ -62,7 +62,7 @@ fitter = GaussMLEFitter(
 smld, info = fit(batch, fitter)
 
 # 5. Access fit metadata
-println("Fitted $(info.n_fits) ROIs in $(info.elapsed_ns / 1e6) ms on $(info.backend)")
+println("Fitted $(info.n_fits) ROIs in $(info.elapsed_s * 1000) ms on $(info.backend)")
 
 # 6. Access results (positions in microns, from camera pixel_size)
 for emitter in smld.emitters
@@ -128,7 +128,7 @@ Metadata about the fit operation.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `elapsed_ns` | `UInt64` | Elapsed time in nanoseconds |
+| `elapsed_s` | `Float64` | Elapsed time in seconds |
 | `backend` | `Symbol` | Actual execution backend (`:cpu` or `:gpu`, never `:auto`) |
 | `device_id` | `Int` | GPU device index (0-based) or -1 for CPU |
 | `n_fits` | `Int` | Number of ROIs attempted |
@@ -136,7 +136,7 @@ Metadata about the fit operation.
 
 ```julia
 smld, info = fit(batch, fitter)
-println("Executed on $(info.backend) in $(info.elapsed_ns / 1e6) ms")
+println("Executed on $(info.backend) in $(info.elapsed_s * 1000) ms")
 ```
 
 ### Output Emitter Types

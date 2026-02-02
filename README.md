@@ -50,7 +50,7 @@ fitter = GaussMLEFitter()
 smld, info = fit(data, fitter)  # Returns (BasicSMLD, FitInfo)
 
 # Access results (ecosystem-standard format)
-println("Fitted $(info.n_fits) localizations in $(info.elapsed_ns / 1e6) ms on $(info.backend)")
+println("Fitted $(info.n_fits) localizations in $(info.elapsed_s * 1000) ms on $(info.backend)")
 x_positions = [e.x for e in smld.emitters]
 precisions = [e.σ_x for e in smld.emitters]
 println("Mean position: $(mean(x_positions)) μm")
@@ -138,7 +138,7 @@ z_precisions = [e.σ_z for e in smld.emitters]
 
 ### Main Types
 - `GaussMLEFitter(; psf_model, backend, iterations, constraints, batch_size, auto_timeout, gpu_timeout, on_wait)`
-- `FitInfo` - Metadata about fit: elapsed_ns, backend, device_id, n_fits, n_converged
+- `FitInfo` - Metadata about fit: elapsed_s, backend, device_id, n_fits, n_converged, batch_size, n_batches, memory_per_batch
 
 ### PSF Models
 - `GaussianXYNB(σ)` - Fixed σ (4 params: x, y, N, bg)
@@ -162,7 +162,7 @@ z_precisions = [e.σ_z for e in smld.emitters]
 smld, info = fit(data, fitter)
 
 # FitInfo contains execution metadata
-println("Elapsed: $(info.elapsed_ns / 1e6) ms")
+println("Elapsed: $(info.elapsed_s * 1000) ms")
 println("Backend: $(info.backend)")  # :cpu or :gpu (never :auto)
 println("Device: $(info.device_id)")  # -1 for CPU, 0+ for GPU
 println("Fits: $(info.n_fits)")
