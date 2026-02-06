@@ -166,10 +166,10 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 util = try
                     CUDA.NVML.utilization_rates(nvml_dev)
                 catch
-                    (; gpu=0, memory=0)
+                    (; compute=0, memory=0)
                 end
                 # Contended: other procs AND (low memory OR high compute)
-                if mem.free < required_with_margin || util.gpu > 90
+                if mem.free < required_with_margin || util.compute > 90
                     continue
                 end
             end
