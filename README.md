@@ -133,7 +133,7 @@ z_precisions = [e.σ_z for e in smld.emitters]
 
 ### Core Functions
 - `fit(data, fitter)` → **Returns (SMLMData.BasicSMLD, GaussMLEFitInfo)** tuple
-- `fit(batch; model=..., max_iterations=...)` → Convenience form with kwargs
+- `fit(batch; psf_model=..., iterations=...)` → Convenience form with kwargs
 - `generate_roi_batch(camera, psf; kwargs...)` - Generate synthetic data
 
 ### Main Types

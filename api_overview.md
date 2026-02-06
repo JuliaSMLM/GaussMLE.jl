@@ -118,7 +118,7 @@ Fit Gaussian PSF to ROI data. Data-first argument order for pipeline ergonomics.
 **Signatures:**
 - `fit(data::Array{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
 - `fit(batch::ROIBatch, fitter)` - Fit ROIBatch (preferred for real data)
-- `fit(batch::ROIBatch; model=..., max_iterations=...)` - Convenience form with kwargs
+- `fit(batch::ROIBatch; psf_model=..., iterations=...)` - Convenience form with kwargs
 
 **Returns:** `(SMLMData.BasicSMLD, GaussMLEFitInfo)` tuple
 

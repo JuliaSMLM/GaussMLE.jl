@@ -623,16 +623,17 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
 end
 
 """
-    fit(batch::ROIBatch; model=GaussianXYNB(), max_iterations=20, backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
+    fit(batch::ROIBatch; psf_model=GaussianXYNB(), iterations=20, backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
 
 Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
+Kwargs match GaussMLEConfig fields exactly.
 
 # Arguments
 - `batch::ROIBatch`: Input ROI data with camera calibration
 
 # Keyword Arguments
-- `model=GaussianXYNB(0.13f0)`: PSF model to use
-- `max_iterations=20`: Number of Newton-Raphson iterations
+- `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
+- `iterations=20`: Number of Newton-Raphson iterations
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints (uses defaults if nothing)
 - `batch_size=10_000`: Batch size for GPU processing
@@ -649,15 +650,15 @@ Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
 smld, info = fit(batch)
 
 # Custom model and iterations
-smld, info = fit(batch; model=GaussianXYNBS(), max_iterations=30)
+smld, info = fit(batch; psf_model=GaussianXYNBS(), iterations=30)
 ```
 
 # See also
 [`GaussMLEConfig`](@ref), [`GaussMLEFitInfo`](@ref)
 """
 function fit(batch::ROIBatch;
-             model = GaussianXYNB(0.13f0),
-             max_iterations = 20,
+             psf_model = GaussianXYNB(0.13f0),
+             iterations = 20,
              backend = :auto,
              constraints = nothing,
              batch_size = 10_000,
@@ -665,9 +666,9 @@ function fit(batch::ROIBatch;
              gpu_timeout = Inf,
              on_wait = nothing)
     fitter = GaussMLEConfig(;
-        psf_model = model,
+        psf_model = psf_model,
         backend = backend,
-        iterations = max_iterations,
+        iterations = iterations,
         constraints = constraints,
         batch_size = batch_size,
         auto_timeout = auto_timeout,
