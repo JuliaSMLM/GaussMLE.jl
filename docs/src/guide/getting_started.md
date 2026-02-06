@@ -43,7 +43,7 @@ batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 ### Step 3: Fit and Access Results
 
 ```julia
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, batch)
 
 # Results are in microns (camera coordinates)
@@ -69,7 +69,7 @@ psf = GaussianXYNB(0.13f0)  # 130nm
 batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
 # 4. Fit
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, batch)
 
 # 5. Results in microns
@@ -169,7 +169,7 @@ batch = ROIBatch(
 )
 
 # Fit with proper unit handling
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 
 # Results in microns (relative to ROI corner)
@@ -199,7 +199,7 @@ batch = ROIBatch(
 )
 
 # Fit with proper coordinate conversion
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 ```
 
@@ -222,7 +222,7 @@ batch = generate_roi_batch(
 )
 
 # Fit the generated data
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 ```
 

@@ -21,7 +21,7 @@ using GaussMLE
 psf = GaussianXYNB(0.13f0)  # sigma in microns
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, data)
 ```
 
@@ -47,7 +47,7 @@ using GaussMLE
 psf = GaussianXYNBS()
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, data)
 
 # Access fitted sigma from emitters
@@ -78,7 +78,7 @@ using GaussMLE
 psf = GaussianXYNBSXSY()
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, data)
 
 # Access fitted sigma_x and sigma_y
@@ -115,7 +115,7 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
 smld = fit(fitter, data)
 
 # Access z-position from emitters
@@ -197,7 +197,7 @@ using Statistics
 psf = GaussianXYNB(0.13f0)
 
 # Create fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 
 # Fit data
 smld = fit(fitter, data)
@@ -218,7 +218,7 @@ using Statistics
 # Variable sigma model
 psf = GaussianXYNBS()
 
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 smld = fit(fitter, data)
 
 # Analyze PSF width distribution
@@ -246,7 +246,7 @@ psf = AstigmaticXYZNB{Float32}(
     0.10f0           # d
 )
 
-fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
 smld = fit(fitter, data)
 
 # Extract 3D positions
@@ -293,8 +293,8 @@ using GaussMLE
 using Statistics
 
 # Fit with both models
-fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter_fixed = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+fitter_var = GaussMLEConfig(psf_model = GaussianXYNBS())
 
 smld_fixed = fit(fitter_fixed, data)
 smld_var = fit(fitter_var, data)

@@ -189,7 +189,7 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         )
 
         # Create fitter (camera type determined by ROIBatch)
-        fitter = GaussMLE.GaussMLEFitter(
+        fitter = GaussMLE.GaussMLEConfig(
             psf_model = config.psf_model,
             backend = config.device_symbol,
             iterations = 20

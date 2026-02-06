@@ -29,7 +29,7 @@ abstract type PSFModel{NParams,T} end
 # Example
 ```julia
 psf = GaussianXYNB(0.13f0)  # σ = 130 nm (typical ~500nm emission, 100nm pixels)
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 ```
 
 # Note
@@ -55,7 +55,7 @@ end
 # Example
 ```julia
 psf = GaussianXYNBS()  # Variable sigma (no fixed value)
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 ```
 
 # Note
@@ -82,7 +82,7 @@ GaussianXYNBS() = GaussianXYNBS{Float32}()
 # Example
 ```julia
 psf = GaussianXYNBSXSY()  # Variable σx, σy (no fixed values)
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 ```
 
 # Note
@@ -128,7 +128,7 @@ psf = AstigmaticXYZNB{Float32}(
     0.05f0,          # γ (50 nm astigmatism offset)
     0.4f0            # d (400 nm depth scale)
 )
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 ```
 
 # Note

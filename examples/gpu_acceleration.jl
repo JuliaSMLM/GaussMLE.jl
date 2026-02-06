@@ -20,7 +20,7 @@ data = rand(Float32, 11, 11, n_rois)
 
 # CPU fitting
 println("\n--- CPU Fitting ---")
-fitter_cpu = GaussMLEFitter(device=:cpu)
+fitter_cpu = GaussMLEConfig(device=:cpu)
 println("Running CPU fit...")
 t_cpu = @elapsed smld_cpu = fit(fitter_cpu, data)
 rate_cpu = length(smld_cpu.emitters) / t_cpu
@@ -29,7 +29,7 @@ rate_cpu = length(smld_cpu.emitters) / t_cpu
 
 # GPU fitting
 println("\n--- GPU Fitting ---")
-fitter_gpu = GaussMLEFitter(device=:gpu, batch_size=5000)
+fitter_gpu = GaussMLEConfig(device=:gpu, batch_size=5000)
 println("Running GPU fit (batch size: 5000)...")
 t_gpu = @elapsed smld_gpu = fit(fitter_gpu, data)
 rate_gpu = length(smld_gpu.emitters) / t_gpu

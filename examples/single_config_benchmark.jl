@@ -81,7 +81,7 @@ data, true_positions = generate_data_with_truth(n_samples, roi_size)
 
 # Create fitter object
 verbose && println("Creating fitter with $(typeof(psf_model))...")
-fitter = GaussMLE.GaussMLEFitter(
+fitter = GaussMLE.GaussMLEConfig(
     psf_model = psf_model,
     camera_model = camera_model,
     device = device,

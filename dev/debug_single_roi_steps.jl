@@ -83,7 +83,7 @@ results_at_iters = []
 pixel_size = 0.1f0  # Emitters are in microns with 100nm pixels
 
 for n_iter in iteration_counts
-    fitter = GaussMLEFitter(psf_model=psf_model, iterations=n_iter)
+    fitter = GaussMLEConfig(psf_model=psf_model, iterations=n_iter)
     result = fit(fitter, roi_data)
 
     # Extract fitted parameters and convert to ROI pixels for comparison

@@ -18,7 +18,7 @@ data = rand(Float32, 11, 11, 100)
 
 # Create fitter with defaults
 println("Creating fitter with default settings...")
-fitter = GaussMLEFitter()
+fitter = GaussMLEConfig()
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")

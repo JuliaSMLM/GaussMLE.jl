@@ -41,7 +41,7 @@ include("interface.jl")  # User-facing API
 # Main exports - minimal API for common workflows
 # Camera types come from SMLMData (use SMLMData.SCMOSCamera, etc.)
 # ROIBatch and SingleROI come from SMLMData (ecosystem standard)
-export fit, GaussMLEFitter, FitInfo
+export fit, GaussMLEConfig, GaussMLEFitInfo
 export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
 export generate_roi_batch
 

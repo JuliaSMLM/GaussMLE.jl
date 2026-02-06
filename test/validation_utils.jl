@@ -311,7 +311,7 @@ function run_model_validation(
     data, true_params = generate_test_data(model_type, n_blobs, box_size; psf_model=psf_model, kwargs...)
     
     # Create fitter
-    fitter = GaussMLE.GaussMLEFitter(
+    fitter = GaussMLE.GaussMLEConfig(
         psf_model = psf_model,
         backend = device isa GaussMLE.CPU ? :cpu : :gpu,
         iterations = 20

@@ -26,10 +26,10 @@ using Statistics
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
 # - Auto device selection (GPU if available)
 # - 20 Newton-Raphson iterations
-fitter = GaussMLEFitter()
+fitter = GaussMLEConfig()
 
 # Or with explicit configuration
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
     device = :cpu,                      # Force CPU
     iterations = 20
@@ -92,7 +92,7 @@ data = rand(Float32, 11, 11, 100)
 
 # Create fitter with PSF model (sigma from PSF calibration)
 println("Creating fitter with 130nm PSF width...")
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
@@ -175,7 +175,7 @@ batch = generate_roi_batch(
 )
 
 # Fit with proper coordinate conversion
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 
 # Positions are now in camera coordinates (microns)
@@ -196,7 +196,7 @@ data = Float32.(your_data)
 
 ```julia
 # For GPU: configure batch size based on memory
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     device = :gpu,
     batch_size = 10_000
 )
@@ -214,12 +214,12 @@ using GaussMLE
 data = rand(Float32, 11, 11, 10_000)
 
 # CPU timing
-fitter_cpu = GaussMLEFitter(device = :cpu)
+fitter_cpu = GaussMLEConfig(device = :cpu)
 t_cpu = @elapsed fit(fitter_cpu, data)
 println("CPU: $(round(10_000/t_cpu)) fits/second")
 
 # GPU timing (if available)
-fitter_gpu = GaussMLEFitter(device = :gpu)
+fitter_gpu = GaussMLEConfig(device = :gpu)
 t_gpu = @elapsed fit(fitter_gpu, data)
 println("GPU: $(round(10_000/t_gpu)) fits/second")
 ```

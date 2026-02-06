@@ -248,7 +248,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         )
 
         # Fit with sCMOS model via ROIBatch
-        fitter = GaussMLE.GaussMLEFitter(
+        fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf_model,
             device = GaussMLE.CPU()
         )
@@ -355,7 +355,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             seed = 123
         )
 
-        fitter = GaussMLE.GaussMLEFitter(psf_model = psf_model, device = GaussMLE.CPU())
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, device = GaussMLE.CPU())
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Extract uncertainties for each group
@@ -421,7 +421,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             end
             
             # Fit
-            fitter = GaussMLE.GaussMLEFitter(psf_model = psf_model, device = GaussMLE.CPU())
+            fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, device = GaussMLE.CPU())
             smld, _info = GaussMLE.fit(data, fitter)
 
             # Check that fitting doesn't fail catastrophically

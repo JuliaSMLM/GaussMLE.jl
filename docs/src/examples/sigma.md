@@ -20,7 +20,7 @@ using Statistics
 psf = GaussianXYNBS()
 
 # Create fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 
 # Fit data
 data = rand(Float32, 11, 11, 100)
@@ -47,7 +47,7 @@ n_rois = 100
 data = rand(Float32, 11, 11, n_rois)
 
 # Create variable-sigma fitter
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
     iterations = 25  # More iterations for 5-parameter fit
 )
@@ -112,7 +112,7 @@ using GaussMLE
 using Statistics
 
 # Fit with variable sigma
-fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
 smld = fit(fitter, data)
 
 # Extract PSF widths
@@ -141,11 +141,11 @@ using Statistics
 data = rand(Float32, 11, 11, 1000)
 
 # Fixed PSF model
-fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter_fixed = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld_fixed = fit(fitter_fixed, data)
 
 # Variable PSF model
-fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter_var = GaussMLEConfig(psf_model = GaussianXYNBS())
 smld_var = fit(fitter_var, data)
 
 # Compare position estimates
@@ -193,7 +193,7 @@ batch = generate_roi_batch(
 )
 
 # Fit
-fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
 smld = fit(fitter, batch)
 
 # Extract results - positions in camera coordinates
@@ -210,7 +210,7 @@ using GaussMLE
 using Statistics
 
 # Anisotropic model - fits sigma_x and sigma_y independently
-fitter = GaussMLEFitter(psf_model = GaussianXYNBSXSY())
+fitter = GaussMLEConfig(psf_model = GaussianXYNBSXSY())
 smld = fit(fitter, data)
 
 # Returns Emitter2DFitSigmaXY with sigma_x and sigma_y fields
@@ -251,7 +251,7 @@ end
 
 ```julia
 # Use more iterations for variable PSF
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
     iterations = 30  # Default is 20
 )

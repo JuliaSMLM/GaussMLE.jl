@@ -3,7 +3,7 @@ Results structure for Gaussian MLE fitting
 """
 
 """
-    FitInfo
+    GaussMLEFitInfo
 
 Metadata about a fit operation, returned as the second element of the fit() tuple.
 
@@ -25,9 +25,9 @@ println("Processed in \$(info.n_batches) batches of \$(info.batch_size)")
 ```
 
 # See also
-[`fit`](@ref), [`GaussMLEFitter`](@ref)
+[`fit`](@ref), [`GaussMLEConfig`](@ref)
 """
-struct FitInfo <: AbstractSMLMInfo
+struct GaussMLEFitInfo <: AbstractSMLMInfo
     elapsed_s::Float64
     backend::Symbol
     device_id::Int
@@ -38,14 +38,14 @@ struct FitInfo <: AbstractSMLMInfo
     memory_per_batch::Int
 end
 
-function Base.show(io::IO, info::FitInfo)
+function Base.show(io::IO, info::GaussMLEFitInfo)
     elapsed_ms = info.elapsed_s * 1000
     device_str = info.backend == :gpu ? "GPU:$(info.device_id)" : "CPU"
     mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits=1)) MB" : "$(round(info.memory_per_batch / 1024, digits=1)) KB"
-    print(io, "FitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
+    print(io, "GaussMLEFitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
 end
 
-export FitInfo
+export GaussMLEFitInfo
 
 """
     GaussMLEResults{T,P}
@@ -88,7 +88,7 @@ all_params = results.parameters  # n_params × n_fits
 ```
 
 # See also
-[`fit`](@ref), [`GaussMLEFitter`](@ref)
+[`fit`](@ref), [`GaussMLEConfig`](@ref)
 """
 struct GaussMLEResults{T, P<:PSFModel}
     parameters::Matrix{T}

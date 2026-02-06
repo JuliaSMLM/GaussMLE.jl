@@ -26,7 +26,7 @@ batch = generate_roi_batch(
 )
 
 # 3. Create fitter and fit
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 
 # 4. Results in microns (camera pixel_size used for conversion)
@@ -85,7 +85,7 @@ using GaussMLE
 using Statistics
 
 # Fit PSF width per localization
-fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
 smld = fit(fitter, data)
 
 # Access fitted sigma from Emitter2DFitSigma type
@@ -99,7 +99,7 @@ println("Mean sigma: $(mean(sigmas)) microns")
 using GaussMLE
 
 # Force GPU (auto-fallback if unavailable)
-fitter = GaussMLEFitter(device = :gpu, batch_size = 5000)
+fitter = GaussMLEConfig(device = :gpu, batch_size = 5000)
 smld = fit(fitter, large_dataset)
 ```
 
@@ -122,7 +122,7 @@ camera = SCMOSCamera(
 batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois = 1000)
 
 # Fit - automatically uses variance map from camera
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 ```
 
@@ -140,7 +140,7 @@ psf_3d = AstigmaticXYZNB{Float32}(
     0.4f0            # d
 )
 
-fitter = GaussMLEFitter(psf_model = psf_3d)
+fitter = GaussMLEConfig(psf_model = psf_3d)
 smld = fit(fitter, data)
 
 # Z positions from Emitter3DFitGaussMLE type

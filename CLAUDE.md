@@ -256,7 +256,7 @@ The math is dimensionally consistent:
 ### Source Structure
 
 - `src/unified_kernel.jl` - Main fitting kernel with custom linear algebra
-- `src/interface.jl` - High-level `fit()` API and `GaussMLEFitter` type
+- `src/interface.jl` - High-level `fit()` API and `GaussMLEConfig` type
 - `src/psf_models.jl` - PSF model definitions (Gaussian, Astigmatic)
 - `src/psf_derivatives.jl` - PSF derivative computations
 - `src/camera_models.jl` - Camera noise models (IdealCamera, SCMOSCameraInternal)

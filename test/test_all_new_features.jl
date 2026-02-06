@@ -45,7 +45,7 @@ Consolidated test of new simulator and ROIBatch features
 
         batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=20, seed=42)
 
-        fitter = GaussMLE.GaussMLEFitter(
+        fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf,
             backend = :cpu,
             iterations = 20
@@ -78,7 +78,7 @@ Consolidated test of new simulator and ROIBatch features
                                            xy_variation=0.0f0,
                                            seed=42)
 
-        fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         @test smld isa SMLMData.BasicSMLD
@@ -104,7 +104,7 @@ Consolidated test of new simulator and ROIBatch features
 
         for psf in psf_models
             batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=5, seed=42)
-            fitter = GaussMLE.GaussMLEFitter(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
+            fitter = GaussMLE.GaussMLEConfig(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
             smld, _info = GaussMLE.fit(batch, fitter)
 
             @test length(smld.emitters) == 5
