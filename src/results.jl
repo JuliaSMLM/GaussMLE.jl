@@ -27,7 +27,7 @@ println("Processed in \$(info.n_batches) batches of \$(info.batch_size)")
 # See also
 [`fit`](@ref), [`GaussMLEFitter`](@ref)
 """
-struct FitInfo
+struct FitInfo <: AbstractSMLMInfo
     elapsed_s::Float64
     backend::Symbol
     device_id::Int

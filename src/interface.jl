@@ -72,7 +72,7 @@ Main type for configuring and performing Maximum Likelihood Estimation of Gaussi
 # See also
 [`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
 """
-struct GaussMLEFitter{P<:PSFModel, PC<:ParameterConstraints, W}
+struct GaussMLEFitter{P<:PSFModel, PC<:ParameterConstraints, W} <: AbstractSMLMConfig
     backend::Symbol
     psf_model::P
     iterations::Int

@@ -13,7 +13,8 @@ using Distributions: Chisq, cdf, Poisson  # Only import what we need
 import StatsAPI: fit  # Extend canonical Julia fit function
 
 # Import commonly used types from SMLMData (ecosystem standard)
-using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter
+using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter,
+                AbstractSMLMConfig, AbstractSMLMInfo
 
 import Adapt
 
