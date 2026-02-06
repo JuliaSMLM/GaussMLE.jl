@@ -306,44 +306,89 @@ function _run_mle_kernel!(
             end
         end
     else
-        # GPU batch processing
-        actual_batch_size = min(fitter.batch_size, n_fits)
-        actual_n_batches = cld(n_fits, fitter.batch_size)
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
+        # GPU batch processing - with runtime fallback to CPU for :auto mode
+        gpu_failed = false
+        try
+            actual_batch_size = min(fitter.batch_size, n_fits)
+            actual_n_batches = cld(n_fits, fitter.batch_size)
+            for batch_start in 1:fitter.batch_size:n_fits
+                batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+                batch_size_actual = batch_end - batch_start + 1
 
-            batch_data = data[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
+                batch_data = data[:, :, batch_start:batch_end]
+                d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
+                copyto!(d_batch_data, batch_data)
 
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
+                d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
+                copyto!(d_variance_map, variance_map)
 
-            batch_x_corners = x_corners[batch_start:batch_end]
-            batch_y_corners = y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
+                batch_x_corners = x_corners[batch_start:batch_end]
+                batch_y_corners = y_corners[batch_start:batch_end]
+                d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+                d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
+                copyto!(d_x_corners, batch_x_corners)
+                copyto!(d_y_corners, batch_y_corners)
 
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
+                d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+                d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+                d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
+                d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
 
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
+                kernel = unified_gaussian_mle_kernel!(backend(device))
+                kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                       d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
+                       fitter.constraints, fitter.iterations,
+                       ndrange=batch_size_actual)
 
-            KernelAbstractions.synchronize(backend(device))
+                KernelAbstractions.synchronize(backend(device))
 
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+                results[:, batch_start:batch_end] = Array(d_results)
+                uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+                covariances[:, batch_start:batch_end] = Array(d_covariances)
+                log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+            end
+        catch e
+            if fitter.backend == :auto
+                @warn "GPU runtime error, falling back to CPU" exception=(e, catch_backtrace())
+                CUDA.reclaim()
+                gpu_failed = true
+            else
+                rethrow()
+            end
+        end
+
+        # CPU fallback: re-run all fits on CPU (GPU results may be partial/corrupt)
+        if gpu_failed
+            actual_backend = :cpu
+            device_id = -1
+            ka_backend = KernelAbstractions.CPU()
+            cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+            actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
+            actual_n_batches = cld(n_fits, actual_batch_size)
+
+            for batch_start in 1:actual_batch_size:n_fits
+                batch_end = min(batch_start + actual_batch_size - 1, n_fits)
+                batch_size_actual = batch_end - batch_start + 1
+
+                batch_data = data[:, :, batch_start:batch_end]
+                batch_x_corners = x_corners[batch_start:batch_end]
+                batch_y_corners = y_corners[batch_start:batch_end]
+
+                batch_results = @view results[:, batch_start:batch_end]
+                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
+                batch_covariances = @view covariances[:, batch_start:batch_end]
+                batch_llr = @view log_likelihoods[batch_start:batch_end]
+
+                kernel = unified_gaussian_mle_kernel!(ka_backend)
+                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
+                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
+                       fitter.constraints, fitter.iterations,
+                       ndrange=batch_size_actual)
+                KernelAbstractions.synchronize(ka_backend)
+
+                batch_data = nothing
+                GC.gc(false)
+            end
         end
     end
 
