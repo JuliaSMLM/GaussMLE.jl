@@ -37,22 +37,20 @@ function find_best_gpu()
     n_devices = length(CUDA.devices())
     n_devices == 1 && return 0
 
-    # Save current device to restore if needed
-    original_device = CUDA.device()
-
+    # Query memory via NVML (no CUDA context needed, safe under contention)
+    # Avoids cuDevicePrimaryCtxRetain OOM when multiple processes compete
     best_device = 0
     max_free = 0
 
     for i in 0:(n_devices - 1)
-        CUDA.device!(i)
-        free = CUDA.free_memory()
-        if free > max_free
-            max_free = free
+        info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
+        if info.free > max_free
+            max_free = info.free
             best_device = i
         end
     end
 
-    # Switch to best device
+    # Only create context on the winner
     CUDA.device!(best_device)
 
     if n_devices > 1
