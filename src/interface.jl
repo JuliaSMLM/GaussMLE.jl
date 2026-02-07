@@ -322,7 +322,9 @@ function _run_mle_kernel!(
                     log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
                 end
 
-                # All batches succeeded
+                # All batches succeeded - reclaim pool memory so NVML shows it as free
+                # for other processes competing for the same GPU
+                CUDA.reclaim()
                 gpu_succeeded = true
                 actual_backend = :gpu
                 device_id = Int(CUDA.device().handle)
