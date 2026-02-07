@@ -245,24 +245,111 @@ function _run_mle_kernel!(
     n_params = size(results, 1)
     box_size = size(data, 1)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    # Track actual backend and device_id for GaussMLEFitInfo
-    actual_backend = device isa CPU ? :cpu : :gpu
-    device_id = device isa CPU ? -1 : Int(CUDA.device().handle)
-
-    # Track batch info for GaussMLEFitInfo
+    # Track for GaussMLEFitInfo
+    actual_backend = :cpu
+    device_id = -1
     actual_batch_size = 0
     actual_n_batches = 0
 
-    if device isa CPU
-        # CPU with memory-aware batching
+    # --- CPU fast path ---
+    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && !CUDA.functional())
+
+    if fitter.backend == :gpu && !CUDA.functional()
+        error("GPU requested but CUDA not functional")
+    end
+
+    if !use_cpu
+        # --- Unified GPU retry loop ---
+        # Handles: (1) no free memory (NVML waits), (2) TOCTOU context creation
+        # race, (3) runtime OOM - all in one loop. On any GPU failure, release
+        # context and re-poll NVML. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
+        deadline = time() + timeout
+        actual_batch = min(fitter.batch_size, n_fits)
+        required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+        gpu_succeeded = false
+
+        while !gpu_succeeded && time() < deadline
+            # Poll NVML for available GPU
+            dev_idx, available = wait_for_gpu_nvml(required_memory;
+                timeout=max(0.0, deadline - time()), on_wait=fitter.on_wait)
+            if !available
+                break  # Timeout reached
+            end
+
+            try
+                # Acquire GPU context
+                CUDA.device!(dev_idx)
+                gpu_backend = CUDABackend()
+
+                # Process all batches on GPU
+                actual_batch_size = min(fitter.batch_size, n_fits)
+                actual_n_batches = cld(n_fits, fitter.batch_size)
+                for batch_start in 1:fitter.batch_size:n_fits
+                    batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+                    batch_size_actual = batch_end - batch_start + 1
+
+                    batch_data = data[:, :, batch_start:batch_end]
+                    d_batch_data = KernelAbstractions.allocate(gpu_backend, Float32, size(batch_data))
+                    copyto!(d_batch_data, batch_data)
+
+                    d_variance_map = KernelAbstractions.allocate(gpu_backend, Float32, size(variance_map))
+                    copyto!(d_variance_map, variance_map)
+
+                    batch_x_corners = x_corners[batch_start:batch_end]
+                    batch_y_corners = y_corners[batch_start:batch_end]
+                    d_x_corners = KernelAbstractions.allocate(gpu_backend, Int32, length(batch_x_corners))
+                    d_y_corners = KernelAbstractions.allocate(gpu_backend, Int32, length(batch_y_corners))
+                    copyto!(d_x_corners, batch_x_corners)
+                    copyto!(d_y_corners, batch_y_corners)
+
+                    d_results = KernelAbstractions.allocate(gpu_backend, Float32, (n_params, batch_size_actual))
+                    d_uncertainties = KernelAbstractions.allocate(gpu_backend, Float32, (n_params, batch_size_actual))
+                    d_covariances = KernelAbstractions.allocate(gpu_backend, Float32, (3, batch_size_actual))
+                    d_log_likelihoods = KernelAbstractions.allocate(gpu_backend, Float32, batch_size_actual)
+
+                    kernel = unified_gaussian_mle_kernel!(gpu_backend)
+                    kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                           d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
+                           fitter.constraints, fitter.iterations,
+                           ndrange=batch_size_actual)
+
+                    KernelAbstractions.synchronize(gpu_backend)
+
+                    results[:, batch_start:batch_end] = Array(d_results)
+                    uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+                    covariances[:, batch_start:batch_end] = Array(d_covariances)
+                    log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+                end
+
+                # All batches succeeded
+                gpu_succeeded = true
+                actual_backend = :gpu
+                device_id = Int(CUDA.device().handle)
+            catch e
+                # Release context to free memory, then loop back to poll NVML
+                @warn "GPU error on device $dev_idx, releasing context" exception=(e, catch_backtrace())
+                _release_gpu_context(dev_idx)
+                if fitter.backend == :gpu && time() >= deadline
+                    rethrow()
+                end
+            end
+        end
+
+        if !gpu_succeeded
+            if fitter.backend == :gpu
+                error("GPU failed after $(timeout)s timeout")
+            end
+            # :auto falls through to CPU below
+            @warn "GPU unavailable after $(timeout)s, using CPU"
+            use_cpu = true
+        end
+    end
+
+    # --- CPU path ---
+    if use_cpu
+        actual_backend = :cpu
+        device_id = -1
         ka_backend = KernelAbstractions.CPU()
         cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
         actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
@@ -281,150 +368,6 @@ function _run_mle_kernel!(
             actual_n_batches = cld(n_fits, cpu_batch_size)
             for batch_start in 1:cpu_batch_size:n_fits
                 batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
-                batch_size_actual = batch_end - batch_start + 1
-
-                batch_data = data[:, :, batch_start:batch_end]
-                batch_x_corners = x_corners[batch_start:batch_end]
-                batch_y_corners = y_corners[batch_start:batch_end]
-
-                # Views into pre-allocated result arrays
-                batch_results = @view results[:, batch_start:batch_end]
-                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
-                batch_covariances = @view covariances[:, batch_start:batch_end]
-                batch_llr = @view log_likelihoods[batch_start:batch_end]
-
-                kernel = unified_gaussian_mle_kernel!(ka_backend)
-                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
-                       fitter.constraints, fitter.iterations,
-                       ndrange=batch_size_actual)
-                KernelAbstractions.synchronize(ka_backend)
-
-                # Help GC between batches
-                batch_data = nothing
-                GC.gc(false)
-            end
-        end
-    else
-        # GPU batch processing - with runtime fallback to CPU for :auto mode
-        gpu_failed = false
-        try
-            actual_batch_size = min(fitter.batch_size, n_fits)
-            actual_n_batches = cld(n_fits, fitter.batch_size)
-            for batch_start in 1:fitter.batch_size:n_fits
-                batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-                batch_size_actual = batch_end - batch_start + 1
-
-                batch_data = data[:, :, batch_start:batch_end]
-                d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-                copyto!(d_batch_data, batch_data)
-
-                d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-                copyto!(d_variance_map, variance_map)
-
-                batch_x_corners = x_corners[batch_start:batch_end]
-                batch_y_corners = y_corners[batch_start:batch_end]
-                d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-                d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-                copyto!(d_x_corners, batch_x_corners)
-                copyto!(d_y_corners, batch_y_corners)
-
-                d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-                d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-                d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-                d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-                kernel = unified_gaussian_mle_kernel!(backend(device))
-                kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                       d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                       fitter.constraints, fitter.iterations,
-                       ndrange=batch_size_actual)
-
-                KernelAbstractions.synchronize(backend(device))
-
-                results[:, batch_start:batch_end] = Array(d_results)
-                uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-                covariances[:, batch_start:batch_end] = Array(d_covariances)
-                log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-            end
-        catch e
-            if fitter.backend == :auto
-                @warn "GPU runtime error, attempting re-acquisition" exception=(e, catch_backtrace())
-                # Release context and re-poll NVML with remaining auto_timeout
-                _release_gpu_context(Int(CUDA.device().handle))
-                device_idx, available = wait_for_gpu_nvml(required_memory;
-                    timeout=fitter.auto_timeout, on_wait=fitter.on_wait)
-                if available
-                    try
-                        CUDA.device!(device_idx)
-                        @info "Re-acquired GPU $device_idx, restarting fits"
-                        gpu_failed = false
-                        # Update tracking
-                        device_id = device_idx
-                        actual_batch_size = min(fitter.batch_size, n_fits)
-                        actual_n_batches = cld(n_fits, fitter.batch_size)
-                        # Re-run all fits on re-acquired GPU
-                        for batch_start in 1:fitter.batch_size:n_fits
-                            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-                            batch_size_actual = batch_end - batch_start + 1
-
-                            batch_data = data[:, :, batch_start:batch_end]
-                            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-                            copyto!(d_batch_data, batch_data)
-
-                            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-                            copyto!(d_variance_map, variance_map)
-
-                            batch_x_corners = x_corners[batch_start:batch_end]
-                            batch_y_corners = y_corners[batch_start:batch_end]
-                            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-                            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-                            copyto!(d_x_corners, batch_x_corners)
-                            copyto!(d_y_corners, batch_y_corners)
-
-                            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-                            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-                            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-                            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-                            kernel = unified_gaussian_mle_kernel!(backend(device))
-                            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                                   fitter.constraints, fitter.iterations,
-                                   ndrange=batch_size_actual)
-
-                            KernelAbstractions.synchronize(backend(device))
-
-                            results[:, batch_start:batch_end] = Array(d_results)
-                            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-                            covariances[:, batch_start:batch_end] = Array(d_covariances)
-                            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-                        end
-                    catch e2
-                        @warn "GPU re-acquisition failed, falling back to CPU" exception=(e2, catch_backtrace())
-                        _release_gpu_context(device_idx)
-                        gpu_failed = true
-                    end
-                else
-                    @warn "No GPU available after re-poll, falling back to CPU"
-                    gpu_failed = true
-                end
-            else
-                rethrow()
-            end
-        end
-
-        # CPU fallback: re-run all fits on CPU (GPU results may be partial/corrupt)
-        if gpu_failed
-            actual_backend = :cpu
-            device_id = -1
-            ka_backend = KernelAbstractions.CPU()
-            cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
-            actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
-            actual_n_batches = cld(n_fits, actual_batch_size)
-
-            for batch_start in 1:actual_batch_size:n_fits
-                batch_end = min(batch_start + actual_batch_size - 1, n_fits)
                 batch_size_actual = batch_end - batch_start + 1
 
                 batch_data = data[:, :, batch_start:batch_end]
