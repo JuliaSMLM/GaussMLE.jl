@@ -80,17 +80,16 @@ Called after a failed CUDA.device!() to avoid zombie context reservations
 that deadlock other processes polling for free GPU memory.
 """
 function _release_gpu_context(device_idx::Integer)
+    # GC first to finalize Julia-side CUDA objects before releasing context
+    GC.gc(false)
     try
         dev = CUDA.CuDevice(device_idx)
         CUDA.cuDevicePrimaryCtxRelease(dev)
     catch
         # Best-effort: context may not exist if creation failed early
     end
-    try
-        GC.gc(false)
-        CUDA.reclaim()
-    catch
-    end
+    # NOTE: Do NOT call CUDA.reclaim() here - it requires an active context
+    # and will either hang or re-create the context we just released.
 end
 
 # GPU memory wait utilities
