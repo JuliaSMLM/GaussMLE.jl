@@ -235,14 +235,25 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             error("GPU requested but CUDA not functional")
         end
         # NVML poll: scan all GPUs, wait for first available
-        device_idx, available = wait_for_gpu_nvml(required_bytes;
-            timeout=gpu_timeout, on_wait=on_wait)
-        if !available
-            error("No GPU with sufficient memory after $(gpu_timeout)s")
+        # Retry loop handles TOCTOU race: NVML check passes but another process
+        # grabs the GPU between check and CUDA.device!() context creation
+        deadline = time() + gpu_timeout
+        while true
+            device_idx, available = wait_for_gpu_nvml(required_bytes;
+                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            if !available
+                error("No GPU with sufficient memory after $(gpu_timeout)s")
+            end
+            try
+                CUDA.device!(device_idx)
+                return GPU()
+            catch e
+                if time() >= deadline
+                    rethrow()
+                end
+                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+            end
         end
-        # Create CUDA context only on the confirmed winner
-        CUDA.device!(device_idx)
-        return GPU()
 
     else  # :auto
         if !CUDA.functional()
@@ -252,8 +263,13 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         device_idx, available = wait_for_gpu_nvml(required_bytes;
             timeout=auto_timeout, on_wait=on_wait)
         if available
-            CUDA.device!(device_idx)
-            return GPU()
+            try
+                CUDA.device!(device_idx)
+                return GPU()
+            catch e
+                @warn "GPU $device_idx context creation failed (contention race), using CPU" exception=e
+                return CPU()
+            end
         else
             @warn "No GPU available after $(auto_timeout)s, using CPU"
             return CPU()
