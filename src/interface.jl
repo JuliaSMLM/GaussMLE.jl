@@ -349,9 +349,66 @@ function _run_mle_kernel!(
             end
         catch e
             if fitter.backend == :auto
-                @warn "GPU runtime error, falling back to CPU" exception=(e, catch_backtrace())
-                CUDA.reclaim()
-                gpu_failed = true
+                @warn "GPU runtime error, attempting re-acquisition" exception=(e, catch_backtrace())
+                # Release context and re-poll NVML with remaining auto_timeout
+                _release_gpu_context(Int(CUDA.device().handle))
+                device_idx, available = wait_for_gpu_nvml(required_memory;
+                    timeout=fitter.auto_timeout, on_wait=fitter.on_wait)
+                if available
+                    try
+                        CUDA.device!(device_idx)
+                        @info "Re-acquired GPU $device_idx, restarting fits"
+                        gpu_failed = false
+                        # Update tracking
+                        device_id = device_idx
+                        actual_batch_size = min(fitter.batch_size, n_fits)
+                        actual_n_batches = cld(n_fits, fitter.batch_size)
+                        # Re-run all fits on re-acquired GPU
+                        for batch_start in 1:fitter.batch_size:n_fits
+                            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+                            batch_size_actual = batch_end - batch_start + 1
+
+                            batch_data = data[:, :, batch_start:batch_end]
+                            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
+                            copyto!(d_batch_data, batch_data)
+
+                            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
+                            copyto!(d_variance_map, variance_map)
+
+                            batch_x_corners = x_corners[batch_start:batch_end]
+                            batch_y_corners = y_corners[batch_start:batch_end]
+                            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
+                            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
+                            copyto!(d_x_corners, batch_x_corners)
+                            copyto!(d_y_corners, batch_y_corners)
+
+                            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+                            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
+                            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
+                            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
+
+                            kernel = unified_gaussian_mle_kernel!(backend(device))
+                            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
+                                   fitter.constraints, fitter.iterations,
+                                   ndrange=batch_size_actual)
+
+                            KernelAbstractions.synchronize(backend(device))
+
+                            results[:, batch_start:batch_end] = Array(d_results)
+                            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+                            covariances[:, batch_start:batch_end] = Array(d_covariances)
+                            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+                        end
+                    catch e2
+                        @warn "GPU re-acquisition failed, falling back to CPU" exception=(e2, catch_backtrace())
+                        _release_gpu_context(device_idx)
+                        gpu_failed = true
+                    end
+                else
+                    @warn "No GPU available after re-poll, falling back to CPU"
+                    gpu_failed = true
+                end
             else
                 rethrow()
             end

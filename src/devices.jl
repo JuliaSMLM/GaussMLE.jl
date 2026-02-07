@@ -283,21 +283,28 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         if !CUDA.functional()
             return CPU()
         end
-        # NVML poll: scan all GPUs, wait for first available
-        device_idx, available = wait_for_gpu_nvml(required_bytes;
-            timeout=auto_timeout, on_wait=on_wait)
-        if available
+        # Same retry pattern as :gpu but falls back to CPU on timeout
+        # instead of erroring. On TOCTOU catch, release context and re-poll
+        # with remaining timeout - GPU contention spikes are typically short.
+        deadline = time() + auto_timeout
+        while true
+            device_idx, available = wait_for_gpu_nvml(required_bytes;
+                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            if !available
+                @warn "No GPU available after $(auto_timeout)s, using CPU"
+                return CPU()
+            end
             try
                 CUDA.device!(device_idx)
                 return GPU()
             catch e
                 _release_gpu_context(device_idx)
-                @warn "GPU $device_idx context creation failed (contention race), using CPU" exception=e
-                return CPU()
+                if time() >= deadline
+                    @warn "GPU context creation failed and timeout reached, using CPU" exception=e
+                    return CPU()
+                end
+                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
             end
-        else
-            @warn "No GPU available after $(auto_timeout)s, using CPU"
-            return CPU()
         end
     end
 end
