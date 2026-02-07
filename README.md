@@ -7,16 +7,6 @@
 
 Fast Maximum Likelihood Estimation of Gaussian PSF parameters for single-molecule localization microscopy. Automatic GPU acceleration with CPU fallback.
 
-## Features
-
-- **Multiple PSF Models**: 2D Gaussian (fixed/variable σ), 3D astigmatic
-- **Physical Units**: All PSF parameters in microns (camera-independent)
-- **Automatic GPU Acceleration**: CUDA GPU support with automatic CPU fallback
-- **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
-- **CRLB Uncertainties**: Cramér-Rao lower bound for each parameter
-- **SMLMData Integration**: Works with SMLMData.jl camera types and ROI structures
-- **Minimal API**: Only 11 exports - clean and focused interface
-
 ## Installation
 
 ```julia
@@ -26,227 +16,107 @@ Pkg.add("GaussMLE")
 
 ## Quick Start
 
-### Basic Fitting
-
-```julia
-using GaussMLE
-using SMLMData
-
-# Your data: (roi_size, roi_size, n_rois)
-data = rand(Float32, 11, 11, 100)
-
-# Fit with defaults (fixed σ Gaussian, auto GPU/CPU)
-fitter = GaussMLEConfig()
-smld, info = fit(data, fitter)  # Returns (BasicSMLD, GaussMLEFitInfo)
-
-# Access results (ecosystem-standard format)
-println("Fitted $(info.n_fits) localizations in $(info.elapsed_s * 1000) ms on $(info.backend)")
-x_positions = [e.x for e in smld.emitters]
-precisions = [e.σ_x for e in smld.emitters]
-println("Mean position: $(mean(x_positions)) μm")
-println("Mean precision: $(mean(precisions)*1000) nm")
-```
-
-### Variable PSF Width
-
 ```julia
 using GaussMLE
 
-# Fit PSF width per localization
-fitter = GaussMLEConfig(psf_model=GaussianXYNBS())
-smld, info = fit(data, fitter)
+# Camera and ROI data (from your detection pipeline)
+camera = IdealCamera(0:255, 0:255, 0.1)  # 100 nm pixels
+batch = ROIBatch(data, x_corners, y_corners, frame_indices, camera)
 
-# Extract PSF widths from Emitter2DFitSigma
-σ_values = [e.σ for e in smld.emitters]  # Microns
-σ_uncertainties = [e.σ_σ for e in smld.emitters]
-println("Mean PSF width: $(mean(σ_values)*1000) nm ± $(mean(σ_uncertainties)*1000) nm")
+# Configure and fit
+fitter = GaussMLEConfig(psf_model=GaussianXYNB(0.13f0))  # σ = 130 nm
+smld, info = fit(batch, fitter)
+
+# Access results
+x = [e.x for e in smld.emitters]       # positions (μm)
+σ_x = [e.σ_x for e in smld.emitters]   # CRLB uncertainties (μm)
+println("$(info.n_fits) fits in $(round(info.elapsed_s*1000, digits=1)) ms on $(info.backend)")
 ```
 
-### GPU Acceleration
+For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
-```julia
-using GaussMLE
+## GaussMLEConfig
 
-# Auto-detect backend (default: uses GPU if available, falls back to CPU)
-fitter = GaussMLEConfig()
+All fitting is configured through `GaussMLEConfig`:
 
-# Force GPU with custom timeout
-fitter = GaussMLEConfig(backend=:gpu, batch_size=5000)
+| Field | Default | Description |
+|-------|---------|-------------|
+| `psf_model` | `GaussianXYNB(0.13f0)` | PSF model (see below) |
+| `backend` | `:auto` | Compute backend: `:cpu`, `:gpu`, or `:auto` |
+| `iterations` | `20` | Newton-Raphson iterations |
+| `constraints` | `nothing` | Parameter bounds/step limits (auto-generated if `nothing`) |
+| `batch_size` | `10_000` | ROIs per GPU batch |
+| `auto_timeout` | `300.0` | Seconds to wait for GPU before CPU fallback (`:auto` mode) |
+| `gpu_timeout` | `Inf` | Seconds to wait for GPU (`:gpu` mode, errors on timeout) |
+| `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` |
 
-# Custom timeout for auto mode (waits 30s for GPU, then falls back to CPU)
-fitter = GaussMLEConfig(backend=:auto, auto_timeout=30.0)
+**Backend semantics:** `:cpu` runs immediately on CPU. `:gpu` waits for a GPU up to `gpu_timeout`, then errors. `:auto` tries GPU up to `auto_timeout`, then falls back to CPU with a warning.
 
-# Progress callback for long waits
-fitter = GaussMLEConfig(
-    backend = :auto,
-    on_wait = (elapsed, available, required) ->
-        @info "Waiting for GPU..." elapsed=round(elapsed, digits=1)
-)
+GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
 
-smld, info = fit(large_dataset, fitter)  # Returns (BasicSMLD, GaussMLEFitInfo)
-println("Executed on $(info.backend)")  # :cpu or :gpu (never :auto)
-```
+## PSF Models
 
-**GPU Scheduling:** GaussMLE uses a contention-aware GPU scheduling system designed for multi-process environments (e.g., parallel analysis scripts sharing a GPU server):
+All PSF parameters are specified in microns for camera-independence.
 
-1. **NVML polling** - Queries GPU memory and utilization without creating CUDA contexts, avoiding OOM during device discovery
-2. **Unified retry loop** - A single loop handles all GPU failure modes (no free memory, context creation race, runtime OOM). On any failure, the CUDA context is released and NVML is re-polled
-3. **Memory pool reclaim** - After successful GPU processing, `CUDA.reclaim()` returns pooled memory to the OS so other processes can use it
+| Model | Constructor | Fitted Parameters | Use Case |
+|-------|-------------|-------------------|----------|
+| `GaussianXYNB` | `GaussianXYNB(σ)` | x, y, N, bg | Fixed-width 2D Gaussian |
+| `GaussianXYNBS` | `GaussianXYNBS()` | x, y, N, bg, σ | Variable-width 2D Gaussian |
+| `GaussianXYNBSXSY` | `GaussianXYNBSXSY()` | x, y, N, bg, σx, σy | Anisotropic 2D Gaussian |
+| `AstigmaticXYZNB` | `AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d)` | x, y, z, N, bg | 3D astigmatic localization |
 
-For `:auto` mode, the loop falls back to CPU on timeout. For `:gpu` mode, it errors. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
+## Output Format
 
-### sCMOS Camera
+`fit()` returns `(BasicSMLD, GaussMLEFitInfo)`. The emitter type in `BasicSMLD` depends on the PSF model:
 
-```julia
-using GaussMLE
-using SMLMData
+| PSF Model | Emitter Type | Extra Fields |
+|-----------|-------------|--------------|
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | pvalue |
+| `GaussianXYNBS` | `Emitter2DFitSigma` | σ, σ_σ, pvalue |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | σx, σy, σ_σx, σ_σy, pvalue |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
 
-# Real camera calibration
-camera = SMLMData.SCMOSCamera(...)
+All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `frame`.
 
-# Generate test data or use real ROIs
-batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=1000)
+`GaussMLEFitInfo` fields:
 
-# Fit - automatic ADU→electrons preprocessing
-fitter = GaussMLEConfig()
-smld, info = fit(batch, fitter)  # Returns (BasicSMLD, GaussMLEFitInfo) with camera coordinates
-```
-
-### 3D Astigmatic Localization
-
-```julia
-using GaussMLE
-
-# Astigmatic PSF calibration (all spatial params in microns)
-psf_3d = AstigmaticXYZNB{Float32}(
-    0.13f0, 0.13f0,   # σx₀, σy₀ (μm)
-    0.05f0, -0.05f0,  # Ax, Ay
-    0.01f0, -0.01f0,  # Bx, By
-    0.2f0,            # γ (μm)
-    0.5f0             # d (μm)
-)
-
-fitter = GaussMLEConfig(psf_model=psf_3d)
-smld, info = fit(data, fitter)  # Returns (BasicSMLD, GaussMLEFitInfo)
-
-# Access 3D positions
-z_positions = [e.z for e in smld.emitters]  # Microns
-z_precisions = [e.σ_z for e in smld.emitters]
-```
-
-## Exported API (12 Functions/Types)
-
-### Core Functions
-- `fit(data, fitter)` → **Returns (SMLMData.BasicSMLD, GaussMLEFitInfo)** tuple
-- `fit(batch; psf_model=..., iterations=...)` → Convenience form with kwargs
-- `generate_roi_batch(camera, psf; kwargs...)` - Generate synthetic data
-
-### Main Types
-- `GaussMLEConfig(; psf_model, backend, iterations, constraints, batch_size, auto_timeout, gpu_timeout, on_wait)`
-- `GaussMLEFitInfo` - Metadata about fit: elapsed_s, backend, device_id, n_fits, n_converged, batch_size, n_batches, memory_per_batch
-
-### PSF Models
-- `GaussianXYNB(σ)` - Fixed σ (4 params: x, y, N, bg)
-- `GaussianXYNBS(σ₀)` - Variable σ (5 params: x, y, N, bg, σ)
-- `GaussianXYNBSXSY(σx₀, σy₀)` - Independent σx, σy (6 params: x, y, N, bg, σx, σy)
-- `AstigmaticXYZNB{T}(...)` - 3D astigmatic (5 params: x, y, z, N, bg)
-
-### Custom Emitter Types
-- `Emitter2DFitSigma{T}` - 2D emitter with fitted σ (for GaussianXYNBS)
-- `Emitter2DFitSigmaXY{T}` - 2D emitter with fitted σx, σy (for GaussianXYNBSXSY)
-
-### SMLMData Types (Re-exported)
-- `ROIBatch` - Batch of ROIs with camera context
-- `SingleROI` - Individual ROI
-
-### Output Format
-
-**fit() returns (SMLMData.BasicSMLD, GaussMLEFitInfo)** tuple with model-specific emitter types:
-
-```julia
-smld, info = fit(data, fitter)
-
-# GaussMLEFitInfo contains execution metadata
-println("Elapsed: $(info.elapsed_s * 1000) ms")
-println("Backend: $(info.backend)")  # :cpu or :gpu (never :auto)
-println("Device: $(info.device_id)")  # -1 for CPU, 0+ for GPU
-println("Fits: $(info.n_fits)")
-
-# All models: Access standard localization parameters
-x_positions = [e.x for e in smld.emitters]  # Microns
-photons = [e.photons for e in smld.emitters]
-precisions = [e.σ_x for e in smld.emitters]  # Microns
-
-# GaussianXYNBS: Access fitted PSF width (Emitter2DFitSigma)
-fitter = GaussMLEConfig(psf_model=GaussianXYNBS())
-smld, info = fit(data, fitter)
-σ_values = [e.σ for e in smld.emitters]  # Microns
-σ_errors = [e.σ_σ for e in smld.emitters]  # CRLB uncertainties
-
-# GaussianXYNBSXSY: Access anisotropic PSF widths (Emitter2DFitSigmaXY)
-fitter = GaussMLEConfig(psf_model=GaussianXYNBSXSY())
-smld, info = fit(data, fitter)
-σx_values = [e.σx for e in smld.emitters]  # Microns
-σy_values = [e.σy for e in smld.emitters]  # Microns
-
-# AstigmaticXYZNB: Access 3D positions (Emitter3DFit)
-fitter = GaussMLEConfig(psf_model=AstigmaticXYZNB{Float32}(...))
-smld, info = fit(data, fitter)
-z_positions = [e.z for e in smld.emitters]  # Microns
-z_errors = [e.σ_z for e in smld.emitters]  # CRLB uncertainties
-```
-
-**All emitter types subtype `SMLMData.AbstractEmitter`** for full ecosystem compatibility.
-
-### Advanced Features (Qualified Access)
-
-Internal functions use `GaussMLE.` prefix:
-```julia
-# Custom constraints
-constraints = GaussMLE.ParameterConstraints{4}(lower, upper, max_step)
-
-# Direct device types (prefer backend symbols :cpu/:gpu/:auto)
-device = GaussMLE.GPU()
-```
-
-## Examples
-
-See the `examples/` directory for complete working examples:
-- `basic_fitting.jl` - Simple fitting workflow
-- `scmos_camera.jl` - sCMOS noise model
-- `gpu_acceleration.jl` - GPU batch processing
-- `astigmatic_3d.jl` - 3D localization
-
-Run examples:
-```bash
-julia --project=examples examples/basic_fitting.jl
-```
+| Field | Description |
+|-------|-------------|
+| `elapsed_s` | Wall time (seconds) |
+| `backend` | `:cpu` or `:gpu` (never `:auto`) |
+| `device_id` | GPU index (0-based) or -1 for CPU |
+| `n_fits` | Number of ROIs processed |
+| `n_converged` | Number converged (currently = n_fits) |
+| `batch_size` | Actual batch size used |
+| `n_batches` | Number of batches |
+| `memory_per_batch` | Estimated bytes per batch |
 
 ## Performance
 
-- CPU: ~100K fits/second (typical workstation, 11×11 ROIs)
-- GPU: ~10M fits/second (NVIDIA RTX 4090, batch size 50K)
-- Scales automatically with batch size and available memory
+Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 11x11 ROIs, 10K fits:
 
-## Documentation
+| Model | CPU (fits/s) | GPU (fits/s) |
+|-------|-------------|--------------|
+| GaussianXYNB (ideal) | 2,120 | 401,572 |
+| GaussianXYNB (sCMOS) | 2,077 | 261,590 |
+| GaussianXYNBS (ideal) | 1,633 | 215,745 |
+| AstigmaticXYZNB (ideal) | 1,341 | 265,083 |
 
-Full documentation available at: https://JuliaSMLM.github.io/GaussMLE.jl/dev/
-
-Topics covered:
-- API reference with all PSF models
-- Coordinate systems and conventions
-- Custom constraints and initialization
-- Integration with SMLMData.jl ecosystem
-- Performance optimization guide
+GPU throughput scales with batch size; these numbers use the default batch size of 10K. Run `Pkg.test("GaussMLE")` locally to benchmark your hardware.
 
 ## Algorithm Reference
 
-Implements the MLE algorithm from:
+MLE fitting algorithm:
 
-> Smith, C., Joseph, N., Rieger, B. et al. "Fast, single-molecule localization that achieves theoretically minimum uncertainty." *Nat Methods* **7**, 373–375 (2010). [DOI: 10.1038/nmeth.1449](https://doi.org/10.1038/nmeth.1449)
+> Smith, C., Joseph, N., Rieger, B. et al. "Fast, single-molecule localization that achieves theoretically minimum uncertainty." *Nat Methods* **7**, 373-375 (2010). [DOI: 10.1038/nmeth.1449](https://doi.org/10.1038/nmeth.1449)
+
+sCMOS pixel-dependent noise model:
+
+> Huang, F., Hartwich, T.M.P., Rivera-Molina, F.E. et al. "Video-rate nanoscopy using sCMOS camera-specific single-molecule localization algorithms." *Nat Methods* **10**, 653-658 (2013). [DOI: 10.1038/nmeth.2488](https://doi.org/10.1038/nmeth.2488)
 
 ## Related Packages
 
+- **[SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl)** - Complete SMLM workflow (detection + fitting + rendering)
 - **[SMLMData.jl](https://github.com/JuliaSMLM/SMLMData.jl)** - Core data types for SMLM
 - **[SMLMSim.jl](https://github.com/JuliaSMLM/SMLMSim.jl)** - SMLM data simulation
 - **[MicroscopePSFs.jl](https://github.com/JuliaSMLM/MicroscopePSFs.jl)** - PSF models
