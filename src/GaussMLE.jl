@@ -13,7 +13,8 @@ using Distributions: Chisq, cdf, Poisson  # Only import what we need
 import StatsAPI: fit  # Extend canonical Julia fit function
 
 # Import commonly used types from SMLMData (ecosystem standard)
-using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter
+using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter,
+                AbstractSMLMConfig, AbstractSMLMInfo
 
 import Adapt
 
@@ -40,7 +41,7 @@ include("interface.jl")  # User-facing API
 # Main exports - minimal API for common workflows
 # Camera types come from SMLMData (use SMLMData.SCMOSCamera, etc.)
 # ROIBatch and SingleROI come from SMLMData (ecosystem standard)
-export fit, GaussMLEFitter
+export fit, GaussMLEConfig, GaussMLEFitInfo
 export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
 export generate_roi_batch
 

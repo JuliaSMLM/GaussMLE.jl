@@ -116,7 +116,7 @@ end
 println("\nStep 4: Fitting with GaussMLE")
 println("-" ^ 50)
 
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),
     device = :cpu,
     iterations = 20

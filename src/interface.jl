@@ -55,7 +55,7 @@ function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where T
 end
 
 """
-    GaussMLEFitter{P,PC}
+    GaussMLEConfig{P,PC}
 
 Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob parameters.
 
@@ -72,7 +72,7 @@ Main type for configuring and performing Maximum Likelihood Estimation of Gaussi
 # See also
 [`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
 """
-struct GaussMLEFitter{P<:PSFModel, PC<:ParameterConstraints, W}
+struct GaussMLEConfig{P<:PSFModel, PC<:ParameterConstraints, W} <: AbstractSMLMConfig
     backend::Symbol
     psf_model::P
     iterations::Int
@@ -84,7 +84,7 @@ struct GaussMLEFitter{P<:PSFModel, PC<:ParameterConstraints, W}
 end
 
 """
-    GaussMLEFitter(; kwargs...)
+    GaussMLEConfig(; kwargs...)
 
 Create a fitter for Gaussian MLE with sensible defaults.
 
@@ -110,19 +110,19 @@ Camera noise model is determined by the ROIBatch type:
 # Examples
 ```julia
 # Simple usage with auto GPU detection
-fitter = GaussMLEFitter()
+fitter = GaussMLEConfig()
 
 # Force CPU execution
-cpu_fitter = GaussMLEFitter(backend = :cpu)
+cpu_fitter = GaussMLEConfig(backend = :cpu)
 
 # Variable sigma model with more iterations
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
     iterations = 30
 )
 
 # Explicit GPU with custom timeout
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     backend = :gpu,
     gpu_timeout = 60.0,
     on_wait = (e, a, r) -> @info "Waiting..." elapsed=e
@@ -132,7 +132,7 @@ fitter = GaussMLEFitter(
 # See also
 [`fit`](@ref), [`GaussianXYNB`](@ref), [`GaussianXYNBS`](@ref)
 """
-function GaussMLEFitter(;
+function GaussMLEConfig(;
     psf_model = GaussianXYNB(0.13f0),
     backend::Symbol = :auto,
     device = nothing,  # deprecated, use backend
@@ -164,7 +164,7 @@ function GaussMLEFitter(;
         constraints = default_constraints(psf_model, 11)  # typical 11x11 box
     end
 
-    return GaussMLEFitter(backend, psf_model, iterations, constraints, batch_size,
+    return GaussMLEConfig(backend, psf_model, iterations, constraints, batch_size,
                           Float64(auto_timeout), Float64(gpu_timeout), on_wait)
 end
 
@@ -190,37 +190,247 @@ function estimate_batch_memory(batch_size::Integer, box_size::Integer, n_params:
 end
 
 """
-    fit(fitter::GaussMLEFitter, data::AbstractArray{T,3}; variance_map=nothing) -> GaussMLEResults
+    compute_cpu_batch_size(n_fits, box_size, n_params; memory_multiplier=4)
+
+Compute optimal batch size for CPU processing based on available memory.
+Returns n_fits if all data fits in memory, otherwise a smaller batch size.
+"""
+function compute_cpu_batch_size(n_fits::Integer, box_size::Integer, n_params::Integer;
+                                 memory_multiplier::Integer=4)
+    free_mem = Sys.free_memory()
+    memory_per_roi = (box_size^2 + n_params * 2 + 3 + 1) * 4  # data + results + uncertainties + covariances + llr
+    total_memory_needed = n_fits * memory_per_roi * memory_multiplier
+
+    if total_memory_needed <= free_mem
+        return n_fits  # Process all at once
+    else
+        # Compute batch size that fits in 50% of free memory (conservative)
+        usable_mem = free_mem ÷ 2
+        batch_size = max(1, Int(usable_mem ÷ (memory_per_roi * memory_multiplier)))
+        return min(batch_size, n_fits)
+    end
+end
+
+"""
+    _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
+                     data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
+                     fitter) -> (actual_backend, device_id, actual_batch_size, actual_n_batches)
+
+Internal helper that runs the MLE kernel on CPU or GPU with appropriate batching.
+Handles all backend selection and batch management logic.
+
+# Arguments
+- Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods
+- Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners, y_corners
+- fitter: GaussMLEConfig with backend/batching configuration
+
+# Returns
+Tuple of (actual_backend::Symbol, device_id::Int, actual_batch_size::Int, actual_n_batches::Int)
+for use in GaussMLEFitInfo construction.
+"""
+function _run_mle_kernel!(
+    results::Matrix{Float32},
+    uncertainties::Matrix{Float32},
+    covariances::Matrix{Float32},
+    log_likelihoods::Vector{Float32},
+    data::Array{Float32,3},
+    psf_pixels,
+    use_scmos::Val,
+    variance_map::Matrix{Float32},
+    x_corners::AbstractVector{Int32},
+    y_corners::AbstractVector{Int32},
+    fitter::GaussMLEConfig
+)
+    n_fits = size(data, 3)
+    n_params = size(results, 1)
+    box_size = size(data, 1)
+
+    # Track for GaussMLEFitInfo
+    actual_backend = :cpu
+    device_id = -1
+    actual_batch_size = 0
+    actual_n_batches = 0
+
+    # --- CPU fast path ---
+    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && !CUDA.functional())
+
+    if fitter.backend == :gpu && !CUDA.functional()
+        error("GPU requested but CUDA not functional")
+    end
+
+    if !use_cpu
+        # --- Unified GPU retry loop ---
+        # Handles: (1) no free memory (NVML waits), (2) TOCTOU context creation
+        # race, (3) runtime OOM - all in one loop. On any GPU failure, release
+        # context and re-poll NVML. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
+        deadline = time() + timeout
+        actual_batch = min(fitter.batch_size, n_fits)
+        required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+        gpu_succeeded = false
+
+        while !gpu_succeeded && time() < deadline
+            # Poll NVML for available GPU
+            dev_idx, available = wait_for_gpu_nvml(required_memory;
+                timeout=max(0.0, deadline - time()), on_wait=fitter.on_wait)
+            if !available
+                break  # Timeout reached
+            end
+
+            try
+                # Acquire GPU context
+                CUDA.device!(dev_idx)
+                gpu_backend = CUDABackend()
+
+                # Process all batches on GPU
+                actual_batch_size = min(fitter.batch_size, n_fits)
+                actual_n_batches = cld(n_fits, fitter.batch_size)
+                for batch_start in 1:fitter.batch_size:n_fits
+                    batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+                    batch_size_actual = batch_end - batch_start + 1
+
+                    batch_data = data[:, :, batch_start:batch_end]
+                    d_batch_data = KernelAbstractions.allocate(gpu_backend, Float32, size(batch_data))
+                    copyto!(d_batch_data, batch_data)
+
+                    d_variance_map = KernelAbstractions.allocate(gpu_backend, Float32, size(variance_map))
+                    copyto!(d_variance_map, variance_map)
+
+                    batch_x_corners = x_corners[batch_start:batch_end]
+                    batch_y_corners = y_corners[batch_start:batch_end]
+                    d_x_corners = KernelAbstractions.allocate(gpu_backend, Int32, length(batch_x_corners))
+                    d_y_corners = KernelAbstractions.allocate(gpu_backend, Int32, length(batch_y_corners))
+                    copyto!(d_x_corners, batch_x_corners)
+                    copyto!(d_y_corners, batch_y_corners)
+
+                    d_results = KernelAbstractions.allocate(gpu_backend, Float32, (n_params, batch_size_actual))
+                    d_uncertainties = KernelAbstractions.allocate(gpu_backend, Float32, (n_params, batch_size_actual))
+                    d_covariances = KernelAbstractions.allocate(gpu_backend, Float32, (3, batch_size_actual))
+                    d_log_likelihoods = KernelAbstractions.allocate(gpu_backend, Float32, batch_size_actual)
+
+                    kernel = unified_gaussian_mle_kernel!(gpu_backend)
+                    kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                           d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
+                           fitter.constraints, fitter.iterations,
+                           ndrange=batch_size_actual)
+
+                    KernelAbstractions.synchronize(gpu_backend)
+
+                    results[:, batch_start:batch_end] = Array(d_results)
+                    uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
+                    covariances[:, batch_start:batch_end] = Array(d_covariances)
+                    log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+                end
+
+                # All batches succeeded - reclaim pool memory so NVML shows it as free
+                # for other processes competing for the same GPU
+                CUDA.reclaim()
+                gpu_succeeded = true
+                actual_backend = :gpu
+                device_id = Int(CUDA.device().handle)
+            catch e
+                # Release context to free memory, then loop back to poll NVML
+                @warn "GPU error on device $dev_idx, releasing context" exception=(e, catch_backtrace())
+                _release_gpu_context(dev_idx)
+                if fitter.backend == :gpu && time() >= deadline
+                    rethrow()
+                end
+            end
+        end
+
+        if !gpu_succeeded
+            if fitter.backend == :gpu
+                error("GPU failed after $(timeout)s timeout")
+            end
+            # :auto falls through to CPU below
+            @warn "GPU unavailable after $(timeout)s, using CPU"
+            use_cpu = true
+        end
+    end
+
+    # --- CPU path ---
+    if use_cpu
+        actual_backend = :cpu
+        device_id = -1
+        ka_backend = KernelAbstractions.CPU()
+        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
+
+        if cpu_batch_size >= n_fits
+            # Process all at once
+            actual_n_batches = 1
+            kernel = unified_gaussian_mle_kernel!(ka_backend)
+            kernel(results, uncertainties, covariances, log_likelihoods,
+                   data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
+                   fitter.constraints, fitter.iterations,
+                   ndrange=n_fits)
+            KernelAbstractions.synchronize(ka_backend)
+        else
+            # Batch processing for memory efficiency
+            actual_n_batches = cld(n_fits, cpu_batch_size)
+            for batch_start in 1:cpu_batch_size:n_fits
+                batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
+                batch_size_actual = batch_end - batch_start + 1
+
+                batch_data = data[:, :, batch_start:batch_end]
+                batch_x_corners = x_corners[batch_start:batch_end]
+                batch_y_corners = y_corners[batch_start:batch_end]
+
+                batch_results = @view results[:, batch_start:batch_end]
+                batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
+                batch_covariances = @view covariances[:, batch_start:batch_end]
+                batch_llr = @view log_likelihoods[batch_start:batch_end]
+
+                kernel = unified_gaussian_mle_kernel!(ka_backend)
+                kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
+                       batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
+                       fitter.constraints, fitter.iterations,
+                       ndrange=batch_size_actual)
+                KernelAbstractions.synchronize(ka_backend)
+
+                batch_data = nothing
+                GC.gc(false)
+            end
+        end
+    end
+
+    return (actual_backend, device_id, actual_batch_size, actual_n_batches)
+end
+
+"""
+    fit(data::AbstractArray{T,3}, fitter::GaussMLEConfig; variance_map=nothing) -> (BasicSMLD, GaussMLEFitInfo)
 
 Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 
 # Arguments
-- `fitter::GaussMLEFitter`: Configured fitter object
 - `data::AbstractArray{T,3}`: ROI data as (roi_size, roi_size, n_rois) array
+- `fitter::GaussMLEConfig`: Configured fitter object
 
 # Keyword Arguments
 - `variance_map=nothing`: Optional sCMOS variance map (will override fitter's camera model)
 
 # Returns
-- `GaussMLEResults`: Fitted parameters, uncertainties, and log-likelihoods
+- `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
 
 # Examples
 ```julia
 # Fit 1000 ROIs
 data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-results = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+smld, info = fit(data, fitter)
 
 # Access results
-println("Mean x position: ", mean(results.x))
-println("Mean localization precision: ", mean(results.x_error))
+println("Fitted \$(info.n_fits) ROIs in \$(info.elapsed_s * 1000) ms")
+println("Mean x position: ", mean([e.x for e in smld.emitters]))
 ```
 
 # See also
-[`GaussMLEFitter`](@ref), [`GaussMLEResults`](@ref)
+[`GaussMLEConfig`](@ref), [`GaussMLEFitInfo`](@ref)
 """
-function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
+function fit(data::AbstractArray{T,3}, fitter::GaussMLEConfig;
              variance_map=nothing) where T
+    # Start timing
+    t0 = time_ns()
 
     # Validate input
     validate_fit_input(data, nothing)
@@ -250,73 +460,12 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     x_corners = Int32[1 + (i-1) * box_size for i in 1:n_fits]
     y_corners = fill(Int32(1), n_fits)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    # Use unified kernel for both CPU and GPU
-    if device isa CPU
-        # Use unified kernel on CPU
-        ka_backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, covariances, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
-               fitter.constraints, fitter.iterations,
-               ndrange=n_fits)
-        KernelAbstractions.synchronize(ka_backend)
-    else
-        # Use unified kernel on GPU
-        # Process in batches for memory efficiency
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            # Get batch data
-            batch_data = data_f32[:, :, batch_start:batch_end]
-
-            # Move batch to device using KernelAbstractions adapt
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            # Move variance map to device (same for all batches)
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(var_map))
-            copyto!(d_variance_map, var_map)
-
-            # Move batch corners to device
-            batch_x_corners = x_corners[batch_start:batch_end]
-            batch_y_corners = y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            # Allocate device arrays for results
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            # Launch unified kernel (works on GPU!)
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            # Wait for kernel completion
-            KernelAbstractions.synchronize(backend(device))
-
-            # Copy results back (need to copy to host arrays first)
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     # χ² = -2×LLR, df = n_pixels - n_params
@@ -342,22 +491,30 @@ function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3};
     batch = SMLMData.ROIBatch(data_f32, x_corners_smld, y_corners_smld, frame_indices, camera_smld)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, batch, fitter.psf_model)
 
-    # Return BasicSMLD
-    return to_smld(loc_result, batch)
+    # Calculate elapsed time and create GaussMLEFitInfo
+    elapsed_s = (time_ns() - t0) / 1e9
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = GaussMLEFitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+
+    # Return tuple (BasicSMLD, GaussMLEFitInfo)
+    return (to_smld(loc_result, batch), info)
 end
 
 # Convenience function for single ROI fitting
-function fit(fitter::GaussMLEFitter, roi::AbstractMatrix{T}) where T
+function fit(roi::AbstractMatrix{T}, fitter::GaussMLEConfig) where T
     # Reshape to 3D array with single ROI
     data = reshape(roi, size(roi, 1), size(roi, 2), 1)
-    smld = fit(fitter, data)
+    smld, info = fit(data, fitter)
 
-    # Return first emitter
-    return smld.emitters[1]
+    # Return first emitter and info
+    return (smld.emitters[1], info)
 end
 
-# Fit method for ROIBatch - returns BasicSMLD with real camera coordinates
-function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}) where {T,N,A}
+# Fit method for ROIBatch - returns (BasicSMLD, GaussMLEFitInfo) with real camera coordinates
+function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLEConfig) where {T,N,A}
+    # Start timing
+    t0 = time_ns()
+
     # Fit the raw data with Poisson-only likelihood
     n_fits = size(roi_batch.data, 3)
     n_params = length(fitter.psf_model)
@@ -380,61 +537,12 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
     # Use unified kernel on CPU/GPU
     data_f32 = convert(Array{Float32,3}, roi_batch.data)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    if device isa CPU
-        ka_backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, covariances, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
-               fitter.constraints, fitter.iterations,
-               ndrange=n_fits)
-        KernelAbstractions.synchronize(ka_backend)
-    else
-        # GPU batch processing
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
-
-            batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-            batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            KernelAbstractions.synchronize(backend(device))
-
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     pvalues = Vector{Float32}(undef, n_fits)
@@ -449,11 +557,20 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealC
 
     # Use real ROIBatch for coordinate conversion (preserves corners!)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
-    return to_smld(loc_result, roi_batch)
+
+    # Calculate elapsed time and create GaussMLEFitInfo
+    elapsed_s = (time_ns() - t0) / 1e9
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = GaussMLEFitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+
+    return (to_smld(loc_result, roi_batch), info)
 end
 
 # Fit method for ROIBatch with SMLMData.SCMOSCamera
-function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}) where {T,N,A}
+function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLEConfig) where {T,N,A}
+    # Start timing
+    t0 = time_ns()
+
     # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
     data_electrons = to_electrons(roi_batch.data, roi_batch.camera, roi_batch.x_corners, roi_batch.y_corners)
     variance_map = extract_variance_map(roi_batch.camera, Float32)
@@ -478,61 +595,12 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
     # Use unified kernel on CPU/GPU (data already in electrons)
     data_f32 = convert(Array{Float32,3}, data_electrons)
 
-    # Select backend with GPU memory wait
-    actual_batch = min(fitter.batch_size, n_fits)
-    required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
-    device = select_backend(fitter.backend, required_memory;
-                           auto_timeout=fitter.auto_timeout,
-                           gpu_timeout=fitter.gpu_timeout,
-                           on_wait=fitter.on_wait)
-
-    if device isa CPU
-        ka_backend = KernelAbstractions.CPU()
-        kernel = unified_gaussian_mle_kernel!(ka_backend)
-        kernel(results, uncertainties, covariances, log_likelihoods,
-               data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
-               fitter.constraints, fitter.iterations,
-               ndrange=n_fits)
-        KernelAbstractions.synchronize(ka_backend)
-    else
-        # GPU batch processing
-        for batch_start in 1:fitter.batch_size:n_fits
-            batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
-            batch_size_actual = batch_end - batch_start + 1
-
-            batch_data = data_f32[:, :, batch_start:batch_end]
-            d_batch_data = KernelAbstractions.allocate(backend(device), Float32, size(batch_data))
-            copyto!(d_batch_data, batch_data)
-
-            d_variance_map = KernelAbstractions.allocate(backend(device), Float32, size(variance_map))
-            copyto!(d_variance_map, variance_map)
-
-            batch_x_corners = roi_batch.x_corners[batch_start:batch_end]
-            batch_y_corners = roi_batch.y_corners[batch_start:batch_end]
-            d_x_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_x_corners))
-            d_y_corners = KernelAbstractions.allocate(backend(device), Int32, length(batch_y_corners))
-            copyto!(d_x_corners, batch_x_corners)
-            copyto!(d_y_corners, batch_y_corners)
-
-            d_results = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_uncertainties = KernelAbstractions.allocate(backend(device), Float32, (n_params, batch_size_actual))
-            d_covariances = KernelAbstractions.allocate(backend(device), Float32, (3, batch_size_actual))
-            d_log_likelihoods = KernelAbstractions.allocate(backend(device), Float32, batch_size_actual)
-
-            kernel = unified_gaussian_mle_kernel!(backend(device))
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                   fitter.constraints, fitter.iterations,
-                   ndrange=batch_size_actual)
-
-            KernelAbstractions.synchronize(backend(device))
-
-            results[:, batch_start:batch_end] = Array(d_results)
-            uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
-            covariances[:, batch_start:batch_end] = Array(d_covariances)
-            log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
-        end
-    end
+    # Run MLE kernel with batching
+    actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
+        results, uncertainties, covariances, log_likelihoods,
+        data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners, roi_batch.y_corners,
+        fitter
+    )
 
     # Compute p-values from log-likelihood ratios
     pvalues = Vector{Float32}(undef, n_fits)
@@ -547,9 +615,71 @@ function fit(fitter::GaussMLEFitter, roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSC
 
     # Use original ROIBatch for coordinate conversion (preserves corners and original camera!)
     loc_result = create_localization_result(results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch, fitter.psf_model)
-    return to_smld(loc_result, roi_batch)
+
+    # Calculate elapsed time and create GaussMLEFitInfo
+    elapsed_s = (time_ns() - t0) / 1e9
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    info = GaussMLEFitInfo(elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size, actual_n_batches, memory_per_batch)
+
+    return (to_smld(loc_result, roi_batch), info)
+end
+
+"""
+    fit(batch::ROIBatch; psf_model=GaussianXYNB(), iterations=20, backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
+
+Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
+Kwargs match GaussMLEConfig fields exactly.
+
+# Arguments
+- `batch::ROIBatch`: Input ROI data with camera calibration
+
+# Keyword Arguments
+- `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
+- `iterations=20`: Number of Newton-Raphson iterations
+- `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
+- `constraints=nothing`: Parameter constraints (uses defaults if nothing)
+- `batch_size=10_000`: Batch size for GPU processing
+- `auto_timeout=30.0`: Seconds to wait for GPU in auto mode
+- `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
+- `on_wait=nothing`: Callback for GPU wait progress
+
+# Returns
+- `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
+
+# Examples
+```julia
+# Simple fit with defaults
+smld, info = fit(batch)
+
+# Custom model and iterations
+smld, info = fit(batch; psf_model=GaussianXYNBS(), iterations=30)
+```
+
+# See also
+[`GaussMLEConfig`](@ref), [`GaussMLEFitInfo`](@ref)
+"""
+function fit(batch::ROIBatch;
+             psf_model = GaussianXYNB(0.13f0),
+             iterations = 20,
+             backend = :auto,
+             constraints = nothing,
+             batch_size = 10_000,
+             auto_timeout = 30.0,
+             gpu_timeout = Inf,
+             on_wait = nothing)
+    fitter = GaussMLEConfig(;
+        psf_model = psf_model,
+        backend = backend,
+        iterations = iterations,
+        constraints = constraints,
+        batch_size = batch_size,
+        auto_timeout = auto_timeout,
+        gpu_timeout = gpu_timeout,
+        on_wait = on_wait
+    )
+    return fit(batch, fitter)
 end
 
 
 # Export API
-export GaussMLEFitter, fit
+export GaussMLEConfig, fit, GaussMLEFitInfo

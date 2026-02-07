@@ -26,8 +26,8 @@ batch = generate_roi_batch(
 )
 
 # 3. Create fitter and fit
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+smld, info = fit(batch, fitter)
 
 # 4. Results in microns (camera pixel_size used for conversion)
 for e in smld.emitters[1:3]
@@ -85,8 +85,8 @@ using GaussMLE
 using Statistics
 
 # Fit PSF width per localization
-fitter = GaussMLEFitter(psf_model = GaussianXYNBS())
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
+smld, info = fit(data, fitter)
 
 # Access fitted sigma from Emitter2DFitSigma type
 sigmas = [e.σ for e in smld.emitters]
@@ -98,9 +98,10 @@ println("Mean sigma: $(mean(sigmas)) microns")
 ```julia
 using GaussMLE
 
-# Force GPU (auto-fallback if unavailable)
-fitter = GaussMLEFitter(device = :gpu, batch_size = 5000)
-smld = fit(fitter, large_dataset)
+# Auto-detect backend (default: GPU if available, CPU fallback)
+fitter = GaussMLEConfig(backend = :auto, batch_size = 5000)
+smld, info = fit(large_dataset, fitter)
+println("Ran on $(info.backend)")  # :cpu or :gpu
 ```
 
 ### sCMOS Camera
@@ -122,8 +123,8 @@ camera = SCMOSCamera(
 batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois = 1000)
 
 # Fit - automatically uses variance map from camera
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+smld, info = fit(batch, fitter)
 ```
 
 ### 3D Astigmatic Localization
@@ -140,8 +141,8 @@ psf_3d = AstigmaticXYZNB{Float32}(
     0.4f0            # d
 )
 
-fitter = GaussMLEFitter(psf_model = psf_3d)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf_3d)
+smld, info = fit(data, fitter)
 
 # Z positions from Emitter3DFitGaussMLE type
 z_positions = [e.z for e in smld.emitters]
@@ -152,10 +153,10 @@ z_precision = [e.sigma_z for e in smld.emitters]
 
 ### BasicSMLD with Emitter Types
 
-`fit()` returns `SMLMData.BasicSMLD` containing a vector of emitter structs:
+`fit()` returns a tuple of `(SMLMData.BasicSMLD, NamedTuple)` containing a vector of emitter structs and fit metadata:
 
 ```julia
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Access emitters
 for e in smld.emitters
@@ -193,7 +194,7 @@ Use the `@filter` macro from SMLMData for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)

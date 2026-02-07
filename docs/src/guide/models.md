@@ -21,8 +21,8 @@ using GaussMLE
 psf = GaussianXYNB(0.13f0)  # sigma in microns
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf)
+smld, info = fit(data, fitter)
 ```
 
 **Use this model when:**
@@ -47,8 +47,8 @@ using GaussMLE
 psf = GaussianXYNBS()
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf)
+smld, info = fit(data, fitter)
 
 # Access fitted sigma from emitters
 sigmas = [e.sigma for e in smld.emitters]
@@ -78,8 +78,8 @@ using GaussMLE
 psf = GaussianXYNBSXSY()
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf)
+smld, info = fit(data, fitter)
 
 # Access fitted sigma_x and sigma_y
 sigma_x = [e.sigma_x for e in smld.emitters]
@@ -115,8 +115,8 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Use in fitter
-fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+smld, info = fit(data, fitter)
 
 # Access z-position from emitters
 z_positions = [e.z for e in smld.emitters]
@@ -197,10 +197,10 @@ using Statistics
 psf = GaussianXYNB(0.13f0)
 
 # Create fitter
-fitter = GaussMLEFitter(psf_model = psf)
+fitter = GaussMLEConfig(psf_model = psf)
 
 # Fit data
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract results
 x_positions = [e.x for e in smld.emitters]
@@ -218,8 +218,8 @@ using Statistics
 # Variable sigma model
 psf = GaussianXYNBS()
 
-fitter = GaussMLEFitter(psf_model = psf)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf)
+smld, info = fit(data, fitter)
 
 # Analyze PSF width distribution
 sigmas = [e.sigma for e in smld.emitters]
@@ -246,8 +246,8 @@ psf = AstigmaticXYZNB{Float32}(
     0.10f0           # d
 )
 
-fitter = GaussMLEFitter(psf_model = psf, iterations = 30)
-smld = fit(fitter, data)
+fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+smld, info = fit(data, fitter)
 
 # Extract 3D positions
 x = [e.x for e in smld.emitters]
@@ -293,11 +293,11 @@ using GaussMLE
 using Statistics
 
 # Fit with both models
-fitter_fixed = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-fitter_var = GaussMLEFitter(psf_model = GaussianXYNBS())
+fitter_fixed = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+fitter_var = GaussMLEConfig(psf_model = GaussianXYNBS())
 
-smld_fixed = fit(fitter_fixed, data)
-smld_var = fit(fitter_var, data)
+smld_fixed, info_fixed = fit(data, fitter_fixed)
+smld_var, info_var = fit(data, fitter_var)
 
 # Compare position estimates
 x_fixed = [e.x for e in smld_fixed.emitters]

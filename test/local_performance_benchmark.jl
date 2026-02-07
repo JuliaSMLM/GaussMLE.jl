@@ -189,19 +189,18 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         )
 
         # Create fitter (camera type determined by ROIBatch)
-        device_obj = config.device_symbol == :cpu ? GaussMLE.CPU() : GaussMLE.GPU()
-        fitter = GaussMLE.GaussMLEFitter(
+        fitter = GaussMLE.GaussMLEConfig(
             psf_model = config.psf_model,
-            device = device_obj,
+            backend = config.device_symbol,
             iterations = 20
         )
 
         # Warmup run (compile kernels, cache data)
-        GaussMLE.fit(fitter, warmup_batch)
+        GaussMLE.fit(warmup_batch, fitter)
 
         # Benchmark run with timing
         t_start = time()
-        smld = GaussMLE.fit(fitter, benchmark_batch)
+        smld, _info = GaussMLE.fit(benchmark_batch, fitter)
         t_elapsed = time() - t_start
 
         fits_per_second = benchmark / t_elapsed

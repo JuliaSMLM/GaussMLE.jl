@@ -54,7 +54,7 @@ println("  Frames covered: $(minimum(roi_batch.frame_indices)) to $(maximum(roi_
 # 2. Fit with ideal camera model
 println("\n2. Fitting with ideal camera model...")
 
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = psf_model,
     device = CPU(),
     iterations = 20

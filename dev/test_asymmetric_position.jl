@@ -47,7 +47,7 @@ for k in 1:n_rois
 end
 
 # Fit with many iterations for convergence
-fitter = GaussMLEFitter(psf_model=psf, iterations=50)
+fitter = GaussMLEConfig(psf_model=psf, iterations=50)
 results = fit(fitter, data)
 
 # Extract fitted values (convert from microns to ROI pixels)

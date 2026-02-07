@@ -79,7 +79,7 @@ function run_single_benchmark(psf_model, device, camera_type)
         
         # Create fitter
         device_obj = device == :cpu ? GaussMLE.CPU() : GaussMLE.GPU()
-        fitter = GaussMLE.GaussMLEFitter(
+        fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf_model,
             device = device_obj,
             iterations = 20

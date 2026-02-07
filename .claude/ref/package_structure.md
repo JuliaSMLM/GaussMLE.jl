@@ -266,7 +266,7 @@ end
 
 ```julia
 # Main fitter type
-struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C<:CameraModel}
+struct GaussMLEConfig{D<:ComputeDevice, P<:PSFModel, C<:CameraModel}
     device::D
     psf_model::P
     camera_model::C
@@ -276,7 +276,7 @@ struct GaussMLEFitter{D<:ComputeDevice, P<:PSFModel, C<:CameraModel}
 end
 
 # Convenient constructor with smart defaults
-function GaussMLEFitter(;
+function GaussMLEConfig(;
     psf_model = GaussianXYNB(1.3f0),
     camera_model = IdealCamera(),
     device = nothing,  # auto-detect if nothing
@@ -291,12 +291,12 @@ function GaussMLEFitter(;
         constraints = default_constraints(psf_model, 11)  # typical 11x11 box
     end
     
-    return GaussMLEFitter(device, psf_model, camera_model, 
+    return GaussMLEConfig(device, psf_model, camera_model, 
                           iterations, constraints, batch_size)
 end
 
 # Main fitting function
-function fit(fitter::GaussMLEFitter, data::AbstractArray{T,3}; 
+function fit(fitter::GaussMLEConfig, data::AbstractArray{T,3}; 
              variance_map=nothing) where T
     
     n_fits = size(data, 3)
@@ -377,14 +377,14 @@ end # module
 using GaussMLE
 
 # Simple usage with auto-detection
-fitter = GaussMLEFitter()
+fitter = GaussMLEConfig()
 results = fit(fitter, data)
 
 # Explicit CPU usage
-cpu_fitter = GaussMLEFitter(device=CPU())
+cpu_fitter = GaussMLEConfig(device=CPU())
 
 # sCMOS camera with variance map
-scmos_fitter = GaussMLEFitter(
+scmos_fitter = GaussMLEConfig(
     camera_model = SCMOSCamera(variance_map),
     psf_model = GaussianXYNBS()  # variable sigma
 )
@@ -400,7 +400,7 @@ tight_constraints = ParameterConstraints(
     Params{4}(0.5f0, 0.5f0, 1e4f0, 50.0f0)
 )
 
-custom_fitter = GaussMLEFitter(
+custom_fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(1.5f0),
     constraints = tight_constraints,
     iterations = 30

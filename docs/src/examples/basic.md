@@ -24,14 +24,14 @@ using Statistics
 ```julia
 # Create fitter with default settings
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
-# - Auto device selection (GPU if available)
+# - Auto backend selection (GPU if available)
 # - 20 Newton-Raphson iterations
-fitter = GaussMLEFitter()
+fitter = GaussMLEConfig()
 
 # Or with explicit configuration
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
-    device = :cpu,                      # Force CPU
+    backend = :cpu,                      # Force CPU
     iterations = 20
 )
 ```
@@ -51,14 +51,14 @@ For real data, each ROI should contain a single fluorescent emitter centered app
 
 ```julia
 # Perform the fitting
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 println("Fitted $(length(smld.emitters)) localizations")
 ```
 
 ### Accessing Results
 
-The `fit()` function returns a `SMLMData.BasicSMLD` containing emitter objects:
+The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing emitter objects:
 
 ```julia
 # Extract position arrays
@@ -92,11 +92,11 @@ data = rand(Float32, 11, 11, 100)
 
 # Create fitter with PSF model (sigma from PSF calibration)
 println("Creating fitter with 130nm PSF width...")
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Display results
 println("\n=== Results ===")
@@ -139,7 +139,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)
@@ -175,8 +175,8 @@ batch = generate_roi_batch(
 )
 
 # Fit with proper coordinate conversion
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+smld, info = fit(batch, fitter)
 
 # Positions are now in camera coordinates (microns)
 x_positions = [e.x for e in smld.emitters]
@@ -196,14 +196,14 @@ data = Float32.(your_data)
 
 ```julia
 # For GPU: configure batch size based on memory
-fitter = GaussMLEFitter(
-    device = :gpu,
+fitter = GaussMLEConfig(
+    backend = :gpu,
     batch_size = 10_000
 )
 
 # Fit large dataset
 large_data = rand(Float32, 11, 11, 100_000)
-@time smld = fit(fitter, large_data)
+@time smld, info = fit(large_data, fitter)
 ```
 
 ### Timing Comparison
@@ -214,13 +214,13 @@ using GaussMLE
 data = rand(Float32, 11, 11, 10_000)
 
 # CPU timing
-fitter_cpu = GaussMLEFitter(device = :cpu)
-t_cpu = @elapsed fit(fitter_cpu, data)
+fitter_cpu = GaussMLEConfig(backend = :cpu)
+t_cpu = @elapsed fit(data, fitter_cpu)
 println("CPU: $(round(10_000/t_cpu)) fits/second")
 
 # GPU timing (if available)
-fitter_gpu = GaussMLEFitter(device = :gpu)
-t_gpu = @elapsed fit(fitter_gpu, data)
+fitter_gpu = GaussMLEConfig(backend = :gpu)
+t_gpu = @elapsed fit(data, fitter_gpu)
 println("GPU: $(round(10_000/t_gpu)) fits/second")
 ```
 

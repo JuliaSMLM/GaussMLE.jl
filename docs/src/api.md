@@ -8,7 +8,7 @@
 ### Fitter and Fitting
 
 ```@docs
-GaussMLEFitter
+GaussMLEConfig
 fit
 ```
 
@@ -48,7 +48,7 @@ generate_roi_batch
 
 ### Device Management
 
-Device selection is controlled via the `device` keyword argument to `GaussMLEFitter`:
+Device selection is controlled via the `backend` keyword argument to `GaussMLEConfig`:
 
 - `:auto` or `nothing` - Automatically detect best device (default)
 - `:cpu` - Force CPU execution
@@ -56,13 +56,13 @@ Device selection is controlled via the `device` keyword argument to `GaussMLEFit
 
 Example:
 ```julia
-fitter = GaussMLEFitter(device = :gpu)  # Use GPU
-fitter = GaussMLEFitter(device = :cpu)  # Force CPU
+fitter = GaussMLEConfig(backend = :gpu)  # Use GPU
+fitter = GaussMLEConfig(backend = :cpu)  # Force CPU
 ```
 
 ### Constraints
 
-Parameter constraints can be configured via the `constraints` keyword argument to `GaussMLEFitter`. Default constraints are automatically generated based on the PSF model and ROI size.
+Parameter constraints can be configured via the `constraints` keyword argument to `GaussMLEConfig`. Default constraints are automatically generated based on the PSF model and ROI size.
 
 ## Camera Models
 
@@ -75,7 +75,7 @@ See [SMLMData.jl documentation](https://github.com/JuliaSMLM/SMLMData.jl) for ca
 
 ## Output Format
 
-The `fit()` function returns `SMLMData.BasicSMLD` containing:
+The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing:
 
 - `emitters::Vector{<:AbstractEmitter}` - Fitted emitter objects (type depends on PSF model)
 - `camera::AbstractCamera` - Camera model used

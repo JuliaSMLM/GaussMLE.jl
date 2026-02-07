@@ -53,7 +53,7 @@ batch = generate_roi_batch(
 )
 
 # 3. Create fitter with PSF model (sigma must match your microscope)
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # σ = 130nm in microns
     iterations = 20
 )
@@ -83,12 +83,12 @@ Raw Movie → SMLMBoxer.jl → ROIBatch → GaussMLE.fit() → BasicSMLD → Ana
 
 ## Main Types and Functions
 
-### `GaussMLEFitter`
+### `GaussMLEConfig`
 
 Configuration type for fitting.
 
 ```julia
-fitter = GaussMLEFitter(;
+fitter = GaussMLEConfig(;
     psf_model = GaussianXYNB(0.13f0),  # PSF model with physical params
     backend = :auto,                     # :auto, :cpu, or :gpu
     iterations = 20,                     # Newton-Raphson iterations
@@ -258,16 +258,16 @@ batch = generate_roi_batch(
 
 ```julia
 # Auto-detect (uses GPU if available, falls back to CPU after 30s)
-fitter = GaussMLEFitter(backend = :auto)
+fitter = GaussMLEConfig(backend = :auto)
 
 # Force GPU with custom timeout
-fitter = GaussMLEFitter(backend = :gpu, batch_size = 10_000, gpu_timeout = 60.0)
+fitter = GaussMLEConfig(backend = :gpu, batch_size = 10_000, gpu_timeout = 60.0)
 
 # Force CPU
-fitter = GaussMLEFitter(backend = :cpu)
+fitter = GaussMLEConfig(backend = :cpu)
 
 # Auto with progress callback
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     backend = :auto,
     auto_timeout = 30.0,
     on_wait = (elapsed, available, required) ->
@@ -322,7 +322,7 @@ batch = ROIBatch(
 )
 
 # Fit with proper unit handling
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 ```
 
@@ -338,7 +338,7 @@ camera = IdealCamera(0:511, 0:511, 0.1)  # 100nm pixels
 batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=100, roi_size=11)
 
 # Fit
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)
 
 # Extract positions (in microns)
@@ -371,7 +371,7 @@ using GaussMLE
 # ROIBatch from SMLMBoxer.jl contains camera info
 # batch = SMLMBoxer.extract_rois(movie, camera, detections)
 
-fitter = GaussMLEFitter(psf_model = GaussianXYNB(0.13f0))
+fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld = fit(fitter, batch)  # Automatically handles ADU→electrons
 ```
 
@@ -388,7 +388,7 @@ psf_3d = AstigmaticXYZNB{Float32}(
     0.2f0, 0.5f0      # γ, d
 )
 
-fitter = GaussMLEFitter(psf_model = psf_3d, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf_3d, iterations = 30)
 smld = fit(fitter, batch)
 
 # Z positions in microns

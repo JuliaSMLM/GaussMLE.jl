@@ -128,8 +128,8 @@ psf = AstigmaticXYZNB{Float32}(
 batch = generate_roi_batch(camera, psf, n_rois=500, roi_size=13)
 
 # Fit
-fitter = GaussMLEFitter(psf_model=psf, iterations=30)
-smld = fit(fitter, batch)
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+smld, info = fit(batch, fitter)
 
 # Access 3D positions (Emitter3DFit type)
 x_pos = [e.x for e in smld.emitters]
@@ -161,8 +161,8 @@ Filter 3D localizations by precision:
 using GaussMLE
 
 # Fit data
-fitter = GaussMLEFitter(psf_model=psf, iterations=30)
-smld = fit(fitter, batch)
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+smld, info = fit(batch, fitter)
 
 # Filter by z precision (typically worse than xy)
 good_z = @filter(smld, σ_z < 0.050)  # z precision < 50nm
@@ -207,11 +207,11 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Compare precision at different z positions
-fitter = GaussMLEFitter(psf_model=psf, iterations=30)
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
 
 for target_z in [-0.3, 0.0, 0.3]
     batch = generate_roi_batch(camera, psf, n_rois=200, roi_size=13)
-    smld = fit(fitter, batch)
+    smld, info = fit(batch, fitter)
 
     σ_xy = mean([sqrt(e.σ_x^2 + e.σ_y^2)/sqrt(2) for e in smld.emitters])
     σ_z = mean([e.σ_z for e in smld.emitters])

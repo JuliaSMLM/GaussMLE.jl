@@ -1,262 +1,174 @@
 # GPU Support
 
-GaussMLE.jl includes GPU acceleration support through CUDA.jl and KernelAbstractions.jl for processing large datasets efficiently. The GPU backend provides 20-100x speedup for large batches of fits.
-
-## Current Status
-
-- **CPU Backend**: Fully functional, uses unified kernel with KernelAbstractions
-- **CUDA Backend**: Fully functional, native GPU kernel execution
-- **Automatic Device Selection**: GPU used when available, CPU fallback
+GaussMLE.jl includes GPU acceleration through CUDA.jl and KernelAbstractions.jl. A contention-aware scheduling system enables reliable GPU usage in multi-process environments such as shared GPU servers running parallel analysis scripts.
 
 ## Quick Start
 
 ```julia
 using GaussMLE
 
-# Auto-detect backend (uses GPU if available)
-fitter = GaussMLEFitter()
+# Auto-detect backend (default: uses GPU if available, falls back to CPU)
+fitter = GaussMLEConfig()
 
 # Force CPU
-fitter_cpu = GaussMLEFitter(backend = :cpu)
+fitter = GaussMLEConfig(backend = :cpu)
 
-# Force GPU (errors if unavailable)
-fitter_gpu = GaussMLEFitter(backend = :gpu)
+# Force GPU (errors if unavailable after timeout)
+fitter = GaussMLEConfig(backend = :gpu)
 
-# Auto with custom timeout (waits 30s for GPU, then falls back to CPU)
-fitter_auto = GaussMLEFitter(backend = :auto, auto_timeout = 30.0)
+# Auto with custom timeout
+fitter = GaussMLEConfig(backend = :auto, auto_timeout = 30.0)
 ```
 
 ## Backend Selection
 
-### Backend Options
-
 The `backend` parameter controls compute device selection:
 
-- `:auto` (default) - Try GPU, fall back to CPU if unavailable or timeout
-- `:cpu` - Always use CPU, no waiting
-- `:gpu` - Explicit GPU request, error if unavailable
+| Backend | Behavior | On timeout |
+|---------|----------|------------|
+| `:auto` (default) | Try GPU, fall back to CPU | Warning + CPU fallback |
+| `:cpu` | Always CPU, no GPU interaction | N/A |
+| `:gpu` | Require GPU | Error |
 
-```julia
-using GaussMLE
+### Timeout Configuration
 
-# Auto-detect (preferred for most use cases)
-fitter = GaussMLEFitter()
-
-# Explicit auto-detect (same as default)
-fitter = GaussMLEFitter(backend = :auto)
-
-# Force CPU
-fitter = GaussMLEFitter(backend = :cpu)
-
-# Force GPU (errors if unavailable)
-fitter = GaussMLEFitter(backend = :gpu)
-```
-
-### GPU Memory Wait and Timeout
-
-When running parallel GPU operations or when GPU memory is temporarily busy, GaussMLE can wait for memory to become available:
+| Field | Default | Description |
+|-------|---------|-------------|
+| `auto_timeout` | `30.0` | Seconds to wait for GPU in `:auto` mode |
+| `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode |
+| `on_wait` | `nothing` | Progress callback `(elapsed, available, required) -> nothing` |
 
 ```julia
 # Auto mode: wait up to 30s (default), then fall back to CPU
-fitter = GaussMLEFitter(backend = :auto, auto_timeout = 30.0)
+fitter = GaussMLEConfig(backend = :auto, auto_timeout = 30.0)
 
 # Explicit GPU: wait up to 60s, error if still unavailable
-fitter = GaussMLEFitter(backend = :gpu, gpu_timeout = 60.0)
+fitter = GaussMLEConfig(backend = :gpu, gpu_timeout = 60.0)
 
-# Explicit GPU: wait indefinitely (default gpu_timeout = Inf)
-fitter = GaussMLEFitter(backend = :gpu)
-```
-
-### Progress Callback
-
-For long waits, you can provide a callback to monitor progress:
-
-```julia
-fitter = GaussMLEFitter(
+# Progress callback for monitoring waits
+fitter = GaussMLEConfig(
     backend = :auto,
     auto_timeout = 60.0,
     on_wait = (elapsed, available, required) ->
-        @info "Waiting for GPU memory..." elapsed=round(elapsed, digits=1) available=Base.format_bytes(available) required=Base.format_bytes(required)
+        @info "Waiting for GPU" elapsed=round(elapsed, digits=1) available=Base.format_bytes(available)
 )
 ```
 
-### Multi-GPU Selection
+## GPU Scheduling System
 
-On systems with multiple GPUs, GaussMLE automatically selects the GPU with the most free memory:
+### The Problem
 
-```julia
-using CUDA
+When multiple Julia processes share a GPU server, naive GPU device selection causes failures:
 
-# Check available GPUs
-for (i, dev) in enumerate(CUDA.devices())
-    CUDA.device!(i-1)
-    println("GPU $i: $(CUDA.name(dev)) - $(Base.format_bytes(CUDA.free_memory())) free")
-end
+- **Context creation OOM**: `CUDA.device!(i)` creates a CUDA context (~300 MB - 6 GB), which can OOM if another process is using the GPU
+- **Memory pool retention**: CUDA.jl's memory pool holds freed arrays, making NVML report memory as "used" even when no GPU arrays exist
+- **TOCTOU races**: Free memory looks sufficient during the check, but another process grabs it before context creation completes
 
-# GaussMLE automatically picks the best one
-fitter = GaussMLEFitter(backend = :gpu)  # Selects GPU with most free memory
+### Solution: Unified Retry Loop
+
+GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU failure modes uniformly:
+
+```
+while !gpu_succeeded && before deadline:
+    1. Poll NVML for available GPU (no CUDA context needed)
+    2. Check contention: skip if other_procs > 0 AND (low memory OR compute > 90%)
+    3. Try:
+         CUDA.device!(dev)         # Create context on selected GPU
+         <process all batches>     # Run fitting kernel
+         CUDA.reclaim()            # Return pooled memory to OS
+         gpu_succeeded = true
+    4. Catch:
+         release CUDA context      # Free reserved memory
+         loop back to step 1       # Re-poll NVML for next available GPU
 ```
 
-### Checking GPU Availability
+After the loop: `:auto` falls back to CPU, `:gpu` errors.
 
-```julia
-using CUDA
+### Three Failure Modes
 
-# Check if CUDA is functional
-println("CUDA available: $(CUDA.functional())")
+The loop handles three distinct GPU failure scenarios:
 
-# Check GPU device
-if CUDA.functional()
-    println("GPU: $(CUDA.name(CUDA.device()))")
-    println("Memory: $(CUDA.totalmem(CUDA.device()) / 1e9) GB")
-end
-```
+1. **No free memory** - NVML poll waits with jittered backoff (0.5s intervals). All GPUs are scanned each tick; whichever frees up first is used.
+
+2. **TOCTOU context creation race** - NVML shows sufficient free memory, but `CUDA.device!()` fails because another process grabbed the GPU between the check and context creation. The context is released and NVML is re-polled.
+
+3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. The context is released and all batches are restarted on a re-acquired GPU (partial results from a failed CUDA context are unreliable).
+
+### NVML Contention Detection
+
+Pre-flight GPU checks use NVIDIA Management Library (NVML) queries instead of CUDA API calls. NVML does not create CUDA contexts, so it is safe to call from multiple processes simultaneously.
+
+A GPU is considered **contended** when:
+- Other processes are present (`compute_processes > 0` excluding own PID), AND
+- Resources are threatened: free memory < 1.5x required OR compute utilization > 90%
+
+If other processes are present but memory is ample and utilization is low, the GPU is still selected (the other processes are likely idle).
+
+### Context Lifecycle
+
+**On failure:** `_release_gpu_context()` calls `cuDevicePrimaryCtxRelease` to destroy the CUDA context and free reserved memory. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
+
+**On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
+
+### Multi-GPU Support
+
+On systems with multiple GPUs, NVML scans all devices each poll iteration. The first GPU with sufficient free memory and low contention is selected. This naturally load-balances across GPUs.
 
 ## Batch Processing
 
-For datasets larger than GPU memory, GaussMLE.jl automatically batches the data:
+For datasets larger than GPU memory, GaussMLE automatically batches the data:
 
 ```julia
-using GaussMLE
-
 # Configure batch size (default: 10,000 ROIs per batch)
-fitter = GaussMLEFitter(
+fitter = GaussMLEConfig(
     backend = :gpu,
     batch_size = 5000  # Process 5000 ROIs at a time
 )
 
 # Large dataset - automatically batched
-large_data = rand(Float32, 11, 11, 100_000)
-smld = fit(fitter, large_data)
+smld, info = fit(large_data, fitter)
+println("Processed in $(info.n_batches) batches of $(info.batch_size)")
 ```
 
-The batch size should be tuned based on:
-- Available GPU memory
+Tune batch size based on:
+- Available GPU memory (larger batches = more memory)
 - ROI size (larger ROIs need smaller batches)
-- GPU memory bandwidth
+- Number of parameters (more params = more memory per ROI)
 
-## Performance Benchmarking
+## Performance
 
-```julia
-using GaussMLE
-using Statistics
-
-# Generate test data
-n_rois = 10_000
-data = rand(Float32, 11, 11, n_rois)
-
-# CPU benchmark
-fitter_cpu = GaussMLEFitter(backend = :cpu)
-t_cpu = @elapsed smld_cpu = fit(fitter_cpu, data)
-rate_cpu = n_rois / t_cpu
-println("CPU: $(round(rate_cpu)) ROIs/second")
-
-# GPU benchmark
-fitter_gpu = GaussMLEFitter(backend = :gpu, batch_size = 5000)
-t_gpu = @elapsed smld_gpu = fit(fitter_gpu, data)
-rate_gpu = n_rois / t_gpu
-println("GPU: $(round(rate_gpu)) ROIs/second")
-
-# Speedup
-if t_gpu < t_cpu
-    println("Speedup: $(round(t_cpu / t_gpu, digits=1))x")
-end
-```
-
-### Typical Performance
+### Typical Throughput
 
 Performance on modern hardware (11x11 pixel ROIs, GaussianXYNB model):
 
 | Device | Fits/Second | Notes |
 |--------|-------------|-------|
-| CPU (Ryzen 9 5950X) | ~100K | Multi-threaded |
+| CPU (workstation) | ~5K single-thread | Per-core |
+| GPU (RTX A6000) | ~630K | Batch size 10K |
 | GPU (RTX 4090) | ~10M | Batch size 50K |
-| GPU (RTX 3080) | ~5M | Batch size 30K |
 
-## When to Use GPU
+### When to Use GPU
 
-### GPU acceleration is beneficial for:
+**GPU is beneficial for:**
 - Large datasets (>10,000 fits)
-- Repeated processing of similar data
-- Real-time analysis requirements
 - Batch processing of multiple files
+- Real-time analysis requirements
 
-### CPU may be better for:
+**CPU may be better for:**
 - Small datasets (<1,000 fits)
-- Single-use analysis
 - Systems without capable GPUs
 - Debugging and development
 
-## Memory Management
+### Performance Tips
 
-### Estimating Memory Requirements
-
-```julia
-# Memory per ROI (approximate)
-roi_size = 11
-n_params = 4  # GaussianXYNB
-
-bytes_per_roi = roi_size^2 * 4  # Float32 data
-bytes_per_result = n_params * 4 * 3  # params + uncertainties + temp
-total_per_roi = bytes_per_roi + bytes_per_result
-
-# For 50,000 ROIs
-n_rois = 50_000
-total_memory = n_rois * total_per_roi / 1e6
-println("Estimated GPU memory: $(round(total_memory)) MB")
-```
-
-### Handling Memory Limits
-
-If you encounter out-of-memory errors:
-
-1. **Reduce batch size**:
-```julia
-fitter = GaussMLEFitter(backend = :gpu, batch_size = 2000)
-```
-
-2. **Use auto mode with fallback**:
-```julia
-# Will wait for memory, fall back to CPU if unavailable
-fitter = GaussMLEFitter(backend = :auto, auto_timeout = 10.0)
-```
-
-3. **Process in chunks**:
-```julia
-# Manual chunking for very large datasets
-chunk_size = 10_000
-results = []
-for i in 1:chunk_size:size(data, 3)
-    chunk_end = min(i + chunk_size - 1, size(data, 3))
-    chunk = data[:, :, i:chunk_end]
-    push!(results, fit(fitter, chunk))
-end
-```
+1. **Use Float32** - Native GPU type, sufficient precision for localization
+2. **Fixed sigma** - `GaussianXYNB` is ~20% faster than variable-sigma models
+3. **Warm-up** - First GPU call includes kernel compilation overhead
+4. **Appropriate batch size** - Too small has transfer overhead, too large may OOM
 
 ## Result Consistency
 
-GPU and CPU results are numerically consistent:
-
-```julia
-using GaussMLE
-using Statistics
-
-data = rand(Float32, 11, 11, 1000)
-
-fitter_cpu = GaussMLEFitter(backend = :cpu)
-fitter_gpu = GaussMLEFitter(backend = :gpu)
-
-smld_cpu = fit(fitter_cpu, data)
-smld_gpu = fit(fitter_gpu, data)
-
-# Compare results
-x_cpu = [e.x for e in smld_cpu.emitters]
-x_gpu = [e.x for e in smld_gpu.emitters]
-
-mean_diff = mean(abs.(x_cpu .- x_gpu))
-println("Mean position difference: $(mean_diff) microns")
-# Should be near machine precision (~1e-6 microns)
-```
+GPU and CPU results are numerically consistent (differences at machine precision ~1e-6 microns). The same unified kernel runs on both devices via KernelAbstractions.jl.
 
 ## Troubleshooting
 
@@ -264,70 +176,46 @@ println("Mean position difference: $(mean_diff) microns")
 
 ```julia
 using CUDA
-
-if !CUDA.functional()
-    println("CUDA not available")
-    println("Possible causes:")
-    println("  - No NVIDIA GPU")
-    println("  - CUDA driver not installed")
-    println("  - CUDA.jl not properly configured")
-end
+CUDA.functional()  # Should return true
 ```
+
+If false: check NVIDIA driver installation, GPU hardware, CUDA.jl configuration.
 
 ### Out of Memory
 
 ```julia
 # Reduce batch size
-fitter = GaussMLEFitter(backend = :gpu, batch_size = 1000)
+fitter = GaussMLEConfig(backend = :gpu, batch_size = 2000)
 
 # Or use auto mode for automatic CPU fallback
-fitter = GaussMLEFitter(backend = :auto, auto_timeout = 5.0)
-
-# Or explicitly use CPU
-fitter = GaussMLEFitter(backend = :cpu)
+fitter = GaussMLEConfig(backend = :auto, auto_timeout = 5.0)
 ```
 
-### Slow GPU Performance
+### Multi-Process Contention
 
-If GPU is slower than expected:
+If parallel scripts deadlock waiting for GPU:
+- Ensure all scripts use `backend = :auto` (not `:gpu`) for graceful fallback
+- Set reasonable `auto_timeout` values (30s is usually sufficient)
+- Check `nvidia-smi` for zombie processes holding GPU memory
 
-1. **Check batch size**: Too small batch sizes have overhead
-2. **Check data type**: Use Float32, not Float64
-3. **Warm-up**: First GPU call includes compilation
-
-```julia
-# Warm-up the GPU kernel
-small_data = rand(Float32, 11, 11, 10)
-_ = fit(fitter, small_data)
-
-# Then benchmark with real data
-@time smld = fit(fitter, data)
-```
-
-## Architecture Details
+## Architecture
 
 ### Unified Kernel Design
 
-GaussMLE.jl uses KernelAbstractions.jl for portable GPU/CPU code:
+GaussMLE uses KernelAbstractions.jl for portable GPU/CPU code:
 
 ```julia
-# Single kernel implementation works on both devices
 @kernel function unified_gaussian_mle_kernel!(...)
     # Same code runs on CPU and GPU
 end
 ```
 
-This ensures:
-- Consistent results across devices
-- Easier maintenance
-- Automatic backend selection
-
 ### Data Flow
 
-1. **Input**: ROI data on CPU
-2. **Transfer**: Copy to GPU memory (batched)
-3. **Compute**: Run fitting kernel on GPU
+1. **Input**: ROI data on CPU (Float32)
+2. **Transfer**: Copy batch to GPU memory
+3. **Compute**: Run fitting kernel
 4. **Transfer**: Copy results back to CPU
-5. **Output**: BasicSMLD with fitted parameters
-
-For large datasets, steps 2-4 are pipelined across batches.
+5. **Reclaim**: Return GPU memory pool to OS
+6. **Repeat**: Next batch (steps 2-5)
+7. **Output**: BasicSMLD with fitted parameters

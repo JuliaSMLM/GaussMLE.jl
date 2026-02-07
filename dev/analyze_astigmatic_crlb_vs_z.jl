@@ -91,7 +91,7 @@ println("Part 2: Computing CRLB via Fitting at Each Z Position")
 println("="^70)
 
 # Create fitter
-fitter = GaussMLE.GaussMLEFitter(
+fitter = GaussMLE.GaussMLEConfig(
     psf_model = psf_model,
     device = GaussMLE.CPU(),
     iterations = 100

@@ -90,7 +90,7 @@ println("  Detection efficiency: $(round(n_detected/n_emitters*100, digits=1))%"
 println("\nStep 3: Fit PSFs (GaussMLE)")
 println("-" ^ 50)
 
-fitter = GaussMLE.GaussMLEFitter(
+fitter = GaussMLE.GaussMLEConfig(
     psf_model = GaussMLE.GaussianXYNB(0.13f0),
     device = :cpu,
     iterations = 20
