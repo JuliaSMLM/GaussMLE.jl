@@ -72,6 +72,27 @@ function select_device(device::Union{ComputeDevice, Nothing}=nothing)
     end
 end
 
+"""
+    _release_gpu_context(device_idx)
+
+Release the CUDA primary context on a device to free reserved memory.
+Called after a failed CUDA.device!() to avoid zombie context reservations
+that deadlock other processes polling for free GPU memory.
+"""
+function _release_gpu_context(device_idx::Integer)
+    try
+        dev = CUDA.CuDevice(device_idx)
+        CUDA.cuDevicePrimaryCtxRelease(dev)
+    catch
+        # Best-effort: context may not exist if creation failed early
+    end
+    try
+        GC.gc(false)
+        CUDA.reclaim()
+    catch
+    end
+end
+
 # GPU memory wait utilities
 """
     wait_for_gpu_memory(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing)
@@ -236,7 +257,9 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         end
         # NVML poll: scan all GPUs, wait for first available
         # Retry loop handles TOCTOU race: NVML check passes but another process
-        # grabs the GPU between check and CUDA.device!() context creation
+        # grabs the GPU between check and CUDA.device!() context creation.
+        # On catch, release the CUDA context to avoid holding zombie memory
+        # reservations that deadlock other processes polling for free memory.
         deadline = time() + gpu_timeout
         while true
             device_idx, available = wait_for_gpu_nvml(required_bytes;
@@ -248,6 +271,8 @@ function select_backend(backend::Symbol, required_bytes::Integer;
                 CUDA.device!(device_idx)
                 return GPU()
             catch e
+                # Release context to free reserved memory before retrying
+                _release_gpu_context(device_idx)
                 if time() >= deadline
                     rethrow()
                 end
@@ -267,6 +292,7 @@ function select_backend(backend::Symbol, required_bytes::Integer;
                 CUDA.device!(device_idx)
                 return GPU()
             catch e
+                _release_gpu_context(device_idx)
                 @warn "GPU $device_idx context creation failed (contention race), using CPU" exception=e
                 return CPU()
             end
