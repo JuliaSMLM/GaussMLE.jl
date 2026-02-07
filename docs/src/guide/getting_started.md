@@ -44,7 +44,7 @@ batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
 ```julia
 fitter = GaussMLEConfig(psf_model = psf)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Results are in microns (camera coordinates)
 for e in smld.emitters[1:3]
@@ -70,7 +70,7 @@ batch = generate_roi_batch(camera, psf, n_rois=100, roi_size=11)
 
 # 4. Fit
 fitter = GaussMLEConfig(psf_model = psf)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # 5. Results in microns
 println("Fitted: $(length(smld.emitters)) localizations")
@@ -88,7 +88,7 @@ println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 
 ### BasicSMLD Structure
 
-The `fit()` function returns a `SMLMData.BasicSMLD` containing:
+The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing:
 
 - `emitters`: Vector of emitter objects with fitted parameters
 - `camera`: Camera model used for fitting
@@ -126,7 +126,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.020 && photons > 500)
@@ -170,7 +170,7 @@ batch = ROIBatch(
 
 # Fit with proper unit handling
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Results in microns (relative to ROI corner)
 println("Position: ($(smld.emitters[1].x), $(smld.emitters[1].y)) μm")
@@ -200,7 +200,7 @@ batch = ROIBatch(
 
 # Fit with proper coordinate conversion
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 ## Generating Test Data
@@ -223,7 +223,7 @@ batch = generate_roi_batch(
 
 # Fit the generated data
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 ## Performance Tips

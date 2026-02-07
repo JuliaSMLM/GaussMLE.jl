@@ -21,16 +21,6 @@ Fast Maximum Likelihood Estimation of Gaussian PSF parameters for single-molecul
 
 ```julia
 using Pkg
-
-# Install SMLMData.jl dependency first
-Pkg.add(url="https://github.com/JuliaSMLM/SMLMData.jl")
-
-# Then install GaussMLE.jl
-Pkg.add(url="https://github.com/JuliaSMLM/GaussMLE.jl")
-```
-
-Once registered in Julia General:
-```julia
 Pkg.add("GaussMLE")
 ```
 
@@ -77,18 +67,33 @@ println("Mean PSF width: $(mean(σ_values)*1000) nm ± $(mean(σ_uncertainties)*
 ```julia
 using GaussMLE
 
-# Auto-detect backend (uses GPU if available)
+# Auto-detect backend (default: uses GPU if available, falls back to CPU)
 fitter = GaussMLEConfig()
 
 # Force GPU with custom timeout
 fitter = GaussMLEConfig(backend=:gpu, batch_size=5000)
 
-# Auto-detect with fallback timeout (waits 30s for GPU, then falls back to CPU)
+# Custom timeout for auto mode (waits 30s for GPU, then falls back to CPU)
 fitter = GaussMLEConfig(backend=:auto, auto_timeout=30.0)
+
+# Progress callback for long waits
+fitter = GaussMLEConfig(
+    backend = :auto,
+    on_wait = (elapsed, available, required) ->
+        @info "Waiting for GPU..." elapsed=round(elapsed, digits=1)
+)
 
 smld, info = fit(large_dataset, fitter)  # Returns (BasicSMLD, GaussMLEFitInfo)
 println("Executed on $(info.backend)")  # :cpu or :gpu (never :auto)
 ```
+
+**GPU Scheduling:** GaussMLE uses a contention-aware GPU scheduling system designed for multi-process environments (e.g., parallel analysis scripts sharing a GPU server):
+
+1. **NVML polling** - Queries GPU memory and utilization without creating CUDA contexts, avoiding OOM during device discovery
+2. **Unified retry loop** - A single loop handles all GPU failure modes (no free memory, context creation race, runtime OOM). On any failure, the CUDA context is released and NVML is re-polled
+3. **Memory pool reclaim** - After successful GPU processing, `CUDA.reclaim()` returns pooled memory to the OS so other processes can use it
+
+For `:auto` mode, the loop falls back to CPU on timeout. For `:gpu` mode, it errors. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
 
 ### sCMOS Camera
 
@@ -202,14 +207,6 @@ constraints = GaussMLE.ParameterConstraints{4}(lower, upper, max_step)
 
 # Direct device types (prefer backend symbols :cpu/:gpu/:auto)
 device = GaussMLE.GPU()
-
-# GPU wait callback for progress feedback
-fitter = GaussMLEConfig(
-    backend = :gpu,
-    gpu_timeout = 60.0,
-    on_wait = (elapsed, available, required) ->
-        @info "Waiting for GPU memory..." elapsed available required
-)
 ```
 
 ## Examples

@@ -15,7 +15,7 @@ GaussMLE.jl performs Maximum Likelihood Estimation of Gaussian blob parameters f
 
 ```julia
 using Pkg
-Pkg.add("GaussMLE")
+Pkg.add("GaussMLE")  # Automatically installs SMLMData.jl dependency
 ```
 
 ## Re-export Convention
@@ -133,6 +133,9 @@ Metadata about the fit operation.
 | `device_id` | `Int` | GPU device index (0-based) or -1 for CPU |
 | `n_fits` | `Int` | Number of ROIs attempted |
 | `n_converged` | `Int` | Number of ROIs that converged |
+| `batch_size` | `Int` | Actual batch size used |
+| `n_batches` | `Int` | Number of batches processed |
+| `memory_per_batch` | `Int` | Estimated bytes per batch |
 
 ```julia
 smld, info = fit(batch, fitter)
@@ -275,30 +278,75 @@ batch = generate_roi_batch(
 )
 ```
 
-## GPU Acceleration
+## GPU Scheduling
+
+### Backend Selection
 
 ```julia
-# Auto-detect (uses GPU if available, falls back to CPU after 30s)
+# Auto-detect (default): try GPU with timeout, fall back to CPU
 fitter = GaussMLEConfig(backend = :auto)
 
-# Force GPU with custom timeout
+# Force GPU: error if unavailable after gpu_timeout
 fitter = GaussMLEConfig(backend = :gpu, batch_size = 10_000, gpu_timeout = 60.0)
 
-# Force CPU
+# Force CPU: no GPU interaction
 fitter = GaussMLEConfig(backend = :cpu)
+```
 
-# Auto with progress callback
+### Config Fields for GPU Scheduling
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `backend` | `:auto` | `:cpu`, `:gpu`, or `:auto` |
+| `batch_size` | `10_000` | ROIs per GPU batch |
+| `auto_timeout` | `30.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
+| `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode (errors on timeout) |
+| `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` for progress |
+
+### Contention-Aware Scheduling
+
+GPU scheduling uses NVML (NVIDIA Management Library) for contention-safe device selection in multi-process environments. This avoids the OOM errors that occur when multiple Julia processes simultaneously create CUDA contexts.
+
+**Unified retry loop** (in `_run_mle_kernel!`):
+```
+while !gpu_succeeded && before deadline:
+    1. Poll NVML for GPU with sufficient free memory (1.5x safety margin)
+    2. Check contention: skip GPU if other_procs > 0 AND (low memory OR compute > 90%)
+    3. Try: CUDA.device!(dev) -> process all batches -> CUDA.reclaim() -> done
+    4. Catch: release CUDA context -> loop back to step 1
+```
+
+Three failure modes handled uniformly:
+1. **No free memory** - NVML poll waits with jittered backoff
+2. **TOCTOU context race** - `CUDA.device!()` fails because another process grabbed the GPU between check and context creation. Context released, loop retries
+3. **Runtime OOM** - GPU allocation/kernel fails mid-batch. Context released, all batches restarted on re-acquired GPU
+
+After timeout: `:auto` falls back to CPU, `:gpu` errors.
+
+### Memory Pool Reclaim
+
+After successful GPU processing, `CUDA.reclaim()` returns CUDA memory pool allocations to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
+
+### Context Release
+
+On GPU failure, `_release_gpu_context()` calls `cuDevicePrimaryCtxRelease` to destroy the CUDA context and free reserved memory. `CUDA.reclaim()` is NOT called after context release (it requires an active context and would either hang or re-create the released context).
+
+### Multi-GPU Support
+
+Automatically selects GPU with most free memory via NVML scan. Each poll iteration checks all GPUs - whichever frees up first is used.
+
+### Progress Callback
+
+```julia
 fitter = GaussMLEConfig(
     backend = :auto,
-    auto_timeout = 30.0,
+    auto_timeout = 60.0,
     on_wait = (elapsed, available, required) ->
-        @info "Waiting..." elapsed=round(elapsed, digits=1)
+        @info "Waiting for GPU" elapsed=round(elapsed, digits=1) available=Base.format_bytes(available)
 )
 ```
 
-**Multi-GPU Support:** Automatically selects GPU with most free memory.
-
-GPU provides significant speedup for large batches (>1000 ROIs).
+The callback fires each poll iteration when no GPU is available. Arguments: elapsed seconds, best available bytes across all GPUs, required bytes.
 
 ## Goodness-of-Fit
 

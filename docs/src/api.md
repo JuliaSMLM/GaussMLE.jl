@@ -48,7 +48,7 @@ generate_roi_batch
 
 ### Device Management
 
-Device selection is controlled via the `device` keyword argument to `GaussMLEConfig`:
+Device selection is controlled via the `backend` keyword argument to `GaussMLEConfig`:
 
 - `:auto` or `nothing` - Automatically detect best device (default)
 - `:cpu` - Force CPU execution
@@ -56,8 +56,8 @@ Device selection is controlled via the `device` keyword argument to `GaussMLECon
 
 Example:
 ```julia
-fitter = GaussMLEConfig(device = :gpu)  # Use GPU
-fitter = GaussMLEConfig(device = :cpu)  # Force CPU
+fitter = GaussMLEConfig(backend = :gpu)  # Use GPU
+fitter = GaussMLEConfig(backend = :cpu)  # Force CPU
 ```
 
 ### Constraints
@@ -75,7 +75,7 @@ See [SMLMData.jl documentation](https://github.com/JuliaSMLM/SMLMData.jl) for ca
 
 ## Output Format
 
-The `fit()` function returns `SMLMData.BasicSMLD` containing:
+The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing:
 
 - `emitters::Vector{<:AbstractEmitter}` - Fitted emitter objects (type depends on PSF model)
 - `camera::AbstractCamera` - Camera model used
