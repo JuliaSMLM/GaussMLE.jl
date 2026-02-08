@@ -228,7 +228,7 @@ a runtime try/catch in `_run_mle_kernel!` provides defense in depth.
 - `required_bytes`: Estimated GPU memory needed for operation
 
 # Keyword Arguments
-- `auto_timeout=30.0`: Seconds to wait for GPU in auto mode before falling back to CPU
+- `auto_timeout=300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
 - `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
 - `on_wait=nothing`: Callback `(elapsed, available, required) -> nothing` for progress
 
@@ -241,7 +241,7 @@ a runtime try/catch in `_run_mle_kernel!` provides defense in depth.
 - `:auto` - NVML poll up to auto_timeout, fall back to CPU with warning
 """
 function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Float64=30.0,
+        auto_timeout::Float64=300.0,
         gpu_timeout::Float64=Inf,
         on_wait=nothing)
 

@@ -98,7 +98,7 @@ Camera noise model is determined by the ROIBatch type:
 - `iterations = 20`: Number of Newton-Raphson iterations
 - `constraints = nothing`: Parameter constraints (uses defaults if nothing)
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
-- `auto_timeout = 30.0`: Seconds to wait for GPU in auto mode before falling back to CPU
+- `auto_timeout = 300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
 - `gpu_timeout = Inf`: Seconds to wait for GPU in explicit gpu mode
 - `on_wait = nothing`: Callback `(elapsed, available, required) -> nothing` for GPU wait progress
 
@@ -139,7 +139,7 @@ function GaussMLEConfig(;
     iterations = 20,
     constraints = nothing,
     batch_size = 10_000,
-    auto_timeout = 30.0,
+    auto_timeout = 300.0,
     gpu_timeout = Inf,
     on_wait = nothing
 )
@@ -639,7 +639,7 @@ Kwargs match GaussMLEConfig fields exactly.
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints (uses defaults if nothing)
 - `batch_size=10_000`: Batch size for GPU processing
-- `auto_timeout=30.0`: Seconds to wait for GPU in auto mode
+- `auto_timeout=300.0`: Seconds to wait for GPU in auto mode
 - `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
 - `on_wait=nothing`: Callback for GPU wait progress
 
@@ -664,7 +664,7 @@ function fit(batch::ROIBatch;
              backend = :auto,
              constraints = nothing,
              batch_size = 10_000,
-             auto_timeout = 30.0,
+             auto_timeout = 300.0,
              gpu_timeout = Inf,
              on_wait = nothing)
     fitter = GaussMLEConfig(;
