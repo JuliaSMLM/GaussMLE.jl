@@ -19,38 +19,22 @@ Pkg.add("GaussMLE")
 ```julia
 using GaussMLE
 
-# Camera and ROI data (from your detection pipeline)
-camera = IdealCamera(0:255, 0:255, 0.1)  # 100 nm pixels
-batch = ROIBatch(data, x_corners, y_corners, frame_indices, camera)
+# Input: ROIBatch from your detection pipeline
+batch = ROIBatch(data, x_corners, y_corners, frames, camera)
 
-# Configure and fit
-fitter = GaussMLEConfig(psf_model=GaussianXYNB(0.13f0))  # σ = 130 nm
-smld, info = fit(batch, fitter)
+# Fit: returns (BasicSMLD, GaussMLEFitInfo)
+smld, info = fit(batch, GaussMLEConfig(
+    psf_model    = GaussianXYNB(0.13f0),  # fixed-σ Gaussian, σ in μm
+    backend      = :auto,                  # :cpu, :gpu, or :auto (GPU w/ CPU fallback)
+    iterations   = 20,                     # Newton-Raphson iterations
+    batch_size   = 10_000,                 # ROIs per GPU kernel launch
+))
 
-# Access results
-x = [e.x for e in smld.emitters]       # positions (μm)
-σ_x = [e.σ_x for e in smld.emitters]   # CRLB uncertainties (μm)
-println("$(info.n_fits) fits in $(round(info.elapsed_s*1000, digits=1)) ms on $(info.backend)")
+# Output: positions and CRLB uncertainties in μm
+smld.emitters[1].x, smld.emitters[1].σ_x
 ```
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
-
-## GaussMLEConfig
-
-All fitting is configured through `GaussMLEConfig`:
-
-| Field | Default | Description |
-|-------|---------|-------------|
-| `psf_model` | `GaussianXYNB(0.13f0)` | PSF model (see below) |
-| `backend` | `:auto` | Compute backend: `:cpu`, `:gpu`, or `:auto` |
-| `iterations` | `20` | Newton-Raphson iterations |
-| `constraints` | `nothing` | Parameter bounds/step limits (auto-generated if `nothing`) |
-| `batch_size` | `10_000` | ROIs per GPU batch |
-| `auto_timeout` | `300.0` | Seconds to wait for GPU before CPU fallback (`:auto` mode) |
-| `gpu_timeout` | `Inf` | Seconds to wait for GPU (`:gpu` mode, errors on timeout) |
-| `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` |
-
-**Backend semantics:** `:cpu` runs immediately on CPU. `:gpu` waits for a GPU up to `gpu_timeout`, then errors. `:auto` tries GPU up to `auto_timeout`, then falls back to CPU with a warning.
 
 GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
 
