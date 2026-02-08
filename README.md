@@ -60,7 +60,7 @@ All PSF parameters are specified in microns for camera-independence.
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | σx, σy, σ_σx, σ_σy, pvalue |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
 
-All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `frame`.
+All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `pvalue`, `frame`.
 
 `GaussMLEFitInfo` fields:
 

@@ -96,7 +96,7 @@ fitter = GaussMLEConfig(;
     backend = :auto,                     # :auto, :cpu, or :gpu
     iterations = 20,                     # Newton-Raphson iterations
     batch_size = 10_000,                 # GPU batch size
-    auto_timeout = 30.0,                 # Seconds to wait in :auto mode before CPU fallback
+    auto_timeout = 300.0,                 # Seconds to wait in :auto mode before CPU fallback
     gpu_timeout = Inf,                   # Seconds to wait in :gpu mode (Inf = forever)
     on_wait = nothing                    # Optional callback (elapsed, available, required) -> nothing
 )
@@ -146,14 +146,14 @@ println("Executed on $(info.backend) in $(info.elapsed_s * 1000) ms")
 
 | PSF Model | Emitter Type | Key Fields |
 |-----------|--------------|------------|
-| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg, σ_x, σ_y |
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | x, y, photons, bg, σ_x, σ_y, σ_xy, pvalue |
 | `GaussianXYNBS` | `Emitter2DFitSigma` | + σ, σ_σ (fitted PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σ_x_psf, σ_y_psf (fitted PSF widths) |
-| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg, σ_x, σ_y, σ_z |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (fitted PSF widths), σ_σx, σ_σy |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz, pvalue |
 
 All emitter types subtype `SMLMData.AbstractEmitter`.
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -161,7 +161,9 @@ All emitter types subtype `SMLMData.AbstractEmitter`.
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -299,7 +301,7 @@ fitter = GaussMLEConfig(backend = :cpu)
 |-------|---------|-------------|
 | `backend` | `:auto` | `:cpu`, `:gpu`, or `:auto` |
 | `batch_size` | `10_000` | ROIs per GPU batch |
-| `auto_timeout` | `30.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
+| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
 | `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode (errors on timeout) |
 | `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` for progress |
 

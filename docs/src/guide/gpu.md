@@ -17,7 +17,7 @@ fitter = GaussMLEConfig(backend = :cpu)
 fitter = GaussMLEConfig(backend = :gpu)
 
 # Auto with custom timeout
-fitter = GaussMLEConfig(backend = :auto, auto_timeout = 30.0)
+fitter = GaussMLEConfig(backend = :auto, auto_timeout = 300.0)
 ```
 
 ## Backend Selection
@@ -34,13 +34,13 @@ The `backend` parameter controls compute device selection:
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `auto_timeout` | `30.0` | Seconds to wait for GPU in `:auto` mode |
+| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode |
 | `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode |
 | `on_wait` | `nothing` | Progress callback `(elapsed, available, required) -> nothing` |
 
 ```julia
-# Auto mode: wait up to 30s (default), then fall back to CPU
-fitter = GaussMLEConfig(backend = :auto, auto_timeout = 30.0)
+# Auto mode: wait up to 5 min (default), then fall back to CPU
+fitter = GaussMLEConfig(backend = :auto, auto_timeout = 300.0)
 
 # Explicit GPU: wait up to 60s, error if still unavailable
 fitter = GaussMLEConfig(backend = :gpu, gpu_timeout = 60.0)
@@ -137,15 +137,11 @@ Tune batch size based on:
 
 ## Performance
 
-### Typical Throughput
+### Benchmarking Your Hardware
 
-Performance on modern hardware (11x11 pixel ROIs, GaussianXYNB model):
+Run `Pkg.test("GaussMLE")` locally to benchmark your hardware. The test suite includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
 
-| Device | Fits/Second | Notes |
-|--------|-------------|-------|
-| CPU (workstation) | ~5K single-thread | Per-core |
-| GPU (RTX A6000) | ~630K | Batch size 10K |
-| GPU (RTX 4090) | ~10M | Batch size 50K |
+GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
 ### When to Use GPU
 
@@ -195,7 +191,7 @@ fitter = GaussMLEConfig(backend = :auto, auto_timeout = 5.0)
 
 If parallel scripts deadlock waiting for GPU:
 - Ensure all scripts use `backend = :auto` (not `:gpu`) for graceful fallback
-- Set reasonable `auto_timeout` values (30s is usually sufficient)
+- Set reasonable `auto_timeout` values (default 5 min is usually sufficient)
 - Check `nvidia-smi` for zombie processes holding GPU memory
 
 ## Architecture

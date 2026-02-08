@@ -51,8 +51,8 @@ fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Access fitted sigma from emitters
-sigmas = [e.sigma for e in smld.emitters]
-sigma_uncertainties = [e.sigma_sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
+sigma_uncertainties = [e.σ_σ for e in smld.emitters]
 ```
 
 **Use this model when:**
@@ -81,9 +81,9 @@ psf = GaussianXYNBSXSY()
 fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
-# Access fitted sigma_x and sigma_y
-sigma_x = [e.sigma_x for e in smld.emitters]
-sigma_y = [e.sigma_y for e in smld.emitters]
+# Access fitted PSF widths (σx, σy) and position uncertainties (σ_x, σ_y)
+psf_widths_x = [e.σx for e in smld.emitters]
+psf_widths_y = [e.σy for e in smld.emitters]
 ```
 
 **Use this model when:**
@@ -120,7 +120,7 @@ smld, info = fit(data, fitter)
 
 # Access z-position from emitters
 z_positions = [e.z for e in smld.emitters]
-z_uncertainties = [e.sigma_z for e in smld.emitters]
+z_uncertainties = [e.σ_z for e in smld.emitters]
 ```
 
 The PSF width varies with z according to:
@@ -204,7 +204,7 @@ smld, info = fit(data, fitter)
 
 # Extract results
 x_positions = [e.x for e in smld.emitters]
-precisions = [e.sigma_x for e in smld.emitters]
+precisions = [e.σ_x for e in smld.emitters]
 
 println("Mean precision: $(mean(precisions) * 1000) nm")
 ```
@@ -222,12 +222,12 @@ fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Analyze PSF width distribution
-sigmas = [e.sigma for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
 println("Mean PSF width: $(mean(sigmas)) microns")
 println("PSF width std: $(std(sigmas)) microns")
 
 # Filter by PSF width
-valid = filter(e -> 0.1 < e.sigma < 0.2, smld.emitters)
+valid = filter(e -> 0.1 < e.σ < 0.2, smld.emitters)
 println("Valid localizations: $(length(valid)) / $(length(smld.emitters))")
 ```
 
@@ -255,7 +255,7 @@ y = [e.y for e in smld.emitters]
 z = [e.z for e in smld.emitters]
 
 println("Z range: $(extrema(z)) microns")
-println("Mean Z precision: $(mean([e.sigma_z for e in smld.emitters]) * 1000) nm")
+println("Mean Z precision: $(mean([e.σ_z for e in smld.emitters]) * 1000) nm")
 ```
 
 ## Mathematical Formulation

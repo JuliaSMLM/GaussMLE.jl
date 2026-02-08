@@ -52,7 +52,7 @@ Device selection is controlled via the `backend` keyword argument to `GaussMLECo
 
 - `:auto` or `nothing` - Automatically detect best device (default)
 - `:cpu` - Force CPU execution
-- `:gpu` - Use GPU if available, fallback to CPU
+- `:gpu` - Require GPU, error if unavailable after timeout
 
 Example:
 ```julia

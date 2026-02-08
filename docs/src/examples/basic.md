@@ -70,8 +70,8 @@ photons = [e.photons for e in smld.emitters]
 backgrounds = [e.bg for e in smld.emitters]
 
 # Extract uncertainties (CRLB)
-precisions_x = [e.sigma_x for e in smld.emitters]
-precisions_y = [e.sigma_y for e in smld.emitters]
+precisions_x = [e.σ_x for e in smld.emitters]
+precisions_y = [e.σ_y for e in smld.emitters]
 
 # Display statistics
 println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
@@ -108,7 +108,7 @@ x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 photons = [e.photons for e in smld.emitters]
 backgrounds = [e.bg for e in smld.emitters]
-precisions_x = [e.sigma_x for e in smld.emitters]
+precisions_x = [e.σ_x for e in smld.emitters]
 
 println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
 println("Mean photons: $(round(mean(photons), digits=1))")
@@ -118,9 +118,9 @@ println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
 
 ## Understanding the Results
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
-Each emitter in `smld.emitters` is an `Emitter2DFit` containing:
+Each emitter in `smld.emitters` is an `Emitter2DFitGaussMLE` containing:
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -128,7 +128,9 @@ Each emitter in `smld.emitters` is an `Emitter2DFit` containing:
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 

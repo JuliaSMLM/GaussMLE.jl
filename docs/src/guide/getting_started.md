@@ -77,7 +77,7 @@ println("Fitted: $(length(smld.emitters)) localizations")
 x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 photons = [e.photons for e in smld.emitters]
-precisions_x = [e.sigma_x for e in smld.emitters]
+precisions_x = [e.σ_x for e in smld.emitters]
 
 println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) microns")
 println("Mean photons: $(round(mean(photons), digits=1))")
@@ -100,14 +100,14 @@ Different PSF models return different emitter types, all subtypes of `SMLMData.A
 
 | PSF Model | Emitter Type | Additional Fields |
 |-----------|--------------|-------------------|
-| `GaussianXYNB` | `Emitter2DFit` | (base type) |
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | (base type) |
 | `GaussianXYNBS` | `Emitter2DFitSigma` | `σ`, `σ_σ` (fitted PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `sigma_x`, `sigma_y` (fitted PSF widths) |
-| `AstigmaticXYZNB` | `Emitter3DFit` | `z`, `σ_z` (z-position) |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `σx`, `σy` (fitted PSF widths) |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `σ_z` (z-position) |
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
-All 2D emitter types include these fields:
+All 2D emitter types include these base fields:
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -115,7 +115,9 @@ All 2D emitter types include these fields:
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 

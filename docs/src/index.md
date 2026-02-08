@@ -111,12 +111,13 @@ The sCMOS noise model follows [Huang et al. (2013)](https://doi.org/10.1038/nmet
 ```julia
 using GaussMLE
 
-# Create sCMOS camera with calibration maps
+# Create sCMOS camera with calibration
 camera = SCMOSCamera(
-    offset_map,      # Per-pixel offset (ADU)
-    gain_map,        # Per-pixel gain (e-/ADU)
-    readnoise_map,   # Per-pixel readnoise (e-)
-    0.065            # Pixel size (microns)
+    512, 512, 0.065,    # nx, ny, pixel_size (μm)
+    readnoise_map;      # Per-pixel readnoise σ (electrons)
+    offset = 100.0f0,   # Dark level (ADU)
+    gain = 0.5f0,       # Conversion (e⁻/ADU)
+    qe = 0.82f0         # Quantum efficiency
 )
 
 # Generate or load ROI data with camera
@@ -146,14 +147,14 @@ smld, info = fit(data, fitter)
 
 # Z positions from Emitter3DFitGaussMLE type
 z_positions = [e.z for e in smld.emitters]
-z_precision = [e.sigma_z for e in smld.emitters]
+z_precision = [e.σ_z for e in smld.emitters]
 ```
 
 ## Output Format
 
 ### BasicSMLD with Emitter Types
 
-`fit()` returns a tuple of `(SMLMData.BasicSMLD, NamedTuple)` containing a vector of emitter structs and fit metadata:
+`fit()` returns a tuple of `(SMLMData.BasicSMLD, GaussMLEFitInfo)` containing a vector of emitter structs and fit metadata:
 
 ```julia
 smld, info = fit(data, fitter)
@@ -168,14 +169,14 @@ end
 
 | PSF Model | Emitter Type | Fitted Parameters |
 |-----------|--------------|-------------------|
-| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg |
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | x, y, photons, bg |
 | `GaussianXYNBS` | `Emitter2DFitSigma` | + σ (PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + sigma_x, sigma_y |
-| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (PSF widths) |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg |
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
-The base 2D emitter type (`Emitter2DFit`) contains:
+The base 2D emitter type (`Emitter2DFitGaussMLE`) contains:
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -183,7 +184,9 @@ The base 2D emitter type (`Emitter2DFit`) contains:
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
