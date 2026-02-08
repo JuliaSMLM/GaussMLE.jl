@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>3D Astigmatic · GaussMLE.jl</title><meta name="title" content="3D Astigmatic · GaussMLE.jl"/><meta property="og:title" content="3D Astigmatic · GaussMLE.jl"/><meta property="twitter:title" content="3D Astigmatic · GaussMLE.jl"/><meta name="description" content="Documentation for GaussMLE.jl."/><meta property="og:description" content="Documentation for GaussMLE.jl."/><meta property="twitter:description" content="Documentation for GaussMLE.jl."/><meta property="og:url" content="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/astigmatic/"/><meta property="twitter:url" content="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/astigmatic/"/><link rel="canonical" href="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/astigmatic/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">GaussMLE.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">User Guide</span><ul><li><a class="tocitem" href="../../guide/getting_started/">Getting Started</a></li><li><a class="tocitem" href="../../guide/models/">Models</a></li><li><a class="tocitem" href="../../guide/gpu/">GPU Support</a></li></ul></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../basic/">Basic Fitting</a></li><li><a class="tocitem" href="../sigma/">PSF Width Fitting</a></li><li class="is-active"><a class="tocitem" href>3D Astigmatic</a><ul class="internal"><li><a class="tocitem" href="#Theory"><span>Theory</span></a></li><li><a class="tocitem" href="#PSF-Calibration-Curve-and-Shape"><span>PSF Calibration Curve and Shape</span></a></li><li><a class="tocitem" href="#Basic-3D-Fitting"><span>Basic 3D Fitting</span></a></li><li><a class="tocitem" href="#Output:-Emitter3DFit"><span>Output: Emitter3DFit</span></a></li><li><a class="tocitem" href="#Quality-Filtering"><span>Quality Filtering</span></a></li><li><a class="tocitem" href="#Calibration-Tips"><span>Calibration Tips</span></a></li><li><a class="tocitem" href="#Z-Localization-Precision"><span>Z Localization Precision</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li><li><a class="tocitem" href="../../theory/">Theory</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>3D Astigmatic</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>3D Astigmatic</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaSMLM/GaussMLE.jl/blob/main/docs/src/examples/astigmatic.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="3D-Astigmatic-Fitting"><a class="docs-heading-anchor" href="#3D-Astigmatic-Fitting">3D Astigmatic Fitting</a><a id="3D-Astigmatic-Fitting-1"></a><a class="docs-heading-anchor-permalink" href="#3D-Astigmatic-Fitting" title="Permalink"></a></h1><p>This example demonstrates 3D localization using the <code>AstigmaticXYZNB</code> model, which uses a cylindrical lens to encode z-position in the ellipticity of the PSF.</p><h2 id="Theory"><a class="docs-heading-anchor" href="#Theory">Theory</a><a id="Theory-1"></a><a class="docs-heading-anchor-permalink" href="#Theory" title="Permalink"></a></h2><h3 id="Astigmatic-PSF-Model"><a class="docs-heading-anchor" href="#Astigmatic-PSF-Model">Astigmatic PSF Model</a><a id="Astigmatic-PSF-Model-1"></a><a class="docs-heading-anchor-permalink" href="#Astigmatic-PSF-Model" title="Permalink"></a></h3><p>A cylindrical lens introduces astigmatism, causing the PSF to have different focal planes for the x and y directions. The PSF widths vary with z according to:</p><p class="math-container">\[\sigma_x(z) = \sigma_{x0} \sqrt{\alpha_x(z)} \quad \text{where} \quad \alpha_x(z) = 1 + \left(\frac{z-\gamma}{d}\right)^2 + A_x\left(\frac{z-\gamma}{d}\right)^3 + B_x\left(\frac{z-\gamma}{d}\right)^4\]</p><p class="math-container">\[\sigma_y(z) = \sigma_{y0} \sqrt{\alpha_y(z)} \quad \text{where} \quad \alpha_y(z) = 1 + \left(\frac{z+\gamma}{d}\right)^2 + A_y\left(\frac{z+\gamma}{d}\right)^3 + B_y\left(\frac{z+\gamma}{d}\right)^4\]</p><p>The key insight: at z=0, both widths are at their minimum. Moving in +z causes σx to increase while σy stays narrow (and vice versa for -z). The fitter uses this ellipticity to determine z.</p><h3 id="Parameter-Meanings"><a class="docs-heading-anchor" href="#Parameter-Meanings">Parameter Meanings</a><a id="Parameter-Meanings-1"></a><a class="docs-heading-anchor-permalink" href="#Parameter-Meanings" title="Permalink"></a></h3><table><tr><th style="text-align: right">Parameter</th><th style="text-align: right">Description</th><th style="text-align: right">Typical Values</th></tr><tr><td style="text-align: right"><code>σx₀</code>, <code>σy₀</code></td><td style="text-align: right">In-focus PSF widths</td><td style="text-align: right">0.10-0.15 μm</td></tr><tr><td style="text-align: right"><code>γ</code></td><td style="text-align: right">Half-distance between x and y focal planes</td><td style="text-align: right">0.1-0.3 μm</td></tr><tr><td style="text-align: right"><code>d</code></td><td style="text-align: right">Depth-of-field parameter (scales z dependence)</td><td style="text-align: right">0.3-0.6 μm</td></tr><tr><td style="text-align: right"><code>Ax</code>, <code>Ay</code></td><td style="text-align: right">Cubic correction coefficients</td><td style="text-align: right">-0.1 to 0.1</td></tr><tr><td style="text-align: right"><code>Bx</code>, <code>By</code></td><td style="text-align: right">Quartic correction coefficients</td><td style="text-align: right">-0.05 to 0.05</td></tr></table><p>The focal plane offset <code>γ</code> determines the separation between the two astigmatic foci. Larger <code>γ</code> gives better z-resolution but reduces the usable z-range.</p><h2 id="PSF-Calibration-Curve-and-Shape"><a class="docs-heading-anchor" href="#PSF-Calibration-Curve-and-Shape">PSF Calibration Curve and Shape</a><a id="PSF-Calibration-Curve-and-Shape-1"></a><a class="docs-heading-anchor-permalink" href="#PSF-Calibration-Curve-and-Shape" title="Permalink"></a></h2><p>The following shows how σx and σy vary with z, along with PSF images at different z positions:</p><pre><code class="language-julia hljs">using CairoMakie
+
+# Astigmatic PSF parameters (typical values)
+σx₀, σy₀ = 0.13, 0.13   # in-focus widths (μm)
+Ax, Ay = 0.05, -0.05    # cubic coefficients
+Bx, By = 0.01, -0.01    # quartic coefficients
+γ = 0.15                 # focal plane offset (μm)
+d = 0.4                  # depth scale (μm)
+
+# Compute sigma at given z
+function compute_sigma(z)
+    α_x = 1 + ((z - γ)/d)^2 + Ax*((z - γ)/d)^3 + Bx*((z - γ)/d)^4
+    α_y = 1 + ((z + γ)/d)^2 + Ay*((z + γ)/d)^3 + By*((z + γ)/d)^4
+    return σx₀ * sqrt(α_x), σy₀ * sqrt(α_y)
+end
+
+# Generate PSF image at given z
+function make_psf_image(z; imgsize=31, pixel=0.1)
+    img = zeros(Float32, imgsize, imgsize)
+    center = (imgsize + 1) / 2
+    sx, sy = compute_sigma(z)
+    sx_pix, sy_pix = sx / pixel, sy / pixel
+    for j in 1:imgsize, i in 1:imgsize
+        x, y = j - center, i - center
+        img[i,j] = exp(-x^2/(2sx_pix^2) - y^2/(2sy_pix^2))
+    end
+    return img
+end
+
+# Create combined figure
+fig = Figure(size=(700, 500))
+
+# Top row: PSF images at different z
+z_positions = [-1.0, -0.5, 0.0, 0.5, 1.0]
+for (idx, z) in enumerate(z_positions)
+    ax = Axis(fig[1, idx], title=&quot;z = $z μm&quot;, aspect=1,
+              titlesize=12, yreversed=true)
+    hidedecorations!(ax)
+    hidespines!(ax)
+    img = make_psf_image(z)
+    heatmap!(ax, img&#39;, colormap=:inferno)  # transpose for proper x/y orientation
+end
+
+# Bottom: sigma vs z curve
+ax_curve = Axis(fig[2, 1:5],
+    xlabel=&quot;z position (μm)&quot;,
+    ylabel=&quot;PSF width σ (μm)&quot;,
+    title=&quot;Calibration Curve&quot;
+)
+
+z_range = range(-1.2, 1.2, length=200)
+sigmas = [compute_sigma(z) for z in z_range]
+σx_vals = [s[1] for s in sigmas]
+σy_vals = [s[2] for s in sigmas]
+
+lines!(ax_curve, collect(z_range), σx_vals, label=&quot;σx&quot;, linewidth=2, color=:blue)
+lines!(ax_curve, collect(z_range), σy_vals, label=&quot;σy&quot;, linewidth=2, color=:red)
+
+# Mark the z positions shown in images
+for z in z_positions
+    sx, sy = compute_sigma(z)
+    scatter!(ax_curve, [z], [sx], color=:blue, markersize=10)
+    scatter!(ax_curve, [z], [sy], color=:red, markersize=10)
+end
+
+axislegend(ax_curve, position=:ct)
+rowsize!(fig.layout, 1, Relative(0.35))
+
+fig</code></pre><img src="f47d554b.png" alt="Example block output"/><p>At z &lt; 0, the PSF is elongated vertically (σy &gt; σx). At z &gt; 0, it&#39;s elongated horizontally (σx &gt; σy). The crossing point near z=0 is where the PSF is most circular. The fitter uses this ellipticity to determine z position.</p><h2 id="Basic-3D-Fitting"><a class="docs-heading-anchor" href="#Basic-3D-Fitting">Basic 3D Fitting</a><a id="Basic-3D-Fitting-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-3D-Fitting" title="Permalink"></a></h2><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+# Camera and PSF setup
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+psf = AstigmaticXYZNB{Float32}(
+    0.13f0, 0.13f0,   # σx₀, σy₀
+    0.05f0, -0.05f0,  # Ax, Ay
+    0.01f0, -0.01f0,  # Bx, By
+    0.15f0, 0.4f0     # γ, d
+)
+
+# Generate test data
+batch = generate_roi_batch(camera, psf, n_rois=500, roi_size=13)
+
+# Fit
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+smld, info = fit(batch, fitter)
+
+# Access 3D positions (Emitter3DFitGaussMLE type)
+x_pos = [e.x for e in smld.emitters]
+y_pos = [e.y for e in smld.emitters]
+z_pos = [e.z for e in smld.emitters]
+
+println(&quot;Fitted $(length(smld.emitters)) localizations&quot;)
+println(&quot;Z range: $(round(minimum(z_pos), digits=3)) to $(round(maximum(z_pos), digits=3)) μm&quot;)
+println(&quot;Mean z precision: $(round(mean([e.σ_z for e in smld.emitters])*1000, digits=1)) nm&quot;)</code></pre><h2 id="Output:-Emitter3DFit"><a class="docs-heading-anchor" href="#Output:-Emitter3DFit">Output: Emitter3DFit</a><a id="Output:-Emitter3DFit-1"></a><a class="docs-heading-anchor-permalink" href="#Output:-Emitter3DFit" title="Permalink"></a></h2><p>The <code>AstigmaticXYZNB</code> model returns <code>Emitter3DFitGaussMLE</code> emitters with:</p><table><tr><th style="text-align: right">Field</th><th style="text-align: right">Description</th><th style="text-align: right">Units</th></tr><tr><td style="text-align: right"><code>x</code>, <code>y</code>, <code>z</code></td><td style="text-align: right">3D position</td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>photons</code></td><td style="text-align: right">Total photon count</td><td style="text-align: right">photons</td></tr><tr><td style="text-align: right"><code>bg</code></td><td style="text-align: right">Background level</td><td style="text-align: right">photons/pixel</td></tr><tr><td style="text-align: right"><code>σ_x</code>, <code>σ_y</code>, <code>σ_z</code></td><td style="text-align: right">Position uncertainties (CRLB)</td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>σ_xy</code>, <code>σ_xz</code>, <code>σ_yz</code></td><td style="text-align: right">Position covariances (off-diagonal of Fisher matrix inverse)</td><td style="text-align: right">microns²</td></tr><tr><td style="text-align: right"><code>σ_photons</code>, <code>σ_bg</code></td><td style="text-align: right">Photometry uncertainties</td><td style="text-align: right">photons</td></tr><tr><td style="text-align: right"><code>pvalue</code></td><td style="text-align: right">Goodness-of-fit p-value (χ² test)</td><td style="text-align: right">0-1</td></tr></table><h2 id="Quality-Filtering"><a class="docs-heading-anchor" href="#Quality-Filtering">Quality Filtering</a><a id="Quality-Filtering-1"></a><a class="docs-heading-anchor-permalink" href="#Quality-Filtering" title="Permalink"></a></h2><p>Filter 3D localizations by precision:</p><pre><code class="language-julia hljs">using GaussMLE
+
+# Fit data
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+smld, info = fit(batch, fitter)
+
+# Filter by z precision (typically worse than xy)
+good_z = @filter(smld, σ_z &lt; 0.050)  # z precision &lt; 50nm
+
+# Combined precision filter
+precise = @filter(smld, σ_x &lt; 0.020 &amp;&amp; σ_y &lt; 0.020 &amp;&amp; σ_z &lt; 0.040)
+
+println(&quot;Kept $(length(precise.emitters))/$(length(smld.emitters)) with good 3D precision&quot;)</code></pre><h2 id="Calibration-Tips"><a class="docs-heading-anchor" href="#Calibration-Tips">Calibration Tips</a><a id="Calibration-Tips-1"></a><a class="docs-heading-anchor-permalink" href="#Calibration-Tips" title="Permalink"></a></h2><h3 id="Obtaining-Calibration-Parameters"><a class="docs-heading-anchor" href="#Obtaining-Calibration-Parameters">Obtaining Calibration Parameters</a><a id="Obtaining-Calibration-Parameters-1"></a><a class="docs-heading-anchor-permalink" href="#Obtaining-Calibration-Parameters" title="Permalink"></a></h3><p>The astigmatic PSF parameters (<code>σx₀</code>, <code>σy₀</code>, <code>Ax</code>, <code>Ay</code>, <code>Bx</code>, <code>By</code>, <code>γ</code>, <code>d</code>) are typically determined by:</p><ol><li><strong>Bead calibration</strong>: Image fluorescent beads at known z positions</li><li><strong>Fit widths</strong>: Measure σx and σy at each z (using <code>GaussianXYNBSXSY</code> model)</li><li><strong>Curve fitting</strong>: Fit the polynomial model to extract parameters</li></ol><h3 id="Typical-Values-by-Setup"><a class="docs-heading-anchor" href="#Typical-Values-by-Setup">Typical Values by Setup</a><a id="Typical-Values-by-Setup-1"></a><a class="docs-heading-anchor-permalink" href="#Typical-Values-by-Setup" title="Permalink"></a></h3><table><tr><th style="text-align: right">Setup</th><th style="text-align: right">γ (μm)</th><th style="text-align: right">d (μm)</th><th style="text-align: right">Notes</th></tr><tr><td style="text-align: right">Weak astigmatism</td><td style="text-align: right">0.1-0.15</td><td style="text-align: right">0.4-0.5</td><td style="text-align: right">~1 μm z-range</td></tr><tr><td style="text-align: right">Standard</td><td style="text-align: right">0.15-0.25</td><td style="text-align: right">0.35-0.45</td><td style="text-align: right">~0.8 μm z-range</td></tr><tr><td style="text-align: right">Strong astigmatism</td><td style="text-align: right">0.25-0.35</td><td style="text-align: right">0.3-0.4</td><td style="text-align: right">~0.6 μm z-range</td></tr></table><p>Stronger astigmatism (larger γ) improves z precision but reduces the usable z range.</p><h2 id="Z-Localization-Precision"><a class="docs-heading-anchor" href="#Z-Localization-Precision">Z Localization Precision</a><a id="Z-Localization-Precision-1"></a><a class="docs-heading-anchor-permalink" href="#Z-Localization-Precision" title="Permalink"></a></h2><p>Z precision depends on photon count and PSF parameters:</p><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+camera = IdealCamera(0:1023, 0:1023, 0.1)
+psf = AstigmaticXYZNB{Float32}(
+    0.13f0, 0.13f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 0.15f0, 0.4f0
+)
+
+# Compare precision at different z positions
+fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+
+for target_z in [-0.3, 0.0, 0.3]
+    batch = generate_roi_batch(camera, psf, n_rois=200, roi_size=13)
+    smld, info = fit(batch, fitter)
+
+    σ_xy = mean([sqrt(e.σ_x^2 + e.σ_y^2)/sqrt(2) for e in smld.emitters])
+    σ_z = mean([e.σ_z for e in smld.emitters])
+
+    println(&quot;Mean xy precision: $(round(σ_xy*1000, digits=1)) nm&quot;)
+    println(&quot;Mean z precision: $(round(σ_z*1000, digits=1)) nm&quot;)
+end</code></pre><p>Z precision is typically 2-3x worse than xy precision for astigmatic fitting.</p><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li>See <a href="../../guide/models/#Models">Models</a> for comparison with 2D models</li><li>Learn about <a href="../../guide/gpu/#GPU-Support">GPU Support</a> for fitting large 3D datasets</li><li>Check the <a href="../../api/#API-Reference">API Reference</a> for all <code>AstigmaticXYZNB</code> options</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../sigma/">« PSF Width Fitting</a><a class="docs-footer-nextpage" href="../../api/">API Reference »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Sunday 8 February 2026 20:40">Sunday 8 February 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>

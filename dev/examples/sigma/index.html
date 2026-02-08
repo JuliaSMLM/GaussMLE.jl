@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1.0"/><title>PSF Width Fitting · GaussMLE.jl</title><meta name="title" content="PSF Width Fitting · GaussMLE.jl"/><meta property="og:title" content="PSF Width Fitting · GaussMLE.jl"/><meta property="twitter:title" content="PSF Width Fitting · GaussMLE.jl"/><meta name="description" content="Documentation for GaussMLE.jl."/><meta property="og:description" content="Documentation for GaussMLE.jl."/><meta property="twitter:description" content="Documentation for GaussMLE.jl."/><meta property="og:url" content="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/sigma/"/><meta property="twitter:url" content="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/sigma/"/><link rel="canonical" href="https://JuliaSMLM.github.io/GaussMLE.jl/stable/examples/sigma/"/><script data-outdated-warner src="../../assets/warner.js"></script><link href="https://cdnjs.cloudflare.com/ajax/libs/lato-font/3.0.0/css/lato-font.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/juliamono/0.050/juliamono.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/fontawesome.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/solid.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/brands.min.css" rel="stylesheet" type="text/css"/><link href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.16.8/katex.min.css" rel="stylesheet" type="text/css"/><script>documenterBaseURL="../.."</script><script src="https://cdnjs.cloudflare.com/ajax/libs/require.js/2.3.6/require.min.js" data-main="../../assets/documenter.js"></script><script src="../../search_index.js"></script><script src="../../siteinfo.js"></script><script src="../../../versions.js"></script><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-mocha.css" data-theme-name="catppuccin-mocha"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-macchiato.css" data-theme-name="catppuccin-macchiato"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-frappe.css" data-theme-name="catppuccin-frappe"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/catppuccin-latte.css" data-theme-name="catppuccin-latte"/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-dark.css" data-theme-name="documenter-dark" data-theme-primary-dark/><link class="docs-theme-link" rel="stylesheet" type="text/css" href="../../assets/themes/documenter-light.css" data-theme-name="documenter-light" data-theme-primary/><script src="../../assets/themeswap.js"></script></head><body><div id="documenter"><nav class="docs-sidebar"><div class="docs-package-name"><span class="docs-autofit"><a href="../../">GaussMLE.jl</a></span></div><button class="docs-search-query input is-rounded is-small is-clickable my-2 mx-auto py-1 px-2" id="documenter-search-query">Search docs (Ctrl + /)</button><ul class="docs-menu"><li><a class="tocitem" href="../../">Home</a></li><li><span class="tocitem">User Guide</span><ul><li><a class="tocitem" href="../../guide/getting_started/">Getting Started</a></li><li><a class="tocitem" href="../../guide/models/">Models</a></li><li><a class="tocitem" href="../../guide/gpu/">GPU Support</a></li></ul></li><li><span class="tocitem">Examples</span><ul><li><a class="tocitem" href="../basic/">Basic Fitting</a></li><li class="is-active"><a class="tocitem" href>PSF Width Fitting</a><ul class="internal"><li><a class="tocitem" href="#When-to-Use-Variable-PSF-Fitting"><span>When to Use Variable PSF Fitting</span></a></li><li><a class="tocitem" href="#Basic-Usage"><span>Basic Usage</span></a></li><li><a class="tocitem" href="#Complete-Working-Example"><span>Complete Working Example</span></a></li><li><a class="tocitem" href="#Understanding-Emitter2DFitSigma"><span>Understanding Emitter2DFitSigma</span></a></li><li><a class="tocitem" href="#Quality-Control-with-PSF-Width"><span>Quality Control with PSF Width</span></a></li><li><a class="tocitem" href="#Comparing-Fixed-vs-Variable-PSF-Models"><span>Comparing Fixed vs Variable PSF Models</span></a></li><li><a class="tocitem" href="#Using-with-ROIBatch"><span>Using with ROIBatch</span></a></li><li><a class="tocitem" href="#Anisotropic-PSF-(GaussianXYNBSXSY)"><span>Anisotropic PSF (GaussianXYNBSXSY)</span></a></li><li><a class="tocitem" href="#Troubleshooting"><span>Troubleshooting</span></a></li><li><a class="tocitem" href="#Next-Steps"><span>Next Steps</span></a></li></ul></li><li><a class="tocitem" href="../astigmatic/">3D Astigmatic</a></li></ul></li><li><a class="tocitem" href="../../api/">API Reference</a></li><li><a class="tocitem" href="../../theory/">Theory</a></li></ul><div class="docs-version-selector field has-addons"><div class="control"><span class="docs-label button is-static is-size-7">Version</span></div><div class="docs-selector control is-expanded"><div class="select is-fullwidth is-size-7"><select id="documenter-version-selector"></select></div></div></div></nav><div class="docs-main"><header class="docs-navbar"><a class="docs-sidebar-button docs-navbar-link fa-solid fa-bars is-hidden-desktop" id="documenter-sidebar-button" href="#"></a><nav class="breadcrumb"><ul class="is-hidden-mobile"><li><a class="is-disabled">Examples</a></li><li class="is-active"><a href>PSF Width Fitting</a></li></ul><ul class="is-hidden-tablet"><li class="is-active"><a href>PSF Width Fitting</a></li></ul></nav><div class="docs-right"><a class="docs-navbar-link" href="https://github.com/JuliaSMLM/GaussMLE.jl/blob/main/docs/src/examples/sigma.md#" title="Edit source on GitHub"><span class="docs-icon fa-solid"></span></a><a class="docs-settings-button docs-navbar-link fa-solid fa-gear" id="documenter-settings-button" href="#" title="Settings"></a><a class="docs-article-toggle-button fa-solid fa-chevron-up" id="documenter-article-toggle-button" href="javascript:;" title="Collapse all docstrings"></a></div></header><article class="content" id="documenter-page"><h1 id="PSF-Width-Fitting-Example"><a class="docs-heading-anchor" href="#PSF-Width-Fitting-Example">PSF Width Fitting Example</a><a id="PSF-Width-Fitting-Example-1"></a><a class="docs-heading-anchor-permalink" href="#PSF-Width-Fitting-Example" title="Permalink"></a></h1><p>This example demonstrates fitting with variable PSF width using the <code>GaussianXYNBS</code> model, which includes the PSF width as a fitted parameter.</p><h2 id="When-to-Use-Variable-PSF-Fitting"><a class="docs-heading-anchor" href="#When-to-Use-Variable-PSF-Fitting">When to Use Variable PSF Fitting</a><a id="When-to-Use-Variable-PSF-Fitting-1"></a><a class="docs-heading-anchor-permalink" href="#When-to-Use-Variable-PSF-Fitting" title="Permalink"></a></h2><p>Use <code>GaussianXYNBS</code> when:</p><ul><li>PSF width varies across your dataset (e.g., z-dependent defocus)</li><li>PSF width is unknown and needs to be measured</li><li>Quality control: filter localizations by fitted PSF width</li><li>Detecting PSF changes during acquisition</li></ul><h2 id="Basic-Usage"><a class="docs-heading-anchor" href="#Basic-Usage">Basic Usage</a><a id="Basic-Usage-1"></a><a class="docs-heading-anchor-permalink" href="#Basic-Usage" title="Permalink"></a></h2><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+# Create variable-sigma model (no fixed parameters)
+psf = GaussianXYNBS()
+
+# Create fitter
+fitter = GaussMLEConfig(psf_model = psf)
+
+# Fit data
+data = rand(Float32, 11, 11, 100)
+smld, info = fit(data, fitter)
+
+# Access fitted PSF width from emitters (Emitter2DFitSigma type)
+sigmas = [e.σ for e in smld.emitters]
+sigma_uncertainties = [e.σ_σ for e in smld.emitters]
+
+println(&quot;Mean PSF width: $(mean(sigmas)) microns&quot;)
+println(&quot;Mean sigma uncertainty: $(mean(sigma_uncertainties)) microns&quot;)</code></pre><h2 id="Complete-Working-Example"><a class="docs-heading-anchor" href="#Complete-Working-Example">Complete Working Example</a><a id="Complete-Working-Example-1"></a><a class="docs-heading-anchor-permalink" href="#Complete-Working-Example" title="Permalink"></a></h2><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+println(&quot;=== PSF Width Fitting Example ===\n&quot;)
+
+# Generate synthetic data
+n_rois = 100
+data = rand(Float32, 11, 11, n_rois)
+
+# Create variable-sigma fitter
+fitter = GaussMLEConfig(
+    psf_model = GaussianXYNBS(),
+    iterations = 25  # More iterations for 5-parameter fit
+)
+
+# Fit the data
+println(&quot;Fitting $n_rois ROIs with variable PSF width...&quot;)
+smld, info = fit(data, fitter)
+
+# The emitters are Emitter2DFitSigma type with sigma field
+println(&quot;\n=== Results ===&quot;)
+println(&quot;Fitted: $(length(smld.emitters)) localizations&quot;)
+
+# Extract all fields
+x_positions = [e.x for e in smld.emitters]
+y_positions = [e.y for e in smld.emitters]
+photons = [e.photons for e in smld.emitters]
+backgrounds = [e.bg for e in smld.emitters]
+sigmas = [e.σ for e in smld.emitters]
+
+# Uncertainties
+sigma_x = [e.σ_x for e in smld.emitters]
+sigma_sigma = [e.σ_σ for e in smld.emitters]
+
+println(&quot;\nPosition Statistics:&quot;)
+println(&quot;  Mean x: $(round(mean(x_positions), digits=3)) microns&quot;)
+println(&quot;  Mean y: $(round(mean(y_positions), digits=3)) microns&quot;)
+println(&quot;  Mean precision: $(round(mean(sigma_x)*1000, digits=1)) nm&quot;)
+
+println(&quot;\nPhotometry Statistics:&quot;)
+println(&quot;  Mean photons: $(round(mean(photons), digits=1))&quot;)
+println(&quot;  Mean background: $(round(mean(backgrounds), digits=1))&quot;)
+
+println(&quot;\nPSF Width Statistics:&quot;)
+println(&quot;  Mean sigma: $(round(mean(sigmas), digits=4)) microns&quot;)
+println(&quot;  Sigma std: $(round(std(sigmas), digits=4)) microns&quot;)
+println(&quot;  Sigma range: $(round.(extrema(sigmas), digits=4)) microns&quot;)
+println(&quot;  Mean sigma uncertainty: $(round(mean(sigma_sigma), digits=4)) microns&quot;)</code></pre><h2 id="Understanding-Emitter2DFitSigma"><a class="docs-heading-anchor" href="#Understanding-Emitter2DFitSigma">Understanding Emitter2DFitSigma</a><a id="Understanding-Emitter2DFitSigma-1"></a><a class="docs-heading-anchor-permalink" href="#Understanding-Emitter2DFitSigma" title="Permalink"></a></h2><p>The <code>GaussianXYNBS</code> model returns <code>Emitter2DFitSigma</code> emitters with these fields:</p><table><tr><th style="text-align: right">Field</th><th style="text-align: right">Description</th><th style="text-align: right">Units</th></tr><tr><td style="text-align: right"><code>x</code>, <code>y</code></td><td style="text-align: right">Position</td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>photons</code></td><td style="text-align: right">Total photon count</td><td style="text-align: right">photons</td></tr><tr><td style="text-align: right"><code>bg</code></td><td style="text-align: right">Background level</td><td style="text-align: right">photons/pixel</td></tr><tr><td style="text-align: right"><code>σ</code></td><td style="text-align: right"><strong>Fitted PSF width</strong></td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>σ_x</code>, <code>σ_y</code></td><td style="text-align: right">Position uncertainty</td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>σ_xy</code></td><td style="text-align: right">Position covariance (off-diagonal of Fisher matrix inverse)</td><td style="text-align: right">microns²</td></tr><tr><td style="text-align: right"><code>σ_photons</code>, <code>σ_bg</code></td><td style="text-align: right">Photometry uncertainties</td><td style="text-align: right">photons</td></tr><tr><td style="text-align: right"><code>σ_σ</code></td><td style="text-align: right"><strong>PSF width uncertainty</strong></td><td style="text-align: right">microns</td></tr><tr><td style="text-align: right"><code>pvalue</code></td><td style="text-align: right">Goodness-of-fit p-value (χ² test)</td><td style="text-align: right">0-1</td></tr><tr><td style="text-align: right"><code>frame</code></td><td style="text-align: right">Frame number</td><td style="text-align: right">integer</td></tr></table><h2 id="Quality-Control-with-PSF-Width"><a class="docs-heading-anchor" href="#Quality-Control-with-PSF-Width">Quality Control with PSF Width</a><a id="Quality-Control-with-PSF-Width-1"></a><a class="docs-heading-anchor-permalink" href="#Quality-Control-with-PSF-Width" title="Permalink"></a></h2><p>One key use of variable PSF fitting is quality control:</p><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+# Fit with variable sigma
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
+smld, info = fit(data, fitter)
+
+# Extract PSF widths
+sigmas = [e.σ for e in smld.emitters]
+
+# Analyze distribution
+println(&quot;PSF Width Analysis:&quot;)
+println(&quot;  Mean: $(round(mean(sigmas), digits=4)) microns&quot;)
+println(&quot;  Median: $(round(median(sigmas), digits=4)) microns&quot;)
+println(&quot;  Std: $(round(std(sigmas), digits=4)) microns&quot;)
+println(&quot;  IQR: $(round.(quantile(sigmas, [0.25, 0.75]), digits=4)) microns&quot;)
+
+# Filter by PSF width using @filter (typical range: 80-180nm)
+valid = @filter(smld, σ &gt; 0.08 &amp;&amp; σ &lt; 0.18)
+println(&quot;\nValid localizations (sigma in expected range):&quot;)
+println(&quot;  $(length(valid.emitters)) / $(length(smld.emitters))&quot;)</code></pre><h2 id="Comparing-Fixed-vs-Variable-PSF-Models"><a class="docs-heading-anchor" href="#Comparing-Fixed-vs-Variable-PSF-Models">Comparing Fixed vs Variable PSF Models</a><a id="Comparing-Fixed-vs-Variable-PSF-Models-1"></a><a class="docs-heading-anchor-permalink" href="#Comparing-Fixed-vs-Variable-PSF-Models" title="Permalink"></a></h2><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+# Same data, two models
+data = rand(Float32, 11, 11, 1000)
+
+# Fixed PSF model
+fitter_fixed = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
+smld_fixed, info_fixed = fit(data, fitter_fixed)
+
+# Variable PSF model
+fitter_var = GaussMLEConfig(psf_model = GaussianXYNBS())
+smld_var, info_var = fit(data, fitter_var)
+
+# Compare position estimates
+x_fixed = [e.x for e in smld_fixed.emitters]
+x_var = [e.x for e in smld_var.emitters]
+
+rms_diff = sqrt(mean((x_fixed .- x_var).^2))
+println(&quot;Position difference (RMS): $(round(rms_diff*1000, digits=2)) nm&quot;)
+
+# Compare uncertainties
+sigma_x_fixed = mean([e.σ_x for e in smld_fixed.emitters])
+sigma_x_var = mean([e.σ_x for e in smld_var.emitters])
+
+println(&quot;Mean x uncertainty:&quot;)
+println(&quot;  Fixed PSF:    $(round(sigma_x_fixed*1000, digits=2)) nm&quot;)
+println(&quot;  Variable PSF: $(round(sigma_x_var*1000, digits=2)) nm&quot;)
+println(&quot;  Ratio: $(round(sigma_x_var/sigma_x_fixed, digits=2))x&quot;)
+
+# Performance comparison
+t_fixed = @elapsed fit(data, fitter_fixed)
+t_var = @elapsed fit(data, fitter_var)
+
+println(&quot;\nPerformance:&quot;)
+println(&quot;  Fixed PSF:    $(round(1000/t_fixed)) fits/second&quot;)
+println(&quot;  Variable PSF: $(round(1000/t_var)) fits/second&quot;)
+println(&quot;  Speed ratio: $(round(t_fixed/t_var, digits=2))x&quot;)</code></pre><h2 id="Using-with-ROIBatch"><a class="docs-heading-anchor" href="#Using-with-ROIBatch">Using with ROIBatch</a><a id="Using-with-ROIBatch-1"></a><a class="docs-heading-anchor-permalink" href="#Using-with-ROIBatch" title="Permalink"></a></h2><p>In a typical SMLM pipeline, <code>ROIBatch</code> comes from SMLMBoxer.jl. For testing:</p><pre><code class="language-julia hljs">using GaussMLE
+
+# Create camera
+camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
+
+# Generate test data
+batch = generate_roi_batch(
+    camera,
+    GaussianXYNBS(),  # Variable sigma model
+    n_rois = 100,
+    roi_size = 11
+)
+
+# Fit
+fitter = GaussMLEConfig(psf_model = GaussianXYNBS())
+smld, info = fit(batch, fitter)
+
+# Extract results - positions in camera coordinates
+sigmas = [e.σ for e in smld.emitters]
+println(&quot;Fitted PSF widths: $(round.(extrema(sigmas), digits=4)) microns&quot;)</code></pre><h2 id="Anisotropic-PSF-(GaussianXYNBSXSY)"><a class="docs-heading-anchor" href="#Anisotropic-PSF-(GaussianXYNBSXSY)">Anisotropic PSF (GaussianXYNBSXSY)</a><a id="Anisotropic-PSF-(GaussianXYNBSXSY)-1"></a><a class="docs-heading-anchor-permalink" href="#Anisotropic-PSF-(GaussianXYNBSXSY)" title="Permalink"></a></h2><p>For elliptical PSFs, use <code>GaussianXYNBSXSY</code>:</p><pre><code class="language-julia hljs">using GaussMLE
+using Statistics
+
+# Anisotropic model - fits sigma_x and sigma_y independently
+fitter = GaussMLEConfig(psf_model = GaussianXYNBSXSY())
+smld, info = fit(data, fitter)
+
+# Returns Emitter2DFitSigmaXY emitters
+# Fitted PSF widths (distinct from position uncertainties):
+sigma_x_psf = [e.σx for e in smld.emitters]   # Fitted PSF width in x (microns)
+sigma_y_psf = [e.σy for e in smld.emitters]   # Fitted PSF width in y (microns)
+
+# Position uncertainties (CRLB):
+precision_x = [e.σ_x for e in smld.emitters]  # x position uncertainty (microns)
+precision_y = [e.σ_y for e in smld.emitters]   # y position uncertainty (microns)
+
+# PSF width uncertainties:
+sigma_sigma_x = [e.σ_σx for e in smld.emitters]  # Uncertainty in fitted σx
+sigma_sigma_y = [e.σ_σy for e in smld.emitters]  # Uncertainty in fitted σy</code></pre><h2 id="Troubleshooting"><a class="docs-heading-anchor" href="#Troubleshooting">Troubleshooting</a><a id="Troubleshooting-1"></a><a class="docs-heading-anchor-permalink" href="#Troubleshooting" title="Permalink"></a></h2><h3 id="PSF-Width-Convergence-Issues"><a class="docs-heading-anchor" href="#PSF-Width-Convergence-Issues">PSF Width Convergence Issues</a><a id="PSF-Width-Convergence-Issues-1"></a><a class="docs-heading-anchor-permalink" href="#PSF-Width-Convergence-Issues" title="Permalink"></a></h3><p>If fitted PSF widths are unreasonable:</p><pre><code class="language-julia hljs"># Check for extreme values
+sigmas = [e.σ for e in smld.emitters]
+
+extreme_low = count(s -&gt; s &lt; 0.05, sigmas)   # &lt; 50nm
+extreme_high = count(s -&gt; s &gt; 0.5, sigmas)   # &gt; 500nm
+
+println(&quot;Extreme low sigma: $extreme_low&quot;)
+println(&quot;Extreme high sigma: $extreme_high&quot;)
+
+if extreme_low + extreme_high &gt; length(sigmas) * 0.1
+    println(&quot;Warning: &gt;10% of fits have extreme PSF widths&quot;)
+    println(&quot;Consider:&quot;)
+    println(&quot;  - Using fixed PSF model (GaussianXYNB)&quot;)
+    println(&quot;  - Checking data quality&quot;)
+    println(&quot;  - Increasing iterations&quot;)
+end</code></pre><h3 id="Slow-Convergence"><a class="docs-heading-anchor" href="#Slow-Convergence">Slow Convergence</a><a id="Slow-Convergence-1"></a><a class="docs-heading-anchor-permalink" href="#Slow-Convergence" title="Permalink"></a></h3><pre><code class="language-julia hljs"># Use more iterations for variable PSF
+fitter = GaussMLEConfig(
+    psf_model = GaussianXYNBS(),
+    iterations = 30  # Default is 20
+)</code></pre><h2 id="Next-Steps"><a class="docs-heading-anchor" href="#Next-Steps">Next Steps</a><a id="Next-Steps-1"></a><a class="docs-heading-anchor-permalink" href="#Next-Steps" title="Permalink"></a></h2><ul><li>Learn about <a href="../../guide/models/#Models">3D astigmatic fitting</a> with <code>AstigmaticXYZNB</code></li><li>Explore <a href="../../guide/gpu/#GPU-Support">GPU Support</a> for large datasets</li><li>See the <a href="../../api/#API-Reference">API Reference</a> for all options</li></ul></article><nav class="docs-footer"><a class="docs-footer-prevpage" href="../basic/">« Basic Fitting</a><a class="docs-footer-nextpage" href="../astigmatic/">3D Astigmatic »</a><div class="flexbox-break"></div><p class="footer-message">Powered by <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> and the <a href="https://julialang.org/">Julia Programming Language</a>.</p></nav></div><div class="modal" id="documenter-settings"><div class="modal-background"></div><div class="modal-card"><header class="modal-card-head"><p class="modal-card-title">Settings</p><button class="delete"></button></header><section class="modal-card-body"><p><label class="label">Theme</label><div class="select"><select id="documenter-themepicker"><option value="auto">Automatic (OS)</option><option value="documenter-light">documenter-light</option><option value="documenter-dark">documenter-dark</option><option value="catppuccin-latte">catppuccin-latte</option><option value="catppuccin-frappe">catppuccin-frappe</option><option value="catppuccin-macchiato">catppuccin-macchiato</option><option value="catppuccin-mocha">catppuccin-mocha</option></select></div></p><hr/><p>This document was generated with <a href="https://github.com/JuliaDocs/Documenter.jl">Documenter.jl</a> version 1.16.1 on <span class="colophon-date" title="Sunday 8 February 2026 20:40">Sunday 8 February 2026</span>. Using Julia version 1.12.4.</p></section><footer class="modal-card-foot"></footer></div></div></div></body></html>
