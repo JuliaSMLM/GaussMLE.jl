@@ -95,8 +95,9 @@ fitter = GaussMLEConfig(;
     psf_model = GaussianXYNB(0.13f0),  # PSF model with physical params
     backend = :auto,                     # :auto, :cpu, or :gpu
     iterations = 20,                     # Newton-Raphson iterations
+    constraints = nothing,               # Parameter constraints (auto-generated if nothing)
     batch_size = 10_000,                 # GPU batch size
-    auto_timeout = 300.0,                 # Seconds to wait in :auto mode before CPU fallback
+    auto_timeout = 300.0,                # Seconds to wait in :auto mode before CPU fallback
     gpu_timeout = Inf,                   # Seconds to wait in :gpu mode (Inf = forever)
     on_wait = nothing                    # Optional callback (elapsed, available, required) -> nothing
 )
@@ -116,7 +117,8 @@ fitter = GaussMLEConfig(;
 Fit Gaussian PSF to ROI data. Data-first argument order for pipeline ergonomics.
 
 **Signatures:**
-- `fit(data::Array{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(data::AbstractArray{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(roi::AbstractMatrix, fitter)` - Fit single ROI (2D matrix)
 - `fit(batch::ROIBatch, fitter)` - Fit ROIBatch (preferred for real data)
 - `fit(batch::ROIBatch; psf_model=..., iterations=...)` - Convenience form with kwargs
 
@@ -276,7 +278,12 @@ batch = generate_roi_batch(
     n_rois = 100,
     roi_size = 11,
     true_params = nothing,  # Auto-generate or provide matrix
-    seed = 42               # Reproducibility
+    seed = nothing,          # Set for reproducibility
+    corners = nothing,       # Provide or auto-generate ROI corners
+    frame_indices = nothing, # Provide or auto-generate frame numbers
+    xy_variation = 1.0f0,    # Position randomization within ROI (pixels)
+    corner_mode = :random,   # :random or :grid corner placement
+    min_spacing = 20         # Minimum spacing between ROIs (grid mode)
 )
 ```
 
