@@ -289,5 +289,3 @@ See `test/CLAUDE.md` for detailed testing guidelines. Key points:
 ### Reference Implementation
 
 Original MATLAB/CUDA implementation: https://github.com/LidkeLab/smite/tree/main/MATLAB/source/cuda
-
-Design reference: `.claude/ref/package_structure.md`

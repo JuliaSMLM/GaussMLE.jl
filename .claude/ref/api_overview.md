@@ -15,7 +15,7 @@ GaussMLE.jl performs Maximum Likelihood Estimation of Gaussian blob parameters f
 
 ```julia
 using Pkg
-Pkg.add("GaussMLE")
+Pkg.add("GaussMLE")  # Automatically installs SMLMData.jl dependency
 ```
 
 ## Re-export Convention
@@ -58,10 +58,13 @@ fitter = GaussMLEConfig(
     iterations = 20
 )
 
-# 4. Fit - returns SMLMData.BasicSMLD
-smld = fit(fitter, batch)
+# 4. Fit - returns (SMLMData.BasicSMLD, GaussMLEFitInfo) tuple
+smld, info = fit(batch, fitter)
 
-# 5. Access results (positions in microns, from camera pixel_size)
+# 5. Access fit metadata
+println("Fitted $(info.n_fits) ROIs in $(info.elapsed_s * 1000) ms on $(info.backend)")
+
+# 6. Access results (positions in microns, from camera pixel_size)
 for emitter in smld.emitters
     println("Position: ($(emitter.x), $(emitter.y)) μm")
     println("Photons: $(emitter.photons)")
@@ -92,8 +95,9 @@ fitter = GaussMLEConfig(;
     psf_model = GaussianXYNB(0.13f0),  # PSF model with physical params
     backend = :auto,                     # :auto, :cpu, or :gpu
     iterations = 20,                     # Newton-Raphson iterations
+    constraints = nothing,               # Parameter constraints (auto-generated if nothing)
     batch_size = 10_000,                 # GPU batch size
-    auto_timeout = 30.0,                 # Seconds to wait in :auto mode before CPU fallback
+    auto_timeout = 300.0,                # Seconds to wait in :auto mode before CPU fallback
     gpu_timeout = Inf,                   # Seconds to wait in :gpu mode (Inf = forever)
     on_wait = nothing                    # Optional callback (elapsed, available, required) -> nothing
 )
@@ -108,28 +112,50 @@ fitter = GaussMLEConfig(;
 - Automatically selects GPU with most free memory
 - Memory wait with 1.5× safety margin for fragmentation
 
-### `fit(fitter, data)` → `SMLMData.BasicSMLD`
+### `fit(data, fitter)` → `(SMLMData.BasicSMLD, GaussMLEFitInfo)`
 
-Fit Gaussian PSF to ROI data.
+Fit Gaussian PSF to ROI data. Data-first argument order for pipeline ergonomics.
 
 **Signatures:**
-- `fit(fitter, data::Array{T,3})` - Fit raw 3D array (roi_size × roi_size × n_rois)
-- `fit(fitter, batch::ROIBatch)` - Fit ROIBatch (preferred for real data)
+- `fit(data::AbstractArray{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(roi::AbstractMatrix, fitter)` - Fit single ROI (2D matrix)
+- `fit(batch::ROIBatch, fitter)` - Fit ROIBatch (preferred for real data)
+- `fit(batch::ROIBatch; psf_model=..., iterations=...)` - Convenience form with kwargs
 
-**Returns:** `SMLMData.BasicSMLD` with emitters (type depends on PSF model)
+**Returns:** `(SMLMData.BasicSMLD, GaussMLEFitInfo)` tuple
+
+### `GaussMLEFitInfo`
+
+Metadata about the fit operation.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `elapsed_s` | `Float64` | Elapsed time in seconds |
+| `backend` | `Symbol` | Actual execution backend (`:cpu` or `:gpu`, never `:auto`) |
+| `device_id` | `Int` | GPU device index (0-based) or -1 for CPU |
+| `n_fits` | `Int` | Number of ROIs attempted |
+| `n_converged` | `Int` | Number of ROIs that converged |
+| `batch_size` | `Int` | Actual batch size used |
+| `n_batches` | `Int` | Number of batches processed |
+| `memory_per_batch` | `Int` | Estimated bytes per batch |
+
+```julia
+smld, info = fit(batch, fitter)
+println("Executed on $(info.backend) in $(info.elapsed_s * 1000) ms")
+```
 
 ### Output Emitter Types
 
 | PSF Model | Emitter Type | Key Fields |
 |-----------|--------------|------------|
-| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg, σ_x, σ_y |
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | x, y, photons, bg, σ_x, σ_y, σ_xy, pvalue |
 | `GaussianXYNBS` | `Emitter2DFitSigma` | + σ, σ_σ (fitted PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σ_x_psf, σ_y_psf (fitted PSF widths) |
-| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg, σ_x, σ_y, σ_z |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (fitted PSF widths), σ_σx, σ_σy |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz, pvalue |
 
 All emitter types subtype `SMLMData.AbstractEmitter`.
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -137,7 +163,9 @@ All emitter types subtype `SMLMData.AbstractEmitter`.
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -250,34 +278,84 @@ batch = generate_roi_batch(
     n_rois = 100,
     roi_size = 11,
     true_params = nothing,  # Auto-generate or provide matrix
-    seed = 42               # Reproducibility
+    seed = nothing,          # Set for reproducibility
+    corners = nothing,       # Provide or auto-generate ROI corners
+    frame_indices = nothing, # Provide or auto-generate frame numbers
+    xy_variation = 1.0f0,    # Position randomization within ROI (pixels)
+    corner_mode = :random,   # :random or :grid corner placement
+    min_spacing = 20         # Minimum spacing between ROIs (grid mode)
 )
 ```
 
-## GPU Acceleration
+## GPU Scheduling
+
+### Backend Selection
 
 ```julia
-# Auto-detect (uses GPU if available, falls back to CPU after 30s)
+# Auto-detect (default): try GPU with timeout, fall back to CPU
 fitter = GaussMLEConfig(backend = :auto)
 
-# Force GPU with custom timeout
+# Force GPU: error if unavailable after gpu_timeout
 fitter = GaussMLEConfig(backend = :gpu, batch_size = 10_000, gpu_timeout = 60.0)
 
-# Force CPU
+# Force CPU: no GPU interaction
 fitter = GaussMLEConfig(backend = :cpu)
+```
 
-# Auto with progress callback
+### Config Fields for GPU Scheduling
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `backend` | `:auto` | `:cpu`, `:gpu`, or `:auto` |
+| `batch_size` | `10_000` | ROIs per GPU batch |
+| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
+| `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode (errors on timeout) |
+| `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` for progress |
+
+### Contention-Aware Scheduling
+
+GPU scheduling uses NVML (NVIDIA Management Library) for contention-safe device selection in multi-process environments. This avoids the OOM errors that occur when multiple Julia processes simultaneously create CUDA contexts.
+
+**Unified retry loop** (in `_run_mle_kernel!`):
+```
+while !gpu_succeeded && before deadline:
+    1. Poll NVML for GPU with sufficient free memory (1.5x safety margin)
+    2. Check contention: skip GPU if other_procs > 0 AND (low memory OR compute > 90%)
+    3. Try: CUDA.device!(dev) -> process all batches -> CUDA.reclaim() -> done
+    4. Catch: release CUDA context -> loop back to step 1
+```
+
+Three failure modes handled uniformly:
+1. **No free memory** - NVML poll waits with jittered backoff
+2. **TOCTOU context race** - `CUDA.device!()` fails because another process grabbed the GPU between check and context creation. Context released, loop retries
+3. **Runtime OOM** - GPU allocation/kernel fails mid-batch. Context released, all batches restarted on re-acquired GPU
+
+After timeout: `:auto` falls back to CPU, `:gpu` errors.
+
+### Memory Pool Reclaim
+
+After successful GPU processing, `CUDA.reclaim()` returns CUDA memory pool allocations to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
+
+### Context Release
+
+On GPU failure, `_release_gpu_context()` calls `cuDevicePrimaryCtxRelease` to destroy the CUDA context and free reserved memory. `CUDA.reclaim()` is NOT called after context release (it requires an active context and would either hang or re-create the released context).
+
+### Multi-GPU Support
+
+Automatically selects GPU with most free memory via NVML scan. Each poll iteration checks all GPUs - whichever frees up first is used.
+
+### Progress Callback
+
+```julia
 fitter = GaussMLEConfig(
     backend = :auto,
-    auto_timeout = 30.0,
+    auto_timeout = 60.0,
     on_wait = (elapsed, available, required) ->
-        @info "Waiting..." elapsed=round(elapsed, digits=1)
+        @info "Waiting for GPU" elapsed=round(elapsed, digits=1) available=Base.format_bytes(available)
 )
 ```
 
-**Multi-GPU Support:** Automatically selects GPU with most free memory.
-
-GPU provides significant speedup for large batches (>1000 ROIs).
+The callback fires each poll iteration when no GPU is available. Arguments: elapsed seconds, best available bytes across all GPUs, required bytes.
 
 ## Goodness-of-Fit
 
@@ -323,7 +401,7 @@ batch = ROIBatch(
 
 # Fit with proper unit handling
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 ```
 
 **Note:** For IdealCamera, corners can all be (1,1) since no variance map lookup is needed. For sCMOS cameras, corners must be actual camera positions.
@@ -339,7 +417,7 @@ batch = generate_roi_batch(camera, GaussianXYNB(0.13f0), n_rois=100, roi_size=11
 
 # Fit
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Extract positions (in microns)
 positions = [(e.x, e.y) for e in smld.emitters]
@@ -352,7 +430,7 @@ Use SMLMData's `@filter` macro for quality control:
 ```julia
 using GaussMLE
 
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Filter by precision and photon count
 good = @filter(smld, σ_x < 0.030 && photons > 500)
@@ -372,7 +450,7 @@ using GaussMLE
 # batch = SMLMBoxer.extract_rois(movie, camera, detections)
 
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
-smld = fit(fitter, batch)  # Automatically handles ADU→electrons
+smld, info = fit(batch, fitter)  # Automatically handles ADU→electrons
 ```
 
 ### 3D Localization
@@ -389,7 +467,7 @@ psf_3d = AstigmaticXYZNB{Float32}(
 )
 
 fitter = GaussMLEConfig(psf_model = psf_3d, iterations = 30)
-smld = fit(fitter, batch)
+smld, info = fit(batch, fitter)
 
 # Z positions in microns
 z_values = [e.z for e in smld.emitters]

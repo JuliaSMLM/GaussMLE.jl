@@ -95,8 +95,9 @@ fitter = GaussMLEConfig(;
     psf_model = GaussianXYNB(0.13f0),  # PSF model with physical params
     backend = :auto,                     # :auto, :cpu, or :gpu
     iterations = 20,                     # Newton-Raphson iterations
+    constraints = nothing,               # Parameter constraints (auto-generated if nothing)
     batch_size = 10_000,                 # GPU batch size
-    auto_timeout = 30.0,                 # Seconds to wait in :auto mode before CPU fallback
+    auto_timeout = 300.0,                # Seconds to wait in :auto mode before CPU fallback
     gpu_timeout = Inf,                   # Seconds to wait in :gpu mode (Inf = forever)
     on_wait = nothing                    # Optional callback (elapsed, available, required) -> nothing
 )
@@ -116,7 +117,8 @@ fitter = GaussMLEConfig(;
 Fit Gaussian PSF to ROI data. Data-first argument order for pipeline ergonomics.
 
 **Signatures:**
-- `fit(data::Array{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(data::AbstractArray{T,3}, fitter)` - Fit raw 3D array (roi_size × roi_size × n_rois)
+- `fit(roi::AbstractMatrix, fitter)` - Fit single ROI (2D matrix)
 - `fit(batch::ROIBatch, fitter)` - Fit ROIBatch (preferred for real data)
 - `fit(batch::ROIBatch; psf_model=..., iterations=...)` - Convenience form with kwargs
 
@@ -146,14 +148,14 @@ println("Executed on $(info.backend) in $(info.elapsed_s * 1000) ms")
 
 | PSF Model | Emitter Type | Key Fields |
 |-----------|--------------|------------|
-| `GaussianXYNB` | `Emitter2DFit` | x, y, photons, bg, σ_x, σ_y |
+| `GaussianXYNB` | `Emitter2DFitGaussMLE` | x, y, photons, bg, σ_x, σ_y, σ_xy, pvalue |
 | `GaussianXYNBS` | `Emitter2DFitSigma` | + σ, σ_σ (fitted PSF width) |
-| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σ_x_psf, σ_y_psf (fitted PSF widths) |
-| `AstigmaticXYZNB` | `Emitter3DFit` | x, y, z, photons, bg, σ_x, σ_y, σ_z |
+| `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (fitted PSF widths), σ_σx, σ_σy |
+| `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz, pvalue |
 
 All emitter types subtype `SMLMData.AbstractEmitter`.
 
-### Emitter2DFit Fields
+### Emitter2DFitGaussMLE Fields
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -161,7 +163,9 @@ All emitter types subtype `SMLMData.AbstractEmitter`.
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -274,7 +278,12 @@ batch = generate_roi_batch(
     n_rois = 100,
     roi_size = 11,
     true_params = nothing,  # Auto-generate or provide matrix
-    seed = 42               # Reproducibility
+    seed = nothing,          # Set for reproducibility
+    corners = nothing,       # Provide or auto-generate ROI corners
+    frame_indices = nothing, # Provide or auto-generate frame numbers
+    xy_variation = 1.0f0,    # Position randomization within ROI (pixels)
+    corner_mode = :random,   # :random or :grid corner placement
+    min_spacing = 20         # Minimum spacing between ROIs (grid mode)
 )
 ```
 
@@ -299,7 +308,7 @@ fitter = GaussMLEConfig(backend = :cpu)
 |-------|---------|-------------|
 | `backend` | `:auto` | `:cpu`, `:gpu`, or `:auto` |
 | `batch_size` | `10_000` | ROIs per GPU batch |
-| `auto_timeout` | `30.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
+| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode before CPU fallback |
 | `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode (errors on timeout) |
 | `on_wait` | `nothing` | Callback `(elapsed, available, required) -> nothing` for progress |
 

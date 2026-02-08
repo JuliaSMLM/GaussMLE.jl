@@ -75,7 +75,7 @@ Where:
 
 ### Gradient Components
 
-For the GaussXyNb model ($\theta = [x, y, n, b]$):
+For the GaussianXYNB model ($\theta = [x, y, n, b]$):
 
 ```math
 \frac{\partial \ell}{\partial \theta_x} = \sum_{i,j} \left( \frac{N_{i,j}}{\mu_{i,j}} - 1 \right) \frac{\partial \mu_{i,j}}{\partial \theta_x}
@@ -158,9 +158,23 @@ The CRLB gives the minimum achievable standard deviation:
 
 GaussMLE.jl computes this at the MLE estimate to provide uncertainty estimates.
 
+### Parameter Covariances
+
+The off-diagonal elements of the inverse Fisher matrix provide covariance information between parameters:
+
+```math
+\text{Cov}(\theta_i, \theta_j) = [I^{-1}(\theta)]_{ij} \quad (i \neq j)
+```
+
+GaussMLE.jl extracts the spatial covariances from the Fisher matrix inverse:
+- **2D models**: `σ_xy = [I^{-1}]_{1,2}` — covariance between x and y position estimates (microns²)
+- **3D models**: additionally `σ_xz = [I^{-1}]_{1,3}` and `σ_yz = [I^{-1}]_{2,3}`
+
+These covariances capture correlations between position estimates. For example, a non-zero `σ_xy` indicates that the x and y position estimates are correlated, which can arise from asymmetric pixel sampling or off-center emitter positions within the ROI.
+
 ## Model Extensions
 
-### Variable PSF Width (GaussXyNbS)
+### Variable PSF Width (GaussianXYNBS)
 
 For the 5-parameter model with variable PSF width:
 
@@ -182,35 +196,33 @@ Where:
 
 ### sCMOS Noise Model
 
-For sCMOS cameras with pixel-dependent variance $\text{Var}_{i,j}$:
+For sCMOS cameras, each pixel has independent readout noise characterized by a per-pixel variance $\sigma^2_{\text{read},i,j}$. The total noise variance at each pixel is the sum of Poisson shot noise and readout noise:
 
 ```math
-N_{i,j} \sim \mathcal{N}(\mu(\theta)_{i,j}, \text{Var}_{i,j})
+\text{Var}_{i,j} = \mu(\theta)_{i,j} + \sigma^2_{\text{read},i,j}
 ```
 
-The log-likelihood becomes:
+The likelihood is approximated as Gaussian with this combined variance:
 
 ```math
-\ell(\theta) = -\frac{1}{2} \sum_{i,j} \left[ \frac{(N_{i,j} - \mu(\theta)_{i,j})^2}{\text{Var}_{i,j}} + \log(2\pi \text{Var}_{i,j}) \right]
+\ell(\theta) = -\frac{1}{2} \sum_{i,j} \frac{(N_{i,j} - \mu(\theta)_{i,j})^2}{\mu(\theta)_{i,j} + \sigma^2_{\text{read},i,j}}
 ```
+
+Note that unlike the pure Poisson case, the variance depends on both the model value (signal-dependent) and the camera calibration (pixel-dependent). The readout variance map is extracted from the camera calibration as $\sigma^2_{\text{read}} = \text{readnoise}^2$ and indexed at the correct camera coordinates using the ROI corner positions.
 
 ## Numerical Considerations
 
-### Convergence Criteria
+### Iteration Strategy
 
-Newton-Raphson iteration continues until:
-
-1. **Gradient norm**: $\|\nabla \ell(\theta)\| < \epsilon_g$
-2. **Parameter change**: $\|\Delta \theta\| < \epsilon_p$
-3. **Likelihood change**: $|\Delta \ell| < \epsilon_\ell$
+GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson optimization, with no convergence checking. This matches the approach used in the original CUDA implementation (Smith et al. 2010, SMITE), where the fixed iteration count is chosen to be sufficient for convergence in typical SMLM conditions while avoiding the overhead of convergence tests on GPU hardware.
 
 ### Stability Measures
 
 To ensure numerical stability:
 
-- **Hessian regularization**: Add small diagonal terms if poorly conditioned
-- **Step limiting**: Restrict parameter updates to reasonable ranges
-- **Boundary conditions**: Enforce physical constraints (positive intensity, etc.)
+- **Parameter constraints**: Restrict parameter updates with step limits and enforce physical bounds (positive intensity, position within ROI, etc.)
+- **Fisher matrix regularization**: Small diagonal regularization ($\epsilon \approx 10^{-10} \times \max|I|$) is applied to the Fisher Information Matrix before inversion for CRLB computation, ensuring positive definiteness
+- **Cholesky decomposition**: The Fisher matrix is inverted via Cholesky decomposition (preferred for symmetric positive definite matrices), with LU decomposition as a fallback
 
 ### Computational Complexity
 

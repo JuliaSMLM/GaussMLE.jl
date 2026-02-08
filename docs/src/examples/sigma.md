@@ -68,8 +68,8 @@ backgrounds = [e.bg for e in smld.emitters]
 sigmas = [e.σ for e in smld.emitters]
 
 # Uncertainties
-sigma_x = [e.sigma_x for e in smld.emitters]
-sigma_sigma = [e.sigma_sigma for e in smld.emitters]
+sigma_x = [e.σ_x for e in smld.emitters]
+sigma_sigma = [e.σ_σ for e in smld.emitters]
 
 println("\nPosition Statistics:")
 println("  Mean x: $(round(mean(x_positions), digits=3)) microns")
@@ -98,9 +98,10 @@ The `GaussianXYNBS` model returns `Emitter2DFitSigma` emitters with these fields
 | `bg` | Background level | photons/pixel |
 | `σ` | **Fitted PSF width** | microns |
 | `σ_x`, `σ_y` | Position uncertainty | microns |
+| `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
 | `σ_σ` | **PSF width uncertainty** | microns |
-| `pvalue` | Goodness-of-fit | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 
 ## Quality Control with PSF Width
@@ -156,8 +157,8 @@ rms_diff = sqrt(mean((x_fixed .- x_var).^2))
 println("Position difference (RMS): $(round(rms_diff*1000, digits=2)) nm")
 
 # Compare uncertainties
-sigma_x_fixed = mean([e.sigma_x for e in smld_fixed.emitters])
-sigma_x_var = mean([e.sigma_x for e in smld_var.emitters])
+sigma_x_fixed = mean([e.σ_x for e in smld_fixed.emitters])
+sigma_x_var = mean([e.σ_x for e in smld_var.emitters])
 
 println("Mean x uncertainty:")
 println("  Fixed PSF:    $(round(sigma_x_fixed*1000, digits=2)) nm")
@@ -213,13 +214,18 @@ using Statistics
 fitter = GaussMLEConfig(psf_model = GaussianXYNBSXSY())
 smld, info = fit(data, fitter)
 
-# Returns Emitter2DFitSigmaXY with sigma_x and sigma_y fields
-sigma_x_psf = [e.sigma_x for e in smld.emitters]  # Note: this is position uncertainty
-# For fitted PSF widths, the field names are different - check emitter type
+# Returns Emitter2DFitSigmaXY emitters
+# Fitted PSF widths (distinct from position uncertainties):
+sigma_x_psf = [e.σx for e in smld.emitters]   # Fitted PSF width in x (microns)
+sigma_y_psf = [e.σy for e in smld.emitters]   # Fitted PSF width in y (microns)
 
-# The emitter type Emitter2DFitSigmaXY has:
-# - sigmxa, sigma_y: fitted PSF widths
-# - sigma_sigmxa, sigma_sigma_y: uncertainties on PSF widths
+# Position uncertainties (CRLB):
+precision_x = [e.σ_x for e in smld.emitters]  # x position uncertainty (microns)
+precision_y = [e.σ_y for e in smld.emitters]   # y position uncertainty (microns)
+
+# PSF width uncertainties:
+sigma_sigma_x = [e.σ_σx for e in smld.emitters]  # Uncertainty in fitted σx
+sigma_sigma_y = [e.σ_σy for e in smld.emitters]  # Uncertainty in fitted σy
 ```
 
 ## Troubleshooting

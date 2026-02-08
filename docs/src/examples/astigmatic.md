@@ -131,7 +131,7 @@ batch = generate_roi_batch(camera, psf, n_rois=500, roi_size=13)
 fitter = GaussMLEConfig(psf_model=psf, iterations=30)
 smld, info = fit(batch, fitter)
 
-# Access 3D positions (Emitter3DFit type)
+# Access 3D positions (Emitter3DFitGaussMLE type)
 x_pos = [e.x for e in smld.emitters]
 y_pos = [e.y for e in smld.emitters]
 z_pos = [e.z for e in smld.emitters]
@@ -143,7 +143,7 @@ println("Mean z precision: $(round(mean([e.σ_z for e in smld.emitters])*1000, d
 
 ## Output: Emitter3DFit
 
-The `AstigmaticXYZNB` model returns `Emitter3DFit` emitters with:
+The `AstigmaticXYZNB` model returns `Emitter3DFitGaussMLE` emitters with:
 
 | Field | Description | Units |
 |-------|-------------|-------|
@@ -151,7 +151,9 @@ The `AstigmaticXYZNB` model returns `Emitter3DFit` emitters with:
 | `photons` | Total photon count | photons |
 | `bg` | Background level | photons/pixel |
 | `σ_x`, `σ_y`, `σ_z` | Position uncertainties (CRLB) | microns |
+| `σ_xy`, `σ_xz`, `σ_yz` | Position covariances (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 
 ## Quality Filtering
 
