@@ -21,6 +21,7 @@ Adapt = "3, 4"
 Aqua = "0.8"
 CUDA = "4, 5"
 Distributions = "0.25"
+Documenter = "1"
 ExplicitImports = "1"
 KernelAbstractions = "0.9"
 LinearAlgebra = "1"
@@ -38,6 +39,7 @@ julia = "1.10"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
+Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -45,4 +47,4 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "ExplicitImports", "Pkg", "Printf", "TOML", "Test"]
+test = ["Aqua", "Documenter", "ExplicitImports", "Pkg", "Printf", "TOML", "Test"]

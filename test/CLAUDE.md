@@ -7,7 +7,7 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
 | Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression | GitHub CI (Julia min and 1); at most 2 min |
-| QA | `test/qa/` | Aqua and ExplicitImports | GitHub CI, its own job |
+| QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
 | GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks | lab GPU machine |
 | Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
 

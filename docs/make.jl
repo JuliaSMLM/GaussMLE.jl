@@ -14,8 +14,11 @@ makedocs(
     ),
     modules = [GaussMLE],
     authors = "klidke@unm.edu",
-    repo = "https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
-    warnonly = [:missing_docs, :cross_references],  # Don't fail on internal docstrings
+    repo = Remotes.GitHub("JuliaSMLM", "GaussMLE.jl"),
+    checkdocs = :exports,  # every exported docstring is in the manual (admiral decision 0018)
+    # Opt-out: GaussLib is the internal legacy reference implementation. It exports its helpers
+    # to GaussMLE only, and GaussMLE does not re-export them, so they are not public API.
+    checkdocs_ignored_modules = [GaussMLE.GaussLib],
     pages = [
         "Home" => "index.md",
         "User Guide" => [

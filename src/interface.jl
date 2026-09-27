@@ -66,7 +66,7 @@ Main type for configuring and performing Maximum Likelihood Estimation of Gaussi
 - `on_wait`: Callback for GPU wait progress feedback
 
 # See also
-[`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
+[`fit`](@ref), [`GaussMLEFitInfo`](@ref), [`PSFModel`](@ref GaussMLE.PSFModel)
 """
 struct GaussMLEConfig{P <: PSFModel, PC <: ParameterConstraints, W} <: AbstractSMLMConfig
     backend::Symbol
@@ -657,6 +657,17 @@ Kwargs match GaussMLEConfig fields exactly.
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
 
 # Examples
+Fit 10 simulated ROIs on the CPU:
+```jldoctest
+julia> batch = generate_roi_batch(IdealCamera(64, 64, 0.1), GaussianXYNB(0.13f0); n_rois = 10, seed = 1);
+
+julia> smld, info = fit(batch; backend = :cpu);
+
+julia> length(smld.emitters), info.n_fits
+(10, 10)
+```
+
+With the default `backend = :auto`, which uses a GPU when one is available:
 ```julia
 # Simple fit with defaults
 smld, info = fit(batch)

@@ -27,9 +27,11 @@ abstract type PSFModel{NParams, T} end
 - `σ::T`: Fixed Gaussian width (standard deviation in **microns**)
 
 # Example
-```julia
-psf = GaussianXYNB(0.13f0)  # σ = 130 nm (typical ~500nm emission, 100nm pixels)
-fitter = GaussMLEConfig(psf_model = psf)
+```jldoctest
+julia> psf = GaussianXYNB(0.13f0)  # σ = 130 nm (typical ~500nm emission, 100nm pixels)
+GaussianXYNB(σ=0.13)
+
+julia> fitter = GaussMLEConfig(psf_model = psf);
 ```
 
 # Note
@@ -302,10 +304,11 @@ Kernel requires pixels for computation. This function performs the conversion.
 PSF model with parameters converted to pixels
 
 # Example
-```julia
-psf_microns = GaussianXYNB(0.13f0)  # σ = 130 nm
-pixel_size = 0.1f0  # 100 nm pixels
-psf_pixels = to_pixel_units(psf_microns, pixel_size)  # σ = 1.3 pixels
+```jldoctest
+julia> psf_microns = GaussianXYNB(0.13f0);  # σ = 130 nm
+
+julia> GaussMLE.to_pixel_units(psf_microns, 0.1f0)  # 100 nm pixels
+GaussianXYNB(σ=1.3)
 ```
 """
 function to_pixel_units(psf::GaussianXYNB{T}, pixel_size::Real) where {T}

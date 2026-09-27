@@ -1,10 +1,9 @@
 # The documentation build, split out of CI.yml when CI moved to the lab's shared workflow.
-# Admiral decision 0011: docs build on pushes to main and tags only, not on pull requests.
+# Admiral decisions 0011 and 0018: the site is built and published at release tags and on
+# manual dispatch only; the strict build runs locally before each release.
 name: Docs
 on:
   push:
-    branches:
-      - main
     tags: ['*']
   workflow_dispatch:
 concurrency:
