@@ -2,7 +2,7 @@
 # fits per second, and empirical std / CRLB within [0.8, 1.2] for every parameter.
 using Test, GaussMLE, SMLMData, CUDA, Random, Statistics, Printf
 
-include(joinpath(@__DIR__, "..", "long", "utils", "validation_utils.jl"))  # extract_roi_coords
+include(joinpath(@__DIR__, "..", "validation_utils.jl"))  # extract_roi_coords
 include(joinpath(@__DIR__, "utils", "performance_benchmark.jl"))
 
 results = run_comprehensive_benchmark()

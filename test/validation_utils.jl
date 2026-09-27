@@ -1,7 +1,11 @@
 """
 Utilities for model validation testing
+
+Shared by the Long and GPU groups, which include it. It sits in test/ because a helper folder
+there would be read as a group; the runner therefore also runs it as a Core file (no tests).
 """
 
+using GaussMLE, SMLMData
 using Random
 using Statistics
 using Distributions

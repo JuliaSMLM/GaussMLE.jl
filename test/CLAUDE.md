@@ -12,11 +12,12 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 | Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
-- `test/test_groups.toml` declares the groups and the heavy work (commands, resources, time).
+- `test/test_groups.toml` declares the groups.
 - `test/qa/qa.jl` is the lab template; a check is opted out only with the reason beside it.
 - Each file runs in its own module and `@testset`, so each file starts with its own `using` lines.
 - Helpers a file `include`s go in a `utils/` subfolder of its group folder (not run as tests).
-  `test/long/utils/validation_utils.jl` is also included by the GPU benchmark.
+  A helper shared by two groups is a top-level file, `test/validation_utils.jl` (Long and GPU
+  include it); the runner also runs it as a Core file, so it carries its own `using` lines.
 
 ## Running
 
