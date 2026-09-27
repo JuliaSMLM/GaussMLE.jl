@@ -1,9 +1,6 @@
 using Documenter
 using GaussMLE
 
-# Set up doctests
-DocMeta.setdocmeta!(GaussMLE, :DocTestSetup, :(using GaussMLE); recursive = true)
-
 makedocs(
     sitename = "GaussMLE.jl",
     format = Documenter.HTML(
@@ -15,6 +12,7 @@ makedocs(
     modules = [GaussMLE],
     authors = "klidke@unm.edu",
     repo = Remotes.GitHub("JuliaSMLM", "GaussMLE.jl"),
+    doctest = false,  # QA runs every docstring jldoctest (admiral decision 0018); pages use @example
     checkdocs = :exports,  # every exported docstring is in the manual (admiral decision 0018)
     # Opt-out: GaussLib is the internal legacy reference implementation. It exports its helpers
     # to GaussMLE only, and GaussMLE does not re-export them, so they are not public API.
