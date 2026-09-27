@@ -9,10 +9,10 @@ This benchmark runs comprehensive testing of all 16 combinations:
 The benchmark validates MLE optimality by comparing empirical std to theoretical CRLB.
 A std/CRLB ratio of 1.0 indicates the estimator is statistically optimal.
 
-Only runs in local testing environments (not on GitHub Actions).
+Part of the GPU test group (test/gpu/performance_benchmark.jl); never runs on GitHub CI.
 """
 
-# All using statements must be in runtests.jl per test/CLAUDE.md guidelines
+# Included by test/gpu/performance_benchmark.jl, which holds the using statements.
 
 # Configuration
 const WARMUP_ITERATIONS = 100
@@ -40,15 +40,6 @@ struct BenchmarkResult
     fits_per_second::Float64
     convergence_rate::Float64
     param_stats::Dict{Symbol, ParameterStats}
-end
-
-"""
-    detect_environment() -> Bool
-
-Returns true if running in local environment, false if on CI (GitHub Actions).
-"""
-function detect_environment()
-    return get(ENV, "CI", "false") == "false"
 end
 
 """
@@ -451,12 +442,6 @@ end
 Run comprehensive benchmark of all 16 configurations.
 """
 function run_comprehensive_benchmark()
-    # Check if we're in a local environment
-    if !detect_environment()
-        @info "Skipping local performance benchmark (running on CI)"
-        return nothing
-    end
-
     println()
     println("="^100)
     println("Starting Comprehensive Performance Benchmark")
@@ -526,6 +511,3 @@ function run_comprehensive_benchmark()
 
     return results
 end
-
-# Export the main function
-export run_comprehensive_benchmark, detect_environment

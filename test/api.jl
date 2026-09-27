@@ -1,3 +1,5 @@
+using Test, GaussMLE, SMLMData, Statistics
+
 """
 Consolidated test of new simulator and ROIBatch features
 """

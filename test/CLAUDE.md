@@ -1,78 +1,37 @@
 # Testing Guidelines for test/
 
-This directory contains all tests for the package. Follow these conventions when writing or modifying tests.
+GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010).
 
-## Testing Philosophy
+## Layout
 
-**Core Principle**: Tests that fail indicate problems - never hide them.
+| Group | Folder | Contents | Runs on |
+|---|---|---|---|
+| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression | GitHub CI (Julia min and 1); at most 2 min |
+| QA | `test/qa/` | Aqua and ExplicitImports | GitHub CI, its own job |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks | lab GPU machine |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
 
-- **No test gating**: All tests run on every test invocation. Don't hide failures behind environment variables.
-- **No @test_skip**: If a test fails, that's important information. Either fix the code, fix the test, or understand why.
-- **Failing tests are valuable**: They immediately alert you to regressions, edge cases, or incorrect assumptions.
-- **CI/CD integrity**: Test suite pass/fail must reflect actual code quality, not what we chose to check.
+- `test/runtests.jl` is the lab template, identical in every package: never edit it.
+- `test/test_groups.toml` declares the groups and the heavy work (commands, resources, time).
+- `test/qa/qa.jl` is the lab template; a check is opted out only with the reason beside it.
+- Each file runs in its own module and `@testset`, so each file starts with its own `using` lines.
+- Helpers a file `include`s go in a `utils/` subfolder of its group folder (not run as tests).
+  `test/long/utils/validation_utils.jl` is also included by the GPU benchmark.
 
-## Test Structure
+## Running
 
-### runtests.jl Organization
-- **Only contains**: `using` statements and the overall test structure
-- **No test logic**: All actual tests are included from other files
-- **All imports here**: Any packages needed for testing must be imported at the top of runtests.jl
-- **All tests run**: No conditional inclusion except for hardware capabilities (e.g., GPU detection)
-
-### Test File Organization
-1. **User-facing API tests** (e.g., `test_api.jl`)
-   - Tests all exported functions that users interact with
-   - Tests various keyword arguments and options
-   - Focuses on expected use cases and behavior
-
-2. **Internal function tests** (organized by module/concept)
-   - Separate files for different modules or logical groupings
-   - Tests internal functions and implementation details
-   - Clear naming scheme (e.g., `test_utils.jl`, `test_parser.jl`)
-
-### Important Rules
-- **No using statements in included files** - All imports must be in runtests.jl
-- **Aim for simplicity** - Good coverage without bloating tests
-- **Avoid pedantic edge cases** - Focus on meaningful tests that aid development
-- **Maintainability first** - Tests should be easy to update as code evolves
-- **Never skip tests** - If a test fails, investigate and fix, don't hide it
-
-## Running Tests
-
-### From Julia REPL
-```julia
-# Activate the project (from package root)
-using Pkg
-Pkg.activate(".")
-
-# Run all tests
-Pkg.test()
-
-# Or with package name
-Pkg.test("GaussMLE")
+```bash
+julia --project -e 'using Pkg; Pkg.test()'                   # Core
+GROUP=QA julia --project -e 'using Pkg; Pkg.test()'          # one group; "GPU,Long" for several
+GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'  # every group this machine can run
 ```
 
-### During Development
-```julia
-# Run specific test file directly
-include("test/runtests.jl")
+## Rules
 
-# Or run a specific test file
-include("test/test_specific.jl")  # Only works if no using statements needed
-```
-
-## Writing New Tests
-- Group related tests in `@testset` blocks with descriptive names
-- Use meaningful test descriptions
-- Test both success cases and expected failures
-- Keep tests focused and independent
-
-## GPU Testing
-
-GPU tests run automatically when a CUDA GPU is detected. No configuration needed.
-
-If GPU tests don't run when expected:
-```julia
-using CUDA
-CUDA.functional()  # Should return true
-```
+- **No @test_skip**: a failing test is information; fix the code or the test.
+- Core stays under 2 minutes on a GitHub runner, counting first-call compile. A test that pushes
+  it over moves to Long (CPU) or GPU.
+- New or changed public behaviour gets tests of its documented contract; a bug fix gets one
+  regression test. No tests of private helpers, no duplicates of behaviour tested elsewhere.
+- Report the test count per group before and after every change.
+- Statistical tests seed their RNG or compare on a tolerance that holds for any draw.

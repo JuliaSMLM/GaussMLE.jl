@@ -1,3 +1,8 @@
+using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
+
+include(joinpath(@__DIR__, "utils", "validation_utils.jl"))
+include(joinpath(@__DIR__, "utils", "validation_utils_roibatch.jl"))
+
 """
 Strict validation tests for fitting accuracy, bias, and CRLB matching
 Using the new camera-aware simulator for reliable test data generation

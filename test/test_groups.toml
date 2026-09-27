@@ -1,0 +1,44 @@
+# Test groups (admiral decision 0008). Declare only the groups this package has; every declared
+# group needs at least one .jl file, and every folder under test/ must be a declared group.
+#   Core      test/*.jl         fast curated tests; plain Pkg.test(); at most 2 min on CI
+#   QA        test/qa/          Aqua and ExplicitImports; its own CI job
+#   GPU       test/gpu/         needs CUDA; lab machine
+#   Long      test/long/        slow correctness (convergence, Monte Carlo, pipelines); lab machine
+# GaussMLE has no Data or Hardware tests: every test fits simulated data.
+# CUDA is a hard dependency of GaussMLE, so the GPU group needs no Project.toml of its own.
+#
+# Declared heavy work (admiral decision 0014) is recorded in each heavy group's table: command,
+# device, gpu_memory, run_time, data, unattended. Numbers were measured on kitt (RTX 4090,
+# Julia 1.13.0) on 2026-09-27; "unknown" means not measured.
+
+[Core]
+
+[QA]
+
+[GPU]
+requires = ["cuda"]
+command = "GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'"
+device = "GPU"
+gpu_memory = "469 MiB peak device use, CUDA context included (sampled every 50 ms)"
+run_time = "62 s, first-call compile included (53 s for the test files alone)"
+data = "none; simulated in memory"
+unattended = true
+# Contents: GPU kernel and CPU vs GPU agreement; performance benchmark over 4 PSF models x
+# 2 cameras x CPU and GPU (10,000 fits each), asserting empirical std / CRLB in [0.8, 1.2].
+
+[Long]
+command = "GROUP=Long julia --project -e 'using Pkg; Pkg.test()'"
+device = "CPU"
+gpu_memory = "none"
+run_time = "18 s standalone, first-call compile included"
+data = "none; simulated in memory"
+unattended = true
+
+# Batch workloads outside the test groups. The runner rejects unknown top-level tables, so these
+# are comments. Both are small, user-adjustable demos, superseded as benchmarks by the GPU group.
+#   examples/single_config_benchmark.jl: julia --project=examples examples/single_config_benchmark.jl
+#     device GPU by default (edit `device`); 10,000 fits; gpu_memory unknown; run_time unknown;
+#     writes examples/output/benchmark_results.txt; unattended yes.
+#   examples/comprehensive_comparison.jl: julia --project=examples examples/comprehensive_comparison.jl
+#     CPU and GPU; 500 fits per configuration; gpu_memory unknown; run_time unknown;
+#     writes examples/output/; unattended yes.

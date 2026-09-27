@@ -1,101 +1,138 @@
-using GaussMLE
-using Test
-using Random
-using Statistics
-using Distributions
-using LinearAlgebra
-using SMLMData
-using CUDA
-using Printf
+# Lab test runner (admiral decisions 0008, 0009). Identical in every package: do not edit;
+# declare groups in test_groups.toml and put tests in the group folders instead.
+# GROUP: unset or "Core" runs Core; "QA" or "GPU,Long" runs those; "Everything" runs every
+# declared group whose requirement is met on this machine. LAB_TEST_SUMMARY=<path> writes a
+# TOML summary there.
+using Test, TOML, Pkg
 
-# Include validation utilities
-include("validation_utils.jl")
-include("validation_utils_roibatch.jl")
+const GROUPS = ("Core", "QA", "GPU", "Data", "Long", "Hardware")
+const TESTDIR = @__DIR__
+const PKGROOT = dirname(TESTDIR)
+const CFG = TOML.parsefile(joinpath(TESTDIR, "test_groups.toml"))
 
-# Test configuration
-const GPU_AVAILABLE = CUDA.functional()
+folder(g) = g == "Core" ? TESTDIR : joinpath(TESTDIR, lowercase(g))
+testfiles(g) = sort(
+    [
+        joinpath(folder(g), f) for f in readdir(folder(g))
+            if endswith(f, ".jl") && f != "runtests.jl" && isfile(joinpath(folder(g), f))
+    ]
+)
 
-# Print test configuration
-println("="^70)
-println("GaussMLE.jl Test Suite")
-println("="^70)
-if GPU_AVAILABLE
-    println("  GPU detected: ", CUDA.name(CUDA.device()))
-else
-    println("  No GPU detected - CPU tests only")
+# Layout check: a test file must never silently not run.
+for g in keys(CFG)
+    g in GROUPS || error("test_groups.toml: unknown group $g (allowed: $(join(GROUPS, ", ")))")
+    isdir(folder(g)) && !isempty(testfiles(g)) || error("group $g is declared but $(folder(g)) has no .jl files")
 end
-println("="^70)
-println()
+for d in readdir(TESTDIR)
+    isdir(joinpath(TESTDIR, d)) || continue
+    any(g -> g != "Core" && haskey(CFG, g) && lowercase(g) == d, GROUPS) ||
+        error("test/$d/ is not the folder of a group declared in test_groups.toml")
+end
 
-# Main test suite - wrapped in try/catch/finally to ensure benchmark runs
-global test_exception = nothing
-try
-    @testset "GaussMLE.jl" begin
-        # Core CPU tests
-        @testset "CPU Tests" begin
-            # Consolidated test of all new features
-            include("test_all_new_features.jl")
-
-            # Strict validation tests using new simulator
-            include("test_strict_validation.jl")
-
-            # Comprehensive validation tests
-            include("model_validation_tests.jl")
-            include("comprehensive_cpu_tests.jl")
-        end
-
-        # GPU tests (auto-detected)
-        if GPU_AVAILABLE
-            @testset "GPU Tests" begin
-                include("gpu_tests.jl")
-            end
+# Returns nothing when every requirement of group g is met, else the reason it is not.
+function unmet(g)
+    for r in get(CFG[g], "requires", String[])
+        if r == "cuda"
+            Base.find_package("CUDA") === nothing && return "CUDA.jl is not in the $g environment"
+            Core.eval(Main, :(import CUDA))
+            Base.invokelatest(() -> Main.CUDA.functional()) || return "CUDA.functional() is false"
+        elseif r == "data"
+            p = expanduser(get(CFG[g], "data_path", ""))
+            isempty(p) && error("test_groups.toml: $g requires data but sets no data_path")
+            ispath(p) || return "data_path $p does not exist"
+        elseif r == "hardware"
+            get(ENV, "TEST_HARDWARE", "") == "1" || return "TEST_HARDWARE=1 is not set"
+        else
+            error("test_groups.toml: $g has unknown requirement \"$r\" (cuda, data, hardware)")
         end
     end
-catch e
-    global test_exception = e
-finally
-    # Local performance benchmark (only runs in local environment, not on CI)
-    # Runs in finally block so it executes even if tests fail
-    println()
-    println("="^70)
-    if get(ENV, "CI", "false") == "false"
-    println("Local environment detected - running comprehensive performance benchmark")
-    println("="^70)
-    include("local_performance_benchmark.jl")
+    return nothing
+end
 
-    # Run the benchmark
-    @testset "Local Performance Benchmark" begin
-        results = run_comprehensive_benchmark()
-        @test results !== nothing
+# A group with its own test/<group>/Project.toml runs in a temporary copy of that environment
+# with the package developed into it, so its dependencies (CUDA) never enter the Core env.
+function with_group_env(f, g)
+    proj = joinpath(folder(g), "Project.toml")
+    (g != "Core" && isfile(proj)) || return f()
+    prev, tmp = Base.active_project(), mktempdir()
+    cp(proj, joinpath(tmp, "Project.toml"))
+    Pkg.activate(tmp; io = devnull)
+    try
+        Pkg.develop(Pkg.PackageSpec(path = PKGROOT); io = devnull)
+        Pkg.instantiate(; io = devnull)
+        return f()
+    finally
+        Pkg.activate(prev; io = devnull)
+    end
+end
 
-        # Validate that we got some results
-        if results !== nothing && !isempty(results)
-            @test all(r -> r.fits_per_second > 0, results)
+function counts(ts)
+    c = Test.get_test_counts(ts)  # a Tuple before Julia 1.11, a TestCounts after
+    return c isa Tuple ? (pass = c[1] + c[5], fail = 0, error = 0, broken = c[4] + c[8]) :
+        (pass = c.passes + c.cumulative_passes, fail = 0, error = 0, broken = c.broken + c.cumulative_broken)
+end
 
-            # Check that std/CRLB ratios are reasonable (within 20% of optimal)
-            # This is a sanity check - allows for some statistical variation
-            for r in results
-                for (param, stats) in r.param_stats
-                    if isfinite(stats.std_crlb_ratio)
-                        ratio_ok = 0.8 <= stats.std_crlb_ratio <= 1.2
-                        if !ratio_ok
-                            @warn "$(r.config.model_name)-$(r.config.camera_symbol)-$(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio) (outside [0.8, 1.2])"
+# Runs group g: each file in its own module (like SafeTestsets) and its own @testset.
+function rungroup(g)
+    t0 = time()
+    return with_group_env(g) do
+        reason = unmet(g)
+        reason === nothing ||
+            return Dict{String, Any}("ran" => false, "passed" => false, "reason" => reason)
+        printstyled("GROUP $g\n"; bold = true)
+        c = try
+            counts(
+                @testset "$g" begin
+                    for f in testfiles(g)
+                        @testset "$(relpath(f, TESTDIR))" begin
+                            Core.eval(
+                                Main, :(
+                                    module $(gensym(:testfile))
+                                    include($f)
+                                    end
+                                )
+                            )
                         end
-                        @test ratio_ok
                     end
                 end
-            end
+            )
+        catch e
+            e isa Test.TestSetException || rethrow()
+            (pass = e.pass, fail = e.fail, error = e.error, broken = e.broken)
         end
+        Dict{String, Any}(
+            "ran" => true, "passed" => c.fail + c.error == 0, "pass" => c.pass,
+            "fail" => c.fail, "error" => c.error, "broken" => c.broken,
+            "seconds" => round(time() - t0; digits = 1)
+        )
     end
-    else
-        println("CI environment detected - skipping local performance benchmark")
-        println("To run comprehensive benchmarks, execute tests locally:")
-        println("  julia> using Pkg; Pkg.test(\"GaussMLE\")")
-        println("="^70)
-    end
-end  # end finally block
-
-# Re-throw test exception if any occurred
-if test_exception !== nothing
-    throw(test_exception)
 end
+
+sel = strip(get(ENV, "GROUP", ""))
+sel = isempty(sel) ? "Core" : sel
+explicit = sel != "Everything"
+wanted = explicit ? strip.(split(sel, ",")) : [g for g in GROUPS if haskey(CFG, g)]
+for g in wanted
+    haskey(CFG, g) || error("GROUP=$sel: $g is not declared in test_groups.toml")
+end
+
+results = Dict{String, Any}()
+for g in GROUPS
+    g in wanted || continue
+    results[g] = rungroup(g)
+    r = results[g]
+    r["ran"] || println(explicit ? "ERROR" : "SKIPPED", " group $g: ", r["reason"])
+end
+
+if haskey(ENV, "LAB_TEST_SUMMARY")
+    open(ENV["LAB_TEST_SUMMARY"], "w") do io
+        TOML.print(
+            io, Dict(
+                "julia" => string(VERSION), "host" => first(split(gethostname(), '.')),
+                "selection" => sel, "groups" => results
+            ); sorted = true
+        )
+    end
+end
+bad = [g for (g, r) in results if r["ran"] ? !r["passed"] : explicit]
+isempty(bad) || error("test groups failed or could not run: $(join(sort(bad), ", "))")
