@@ -5,8 +5,8 @@ Low level functions for calcualting the Gaussian model and its derivatives.
 """
 module GaussLib
 
-using LinearAlgebra
-using SpecialFunctions
+using LinearAlgebra: LinearAlgebra, I
+using SpecialFunctions: SpecialFunctions, erf, gamma
 
 include("baselibrary.jl")
 include("inverse.jl")

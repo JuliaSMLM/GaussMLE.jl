@@ -2,10 +2,6 @@
 High-level API for Gaussian MLE fitting
 """
 
-using KernelAbstractions
-using CUDA
-using SMLMData
-
 # Input validation helpers
 function validate_fit_input(data::AbstractArray{T,3}, camera=nothing) where T
     # Check for empty data

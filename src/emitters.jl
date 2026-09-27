@@ -12,8 +12,6 @@ All emitter types include:
 - PSF-specific parameters (σ, σx, σy, z)
 """
 
-using SMLMData
-
 """
     Emitter2DFitGaussMLE{T} <: AbstractEmitter
 
