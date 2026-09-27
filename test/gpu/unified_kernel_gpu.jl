@@ -154,7 +154,8 @@ using LinearAlgebra
     @testset "Covariance vs Float64 reference (asymmetric fixture)" begin
         # Noise-free spots near the ROI corners: truncation makes sigma_xy clearly nonzero
         # (correlation about 3%) with a sign set by the corner, so zero or sign-flipped
-        # covariance output fails. The random fixture above only checks roundoff near zero.
+        # covariance output fails. The random fixture above only checks roundoff near zero;
+        # the CPU kernel's half of this check is in Core (test/unified_kernel_cpu.jl).
         psf_model = GaussMLE.GaussianXYNB(1.3f0)  # kernel units: pixels
         psf64 = GaussMLE.GaussianXYNB(1.3)
         roi = 7
@@ -200,7 +201,6 @@ using LinearAlgebra
             KernelAbstractions.synchronize(backend)
             return Array(out[3])[1, :]
         end
-        @test kernel_cov_xy(KernelAbstractions.CPU(), identity) ≈ cov_ref rtol = 1.0e-3
         @test kernel_cov_xy(CUDABackend(), CuArray) ≈ cov_ref rtol = 1.0e-3
     end
 

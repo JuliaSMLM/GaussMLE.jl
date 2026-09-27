@@ -1,8 +1,7 @@
 """
 Utilities for model validation testing
 
-Shared by the Long and GPU groups, which include it. It sits in test/ because a helper folder
-there would be read as a group; the runner therefore also runs it as a Core file (no tests).
+Shared by the Long group and the GPU benchmark, which includes it by relative path.
 """
 
 using GaussMLE, SMLMData

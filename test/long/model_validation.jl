@@ -1,6 +1,6 @@
 using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
 
-include(joinpath(@__DIR__, "..", "validation_utils.jl"))
+include(joinpath(@__DIR__, "utils", "validation_utils.jl"))
 include(joinpath(@__DIR__, "utils", "validation_utils_roibatch.jl"))
 
 """

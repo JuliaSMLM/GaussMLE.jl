@@ -3,7 +3,7 @@
 # plus four precision bounds nothing else keeps (low/high photons, narrow/wide PSF).
 using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
 
-include(joinpath(@__DIR__, "..", "validation_utils.jl"))
+include(joinpath(@__DIR__, "utils", "validation_utils.jl"))
 
 """
 Comprehensive CPU model tests for all PSF models with both ideal and sCMOS cameras

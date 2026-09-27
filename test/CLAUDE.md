@@ -16,8 +16,9 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 - `test/qa/qa.jl` is the lab template; a check is opted out only with the reason beside it.
 - Each file runs in its own module and `@testset`, so each file starts with its own `using` lines.
 - Helpers a file `include`s go in a `utils/` subfolder of its group folder (not run as tests).
-  A helper shared by two groups is a top-level file, `test/validation_utils.jl` (Long and GPU
-  include it); the runner also runs it as a Core file, so it carries its own `using` lines.
+  A helper two groups share lives in one group's helper folder and the other includes it by
+  relative path: `test/long/utils/validation_utils.jl` is also included by the GPU benchmark.
+  Never put a helper in `test/` itself: every `test/*.jl` runs as a Core file.
 
 ## Running
 
