@@ -16,7 +16,7 @@ struct SCMOSCameraInternal{T}
 end
 
 # Noise model interface for likelihood calculations
-@inline function compute_likelihood_terms(data::T, model::T, ::IdealCameraInternal) where T
+@inline function compute_likelihood_terms(data::T, model::T, ::IdealCameraInternal) where {T}
     # Poisson noise only
     # Cap values to prevent numerical instability (following SMITE)
     # Note: SMITE uses 10e-3 = 0.01, not 1e-3 = 0.001
@@ -24,8 +24,8 @@ end
         cf = data / model - one(T)
         df = data / (model * model)
         # Cap at 10^4 to prevent instability
-        cf = min(cf, T(1e4))
-        df = min(df, T(1e4))
+        cf = min(cf, T(1.0e4))
+        df = min(df, T(1.0e4))
     else
         cf = zero(T)
         df = zero(T)
@@ -33,7 +33,7 @@ end
     return cf, df
 end
 
-@inline function compute_likelihood_terms(data::T, model::T, variance_map::AbstractArray, i, j) where T
+@inline function compute_likelihood_terms(data::T, model::T, variance_map::AbstractArray, i, j) where {T}
     # Total variance = Poisson variance + readout variance
     total_var = model + variance_map[i, j]
     cf = (data - model) / total_var
@@ -42,7 +42,7 @@ end
 end
 
 # Scalar variance (uniform sCMOS readnoise)
-@inline function compute_likelihood_terms(data::T, model::T, variance::T, i, j) where T
+@inline function compute_likelihood_terms(data::T, model::T, variance::T, i, j) where {T}
     # Total variance = Poisson variance + uniform readout variance
     total_var = model + variance
     cf = (data - model) / total_var
@@ -51,13 +51,13 @@ end
 end
 
 # Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
-@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+@inline function compute_likelihood_terms(data::T, model::T, camera::SCMOSCameraInternal, i, j) where {T}
     return compute_likelihood_terms(data, model, camera.variance_map, i, j)
 end
 
 # Log-likelihood ratio (LLR) computation: log L(fitted) - log L(saturated)
 # For goodness-of-fit testing via χ² = -2×LLR ~ χ²(df)
-@inline function compute_log_likelihood(data::T, model::T, ::IdealCameraInternal) where T
+@inline function compute_log_likelihood(data::T, model::T, ::IdealCameraInternal) where {T}
     if model > zero(T) && data > zero(T)
         # LLR for Poisson: data×log(model) - model - (data×log(data) - data)
         # Matches SMITE's Div calculation (smi_cuda_gaussMLEv2.cu)
@@ -70,7 +70,7 @@ end
     end
 end
 
-@inline function compute_log_likelihood(data::T, model::T, variance_map::AbstractArray, i, j) where T
+@inline function compute_log_likelihood(data::T, model::T, variance_map::AbstractArray, i, j) where {T}
     # LLR for Gaussian (sCMOS): log L(fitted) - log L(saturated)
     # L(saturated) has μ=data, so residual=0: log L = -0.5×log(2π×var)
     # L(fitted): -0.5×[log(2π×var) + residual²/var]
@@ -85,7 +85,7 @@ end
 end
 
 # Scalar variance (uniform sCMOS readnoise)
-@inline function compute_log_likelihood(data::T, model::T, variance::T, i, j) where T
+@inline function compute_log_likelihood(data::T, model::T, variance::T, i, j) where {T}
     total_var = model + variance
     if total_var > zero(T)
         residual = data - model
@@ -96,7 +96,7 @@ end
 end
 
 # Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
-@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCameraInternal, i, j) where T
+@inline function compute_log_likelihood(data::T, model::T, camera::SCMOSCameraInternal, i, j) where {T}
     return compute_log_likelihood(data, model, camera.variance_map, i, j)
 end
 
@@ -125,7 +125,7 @@ end
 Convert ROI data from ADU to electrons using per-pixel camera calibration.
 Extracts calibration values at correct sensor positions using corner coordinates.
 """
-function to_electrons(data_adu::AbstractArray{T,3}, camera, x_corners::AbstractVector, y_corners::AbstractVector) where T
+function to_electrons(data_adu::AbstractArray{T, 3}, camera, x_corners::AbstractVector, y_corners::AbstractVector) where {T}
     # Scalar offset/gain - broadcast directly
     if camera.offset isa Real && camera.gain isa Real
         return (data_adu .- camera.offset) .* camera.gain

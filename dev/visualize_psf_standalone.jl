@@ -39,8 +39,8 @@ println("  γ = $γ nm, d = $d nm")
 box_size = 15
 n_photons = 2000.0f0
 background = 1.0f0
-x_pos = Float32(box_size/2 + 0.3)
-y_pos = Float32(box_size/2 + 0.2)
+x_pos = Float32(box_size / 2 + 0.3)
+y_pos = Float32(box_size / 2 + 0.2)
 
 # Z positions to visualize
 z_positions = Float32[-600, -300, 0, 300, 600]
@@ -64,7 +64,7 @@ for (idx, z) in enumerate(z_positions)
     push!(σx_values, σx)
     push!(σy_values, σy)
 
-    println("  z=$z nm: σx=$(round(σx, digits=3)), σy=$(round(σy, digits=3))")
+    println("  z=$z nm: σx=$(round(σx, digits = 3)), σy=$(round(σy, digits = 3))")
 
     # Generate PSF image
     for j in 1:box_size, i in 1:box_size
@@ -76,7 +76,7 @@ for (idx, z) in enumerate(z_positions)
 end
 
 # Compute continuous curves
-z_range = Float32.(range(-600, 600, length=100))
+z_range = Float32.(range(-600, 600, length = 100))
 σx_curve = [σx₀ * sqrt(compute_alpha(z - γ, Ax, Bx, d)) for z in z_range]
 σy_curve = [σy₀ * sqrt(compute_alpha(z + γ, Ay, By, d)) for z in z_range]
 
@@ -85,10 +85,11 @@ println("Creating Visualization")
 println("="^70)
 
 # Create figure
-fig = Figure(size=(1600, 900))
+fig = Figure(size = (1600, 900))
 
 # Top: Width curves
-ax_widths = Axis(fig[1, 1:n_z],
+ax_widths = Axis(
+    fig[1, 1:n_z],
     xlabel = "Z Position (nm)",
     ylabel = "PSF Width σ (pixels)",
     title = "Astigmatic PSF: σx and σy vs Z",
@@ -97,19 +98,20 @@ ax_widths = Axis(fig[1, 1:n_z],
     titlesize = 18
 )
 
-lines!(ax_widths, z_range, σx_curve, label="σx(z) [HORIZONTAL width]", color=:blue, linewidth=3)
-lines!(ax_widths, z_range, σy_curve, label="σy(z) [VERTICAL width]", color=:red, linewidth=3)
-scatter!(ax_widths, z_positions, σx_values, color=:blue, markersize=15)
-scatter!(ax_widths, z_positions, σy_values, color=:red, markersize=15)
-vlines!(ax_widths, [0.0], color=:gray, linestyle=:dash, linewidth=2, label="z=0")
-axislegend(ax_widths, position=:lt, labelsize=14)
+lines!(ax_widths, z_range, σx_curve, label = "σx(z) [HORIZONTAL width]", color = :blue, linewidth = 3)
+lines!(ax_widths, z_range, σy_curve, label = "σy(z) [VERTICAL width]", color = :red, linewidth = 3)
+scatter!(ax_widths, z_positions, σx_values, color = :blue, markersize = 15)
+scatter!(ax_widths, z_positions, σy_values, color = :red, markersize = 15)
+vlines!(ax_widths, [0.0], color = :gray, linestyle = :dash, linewidth = 2, label = "z=0")
+axislegend(ax_widths, position = :lt, labelsize = 14)
 
 # Bottom: PSF images
 # CRITICAL: Origin at (1,1) top-left, y goes down
 # Method: Transpose data + yreversed=true
 for (idx, z) in enumerate(z_positions)
-    ax_img = Axis(fig[2, idx],
-        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits=2)) σy=$(round(σy_values[idx], digits=2))",
+    ax_img = Axis(
+        fig[2, idx],
+        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)) σy=$(round(σy_values[idx], digits = 2))",
         aspect = DataAspect(),
         titlesize = 12,
         yreversed = true  # Y axis goes DOWN (origin at top)
@@ -119,34 +121,42 @@ for (idx, z) in enumerate(z_positions)
     # With yreversed: data[1,1] appears at top-left ✓
     img_data = psf_images[:, :, idx]'  # Transpose
 
-    heatmap!(ax_img, img_data, colormap=:hot)
+    heatmap!(ax_img, img_data, colormap = :hot)
 
     # Crosshair at center
-    vlines!(ax_img, [x_pos], color=:cyan, linewidth=1, linestyle=:dash)
-    hlines!(ax_img, [y_pos], color=:cyan, linewidth=1, linestyle=:dash)
+    vlines!(ax_img, [x_pos], color = :cyan, linewidth = 1, linestyle = :dash)
+    hlines!(ax_img, [y_pos], color = :cyan, linewidth = 1, linestyle = :dash)
 
     # Mark origin on first image
     if idx == 1
-        text!(ax_img, 1.5, 1.5, text="(1,1)\norigin",
-              align=(:left, :top), color=:white, fontsize=10)
+        text!(
+            ax_img, 1.5, 1.5, text = "(1,1)\norigin",
+            align = (:left, :top), color = :white, fontsize = 10
+        )
     end
 
     # Mark elongation direction
     if σx_values[idx] > σy_values[idx] + 0.2
-        text!(ax_img, box_size/2, box_size-1,
-              text="HORIZONTAL\nelongation\n(σx > σy)",
-              align=(:center, :bottom), color=:yellow, fontsize=9)
+        text!(
+            ax_img, box_size / 2, box_size - 1,
+            text = "HORIZONTAL\nelongation\n(σx > σy)",
+            align = (:center, :bottom), color = :yellow, fontsize = 9
+        )
     elseif σy_values[idx] > σx_values[idx] + 0.2
-        text!(ax_img, box_size/2, box_size-1,
-              text="VERTICAL\nelongation\n(σy > σx)",
-              align=(:center, :bottom), color=:yellow, fontsize=9)
+        text!(
+            ax_img, box_size / 2, box_size - 1,
+            text = "VERTICAL\nelongation\n(σy > σx)",
+            align = (:center, :bottom), color = :yellow, fontsize = 9
+        )
     end
 end
 
 # Convention note
-Label(fig[3, 1:n_z],
-      "Convention: data[i,j] with i=row (y-axis), j=column (x-axis). Display: transposed + yreversed → origin (1,1) at top-left.",
-      fontsize = 11, color = :gray50)
+Label(
+    fig[3, 1:n_z],
+    "Convention: data[i,j] with i=row (y-axis), j=column (x-axis). Display: transposed + yreversed → origin (1,1) at top-left.",
+    fontsize = 11, color = :gray50
+)
 
 # Save
 output_file = joinpath(output_dir, "astigmatic_psf_standalone.png")
@@ -162,9 +172,9 @@ crossing_idx = argmin(abs.(σx_curve .- σy_curve))
 crossing_z = z_range[crossing_idx]
 
 println("\nWidth Behavior:")
-println("  σx: $(round(minimum(σx_values), digits=2)) → $(round(maximum(σx_values), digits=2)) pixels")
-println("  σy: $(round(minimum(σy_values), digits=2)) → $(round(maximum(σy_values), digits=2)) pixels")
-println("  Crossing: z ≈ $(round(crossing_z, digits=1)) nm (expected 0)")
+println("  σx: $(round(minimum(σx_values), digits = 2)) → $(round(maximum(σx_values), digits = 2)) pixels")
+println("  σy: $(round(minimum(σy_values), digits = 2)) → $(round(maximum(σy_values), digits = 2)) pixels")
+println("  Crossing: z ≈ $(round(crossing_z, digits = 1)) nm (expected 0)")
 
 println("\nCurrent Convention (j=x horizontal, i=y vertical):")
 println("  σx = HORIZONTAL width (x-direction, left-right)")

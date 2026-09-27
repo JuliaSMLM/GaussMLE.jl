@@ -36,10 +36,10 @@ photons = [e.photons for e in smld.emitters]
 backgrounds = [e.bg for e in smld.emitters]
 precisions_x = [e.σ_x for e in smld.emitters]
 
-println("Mean position: ($(round(mean(x_positions), digits=2)), $(round(mean(y_positions), digits=2))) μm")
-println("Mean photons: $(round(mean(photons), digits=1)) ± $(round(mean([e.σ_photons for e in smld.emitters]), digits=1))")
-println("Mean background: $(round(mean(backgrounds), digits=1)) ± $(round(mean([e.σ_bg for e in smld.emitters]), digits=1))")
-println("Mean precision: $(round(mean(precisions_x)*1000, digits=1)) nm")
+println("Mean position: ($(round(mean(x_positions), digits = 2)), $(round(mean(y_positions), digits = 2))) μm")
+println("Mean photons: $(round(mean(photons), digits = 1)) ± $(round(mean([e.σ_photons for e in smld.emitters]), digits = 1))")
+println("Mean background: $(round(mean(backgrounds), digits = 1)) ± $(round(mean([e.σ_bg for e in smld.emitters]), digits = 1))")
+println("Mean precision: $(round(mean(precisions_x) * 1000, digits = 1)) nm")
 
 println("\n✓ Basic fitting complete!")
 println("\nOutput is BasicSMLD - ready for SMLMData ecosystem:")

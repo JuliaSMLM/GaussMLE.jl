@@ -15,12 +15,12 @@ using CairoMakie
 # Error function - accurate approximation (Abramowitz and Stegun 7.1.26)
 function erf(x::Real)
     # Constants
-    a1 =  0.254829592
+    a1 = 0.254829592
     a2 = -0.284496736
-    a3 =  1.421413741
+    a3 = 1.421413741
     a4 = -1.453152027
-    a5 =  1.061405429
-    p  =  0.3275911
+    a5 = 1.061405429
+    p = 0.3275911
 
     # Save the sign of x
     sign_x = sign(x)
@@ -126,10 +126,12 @@ end
 """
 PSF model: μ(i,j) = bg + N·Φ(i|x,σx)·Φ(j|y,σy)
 """
-function psf_model(i::Int, j::Int, x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
-                   sigma_x0::Float32, sigma_y0::Float32,
-                   Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
-                   gamma::Float32, d::Float32)
+function psf_model(
+        i::Int, j::Int, x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
+        sigma_x0::Float32, sigma_y0::Float32,
+        Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
+        gamma::Float32, d::Float32
+    )
     # Compute widths at this z
     sigma_x = sigma(z, sigma_x0, gamma, Ax, Bx, d)
     sigma_y = sigma(z, sigma_y0, -gamma, Ay, By, d)  # Note: -gamma for y
@@ -145,10 +147,12 @@ end
 Compute all 5 derivatives of PSF model
 Returns: (model_value, [∂μ/∂x, ∂μ/∂y, ∂μ/∂z, ∂μ/∂N, ∂μ/∂bg])
 """
-function psf_derivatives(i::Int, j::Int, x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
-                        sigma_x0::Float32, sigma_y0::Float32,
-                        Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
-                        gamma::Float32, d::Float32)
+function psf_derivatives(
+        i::Int, j::Int, x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
+        sigma_x0::Float32, sigma_y0::Float32,
+        Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
+        gamma::Float32, d::Float32
+    )
     # Compute widths at this z
     sigma_x = sigma(z, sigma_x0, gamma, Ax, Bx, d)
     sigma_y = sigma(z, sigma_y0, -gamma, Ay, By, d)
@@ -174,8 +178,10 @@ function psf_derivatives(i::Int, j::Int, x::Float32, y::Float32, z::Float32, N::
     dsigma_x_dz = dsigma_dz(z, sigma_x0, gamma, Ax, Bx, d)
     dsigma_y_dz = dsigma_dz(z, sigma_y0, -gamma, Ay, By, d)
 
-    dmu_dz = N * (dphi_x_dsigma * dsigma_x_dz * phi_y +
-                  phi_x * dphi_y_dsigma * dsigma_y_dz)
+    dmu_dz = N * (
+        dphi_x_dsigma * dsigma_x_dz * phi_y +
+            phi_x * dphi_y_dsigma * dsigma_y_dz
+    )
 
     # Photon derivative
     dmu_dN = phi_x * phi_y
@@ -196,18 +202,22 @@ end
 Compute the 5×5 Fisher Information Matrix for given parameters
 FI[k,l] = Σᵢⱼ (1/μ)·(∂μ/∂θk)·(∂μ/∂θl)
 """
-function compute_fisher_information(x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
-                                   box_size::Int,
-                                   sigma_x0::Float32, sigma_y0::Float32,
-                                   Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
-                                   gamma::Float32, d::Float32)
+function compute_fisher_information(
+        x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32,
+        box_size::Int,
+        sigma_x0::Float32, sigma_y0::Float32,
+        Ax::Float32, Ay::Float32, Bx::Float32, By::Float32,
+        gamma::Float32, d::Float32
+    )
     # Initialize 5×5 Fisher matrix
     FI = zeros(Float32, 5, 5)
 
     # Sum over all pixels
     for j in 1:box_size, i in 1:box_size
-        model, derivs = psf_derivatives(i, j, x, y, z, N, bg,
-                                       sigma_x0, sigma_y0, Ax, Ay, Bx, By, gamma, d)
+        model, derivs = psf_derivatives(
+            i, j, x, y, z, N, bg,
+            sigma_x0, sigma_y0, Ax, Ay, Bx, By, gamma, d
+        )
 
         # Only include pixels with positive model value
         if model > 0.0f0
@@ -272,7 +282,7 @@ N_photons = 2000.0f0
 bg_level = 1.0f0
 
 # Z range
-z_range = Float32.(range(-600, 600, length=50))
+z_range = Float32.(range(-600, 600, length = 50))
 
 # Storage for results
 crlb_x = Float32[]
@@ -290,9 +300,11 @@ println("-"^80)
 
 for z in z_range
     # Compute Fisher Information
-    FI = compute_fisher_information(x_pos, y_pos, z, N_photons, bg_level,
-                                   box_size, sigma_x0, sigma_y0,
-                                   Ax, Ay, Bx, By, gamma, d)
+    FI = compute_fisher_information(
+        x_pos, y_pos, z, N_photons, bg_level,
+        box_size, sigma_x0, sigma_y0,
+        Ax, Ay, Bx, By, gamma, d
+    )
 
     # Compute CRLB
     crlb = compute_crlb(FI)
@@ -309,8 +321,10 @@ for z in z_range
     push!(dsigma_x_dz_vals, dsx)
     push!(dsigma_y_dz_vals, dsy)
 
-    @printf("%6.0f | %11.4f | %11.4f | %11.2f | %9.6f | %9.6f\n",
-            z, crlb[1], crlb[2], crlb[3], dsx, dsy)
+    @printf(
+        "%6.0f | %11.4f | %11.4f | %11.2f | %9.6f | %9.6f\n",
+        z, crlb[1], crlb[2], crlb[3], dsx, dsy
+    )
 end
 
 println()
@@ -322,10 +336,11 @@ println("="^80)
 
 println("\nCreating visualization...")
 
-fig = Figure(size=(1400, 1000))
+fig = Figure(size = (1400, 1000))
 
 # Panel 1: PSF widths vs z
-ax1 = Axis(fig[1, 1],
+ax1 = Axis(
+    fig[1, 1],
     xlabel = "Z Position (nm)",
     ylabel = "PSF Width σ (pixels)",
     title = "Astigmatic PSF Width vs Depth",
@@ -337,13 +352,14 @@ ax1 = Axis(fig[1, 1],
 sigma_x_vals = [sigma(z, sigma_x0, gamma, Ax, Bx, d) for z in z_range]
 sigma_y_vals = [sigma(z, sigma_y0, -gamma, Ay, By, d) for z in z_range]
 
-lines!(ax1, z_range, sigma_x_vals, label="σx(z)", color=:blue, linewidth=3)
-lines!(ax1, z_range, sigma_y_vals, label="σy(z)", color=:red, linewidth=3)
-vlines!(ax1, [0.0], color=:gray, linestyle=:dash)
-axislegend(ax1, position=:lt)
+lines!(ax1, z_range, sigma_x_vals, label = "σx(z)", color = :blue, linewidth = 3)
+lines!(ax1, z_range, sigma_y_vals, label = "σy(z)", color = :red, linewidth = 3)
+vlines!(ax1, [0.0], color = :gray, linestyle = :dash)
+axislegend(ax1, position = :lt)
 
 # Panel 2: Width derivatives (z-information)
-ax2 = Axis(fig[1, 2],
+ax2 = Axis(
+    fig[1, 2],
     xlabel = "Z Position (nm)",
     ylabel = "|dσ/dz| (pixels/nm)",
     title = "Z-Information: Width Gradient Magnitude",
@@ -352,13 +368,14 @@ ax2 = Axis(fig[1, 2],
     titlesize = 16
 )
 
-lines!(ax2, z_range, dsigma_x_dz_vals, label="|dσx/dz|", color=:blue, linewidth=2.5)
-lines!(ax2, z_range, dsigma_y_dz_vals, label="|dσy/dz|", color=:red, linewidth=2.5)
-vlines!(ax2, [0.0], color=:gray, linestyle=:dash)
-axislegend(ax2, position=:lt)
+lines!(ax2, z_range, dsigma_x_dz_vals, label = "|dσx/dz|", color = :blue, linewidth = 2.5)
+lines!(ax2, z_range, dsigma_y_dz_vals, label = "|dσy/dz|", color = :red, linewidth = 2.5)
+vlines!(ax2, [0.0], color = :gray, linestyle = :dash)
+axislegend(ax2, position = :lt)
 
 # Panel 3: Lateral CRLB
-ax3 = Axis(fig[2, 1],
+ax3 = Axis(
+    fig[2, 1],
     xlabel = "Z Position (nm)",
     ylabel = "Localization Precision (pixels)",
     title = "CRLB: Lateral Precision vs Depth",
@@ -367,13 +384,14 @@ ax3 = Axis(fig[2, 1],
     titlesize = 16
 )
 
-lines!(ax3, z_range, crlb_x, label="CRLB x", color=:blue, linewidth=2.5)
-lines!(ax3, z_range, crlb_y, label="CRLB y", color=:red, linewidth=2.5)
-vlines!(ax3, [0.0], color=:gray, linestyle=:dash)
-axislegend(ax3, position=:lt)
+lines!(ax3, z_range, crlb_x, label = "CRLB x", color = :blue, linewidth = 2.5)
+lines!(ax3, z_range, crlb_y, label = "CRLB y", color = :red, linewidth = 2.5)
+vlines!(ax3, [0.0], color = :gray, linestyle = :dash)
+axislegend(ax3, position = :lt)
 
 # Panel 4: Axial CRLB
-ax4 = Axis(fig[2, 2],
+ax4 = Axis(
+    fig[2, 2],
     xlabel = "Z Position (nm)",
     ylabel = "Axial Precision (nm)",
     title = "CRLB: Z Precision vs Depth",
@@ -382,9 +400,9 @@ ax4 = Axis(fig[2, 2],
     titlesize = 16
 )
 
-lines!(ax4, z_range, crlb_z, label="CRLB z", color=:purple, linewidth=3)
-vlines!(ax4, [0.0], color=:gray, linestyle=:dash)
-axislegend(ax4, position=:lt)
+lines!(ax4, z_range, crlb_z, label = "CRLB z", color = :purple, linewidth = 3)
+vlines!(ax4, [0.0], color = :gray, linestyle = :dash)
+axislegend(ax4, position = :lt)
 
 # Save figure
 output_file = joinpath(output_dir, "theoretical_crlb_vs_z.png")

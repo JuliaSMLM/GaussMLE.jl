@@ -56,7 +56,7 @@ println("  Background: $(background) photons/pixel")
 println("  Samples per z: $(n_samples_per_z)")
 
 # Z range to test
-z_range = Float32.(range(-600, 600, length=25))  # 25 z positions
+z_range = Float32.(range(-600, 600, length = 25))  # 25 z positions
 println("\nTesting z range: $(minimum(z_range)) to $(maximum(z_range)) nm")
 
 # =============================================================================
@@ -109,11 +109,11 @@ Random.seed!(42)
 
 println("\nProcessing z positions:")
 for (idx, z_true) in enumerate(z_range)
-    print("  z = $(round(z_true, digits=1)) nm... ")
+    print("  z = $(round(z_true, digits = 1)) nm... ")
 
     # FIXED true position for this z (slightly off-center for non-zero derivatives)
-    x_true = Float32(box_size/2 + 0.3)
-    y_true = Float32(box_size/2 + 0.2)
+    x_true = Float32(box_size / 2 + 0.3)
+    y_true = Float32(box_size / 2 + 0.2)
 
     # Generate synthetic data using simulator functions (ensures identical code path)
     data = zeros(Float32, box_size, box_size, n_samples_per_z)
@@ -147,7 +147,7 @@ for (idx, z_true) in enumerate(z_range)
     push!(empirical_std_y, emp_y)
     push!(empirical_std_z, emp_z)
 
-    println("CRLB z=$(round(mean_z_error, digits=1)) nm, empirical=$(round(emp_z, digits=1)) nm")
+    println("CRLB z=$(round(mean_z_error, digits = 1)) nm, empirical=$(round(emp_z, digits = 1)) nm")
 end
 
 # =============================================================================
@@ -163,16 +163,16 @@ ratio_y = empirical_std_y ./ crlb_y
 ratio_z = empirical_std_z ./ crlb_z
 
 println("\nCRLB vs Empirical STD Ratios:")
-println("  X: mean=$(round(mean(ratio_x), digits=3)), range=$(round(minimum(ratio_x), digits=2)) to $(round(maximum(ratio_x), digits=2))")
-println("  Y: mean=$(round(mean(ratio_y), digits=3)), range=$(round(minimum(ratio_y), digits=2)) to $(round(maximum(ratio_y), digits=2))")
-println("  Z: mean=$(round(mean(ratio_z), digits=3)), range=$(round(minimum(ratio_z), digits=2)) to $(round(maximum(ratio_z), digits=2))")
+println("  X: mean=$(round(mean(ratio_x), digits = 3)), range=$(round(minimum(ratio_x), digits = 2)) to $(round(maximum(ratio_x), digits = 2))")
+println("  Y: mean=$(round(mean(ratio_y), digits = 3)), range=$(round(minimum(ratio_y), digits = 2)) to $(round(maximum(ratio_y), digits = 2))")
+println("  Z: mean=$(round(mean(ratio_z), digits = 3)), range=$(round(minimum(ratio_z), digits = 2)) to $(round(maximum(ratio_z), digits = 2))")
 
 # Identify problematic z positions
 bad_z_idx = findall(ratio_z .> 1.2 .|| ratio_z .< 0.8)
 if !isempty(bad_z_idx)
     println("\n⚠ Z positions with poor CRLB match (ratio outside 0.8-1.2):")
     for idx in bad_z_idx
-        println("  z=$(round(z_range[idx], digits=1)) nm: ratio=$(round(ratio_z[idx], digits=3))")
+        println("  z=$(round(z_range[idx], digits = 1)) nm: ratio=$(round(ratio_z[idx], digits = 3))")
     end
 end
 
@@ -183,10 +183,11 @@ println("\n" * "="^70)
 println("Part 4: Creating Visualizations")
 println("="^70)
 
-fig = Figure(size=(1400, 1000))
+fig = Figure(size = (1400, 1000))
 
 # Panel 1: PSF Widths vs Z
-ax1 = Axis(fig[1, 1],
+ax1 = Axis(
+    fig[1, 1],
     xlabel = "Z Position (nm)",
     ylabel = "PSF Width σ (pixels)",
     title = "Astigmatic PSF Width vs Depth",
@@ -195,13 +196,14 @@ ax1 = Axis(fig[1, 1],
     titlesize = 16
 )
 
-lines!(ax1, z_range, σx_at_z, label="σx(z)", color=:blue, linewidth=3)
-lines!(ax1, z_range, σy_at_z, label="σy(z)", color=:red, linewidth=3)
-vlines!(ax1, [0.0], color=:gray, linestyle=:dash, linewidth=1.5)
-axislegend(ax1, position=:lt)
+lines!(ax1, z_range, σx_at_z, label = "σx(z)", color = :blue, linewidth = 3)
+lines!(ax1, z_range, σy_at_z, label = "σy(z)", color = :red, linewidth = 3)
+vlines!(ax1, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
+axislegend(ax1, position = :lt)
 
 # Panel 2: Localization Precision (CRLB) vs Z
-ax2 = Axis(fig[1, 2],
+ax2 = Axis(
+    fig[1, 2],
     xlabel = "Z Position (nm)",
     ylabel = "Localization Precision (pixels)",
     title = "CRLB: Lateral Precision vs Depth",
@@ -210,15 +212,16 @@ ax2 = Axis(fig[1, 2],
     titlesize = 16
 )
 
-lines!(ax2, z_range, crlb_x, label="CRLB x", color=:blue, linewidth=2.5)
-lines!(ax2, z_range, crlb_y, label="CRLB y", color=:red, linewidth=2.5)
-scatter!(ax2, z_range, empirical_std_x, label="Empirical x", color=:blue, marker=:circle, markersize=8, alpha=0.6)
-scatter!(ax2, z_range, empirical_std_y, label="Empirical y", color=:red, marker=:circle, markersize=8, alpha=0.6)
-vlines!(ax2, [0.0], color=:gray, linestyle=:dash, linewidth=1.5)
-axislegend(ax2, position=:lt)
+lines!(ax2, z_range, crlb_x, label = "CRLB x", color = :blue, linewidth = 2.5)
+lines!(ax2, z_range, crlb_y, label = "CRLB y", color = :red, linewidth = 2.5)
+scatter!(ax2, z_range, empirical_std_x, label = "Empirical x", color = :blue, marker = :circle, markersize = 8, alpha = 0.6)
+scatter!(ax2, z_range, empirical_std_y, label = "Empirical y", color = :red, marker = :circle, markersize = 8, alpha = 0.6)
+vlines!(ax2, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
+axislegend(ax2, position = :lt)
 
 # Panel 3: Axial Precision vs Z
-ax3 = Axis(fig[2, 1],
+ax3 = Axis(
+    fig[2, 1],
     xlabel = "Z Position (nm)",
     ylabel = "Axial Precision (nm)",
     title = "CRLB: Z Precision vs Depth",
@@ -227,13 +230,14 @@ ax3 = Axis(fig[2, 1],
     titlesize = 16
 )
 
-lines!(ax3, z_range, crlb_z, label="CRLB z (reported)", color=:purple, linewidth=2.5)
-scatter!(ax3, z_range, empirical_std_z, label="Empirical z", color=:purple, marker=:circle, markersize=8, alpha=0.6)
-vlines!(ax3, [0.0], color=:gray, linestyle=:dash, linewidth=1.5)
-axislegend(ax3, position=:lt)
+lines!(ax3, z_range, crlb_z, label = "CRLB z (reported)", color = :purple, linewidth = 2.5)
+scatter!(ax3, z_range, empirical_std_z, label = "Empirical z", color = :purple, marker = :circle, markersize = 8, alpha = 0.6)
+vlines!(ax3, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
+axislegend(ax3, position = :lt)
 
 # Panel 4: CRLB / Empirical Ratio (Should be ~1.0)
-ax4 = Axis(fig[2, 2],
+ax4 = Axis(
+    fig[2, 2],
     xlabel = "Z Position (nm)",
     ylabel = "Empirical STD / CRLB",
     title = "CRLB Accuracy Check (should be ≈1.0)",
@@ -242,13 +246,13 @@ ax4 = Axis(fig[2, 2],
     titlesize = 16
 )
 
-lines!(ax4, z_range, ratio_x, label="X ratio", color=:blue, linewidth=2.5)
-lines!(ax4, z_range, ratio_y, label="Y ratio", color=:red, linewidth=2.5)
-lines!(ax4, z_range, ratio_z, label="Z ratio", color=:purple, linewidth=2.5, linestyle=:dash)
-hlines!(ax4, [1.0], color=:green, linestyle=:dash, linewidth=2, label="Perfect match")
-hlines!(ax4, [0.8, 1.2], color=:orange, linestyle=:dot, linewidth=1.5, label="±20% tolerance")
-vlines!(ax4, [0.0], color=:gray, linestyle=:dash, linewidth=1.5)
-axislegend(ax4, position=:rb)
+lines!(ax4, z_range, ratio_x, label = "X ratio", color = :blue, linewidth = 2.5)
+lines!(ax4, z_range, ratio_y, label = "Y ratio", color = :red, linewidth = 2.5)
+lines!(ax4, z_range, ratio_z, label = "Z ratio", color = :purple, linewidth = 2.5, linestyle = :dash)
+hlines!(ax4, [1.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
+hlines!(ax4, [0.8, 1.2], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±20% tolerance")
+vlines!(ax4, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
+axislegend(ax4, position = :rb)
 
 # Save figure
 output_file = joinpath(output_dir, "astigmatic_crlb_vs_z.png")
@@ -264,13 +268,13 @@ println("SUMMARY")
 println("="^70)
 
 println("\nPSF Width Behavior:")
-println("  • σx and σy vary from $(round(minimum([σx_at_z; σy_at_z]), digits=2)) to $(round(maximum([σx_at_z; σy_at_z]), digits=2)) pixels")
+println("  • σx and σy vary from $(round(minimum([σx_at_z; σy_at_z]), digits = 2)) to $(round(maximum([σx_at_z; σy_at_z]), digits = 2)) pixels")
 println("  • Crossing point: z ≈ 0 (as expected for γ=$(psf_model.γ)nm)")
 
 println("\nCRLB Accuracy (Empirical std(error)/CRLB should be ≈1.0):")
-println("  • X: $(round(mean(ratio_x), digits=3)) ± $(round(std(ratio_x), digits=3)) → $(all(0.9 .< ratio_x .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_x .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
-println("  • Y: $(round(mean(ratio_y), digits=3)) ± $(round(std(ratio_y), digits=3)) → $(all(0.9 .< ratio_y .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_y .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
-println("  • Z: $(round(mean(ratio_z), digits=3)) ± $(round(std(ratio_z), digits=3)) → $(all(0.9 .< ratio_z .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_z .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
+println("  • X: $(round(mean(ratio_x), digits = 3)) ± $(round(std(ratio_x), digits = 3)) → $(all(0.9 .< ratio_x .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_x .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
+println("  • Y: $(round(mean(ratio_y), digits = 3)) ± $(round(std(ratio_y), digits = 3)) → $(all(0.9 .< ratio_y .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_y .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
+println("  • Z: $(round(mean(ratio_z), digits = 3)) ± $(round(std(ratio_z), digits = 3)) → $(all(0.9 .< ratio_z .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_z .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
 
 # Overall assessment
 x_ok = all(0.8 .< ratio_x .< 1.2)

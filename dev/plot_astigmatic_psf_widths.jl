@@ -39,7 +39,7 @@ println("  γ = $γ nm (focal plane offset)")
 println("  d = $d nm (depth scale)")
 
 # Z range: -1000 to +1000 nm
-z_values = range(-1000.0f0, 1000.0f0, length=200)
+z_values = range(-1000.0f0, 1000.0f0, length = 200)
 
 # Compute σx and σy using actual GaussLib functions
 σx_values = Float32[]
@@ -61,7 +61,7 @@ end
 println("\nPSF Width Statistics:")
 println("  σx range: $(minimum(σx_values)) to $(maximum(σx_values)) pixels")
 println("  σy range: $(minimum(σy_values)) to $(maximum(σy_values)) pixels")
-println("  Max width / min width: $(maximum(σx_values)/minimum(σx_values))×")
+println("  Max width / min width: $(maximum(σx_values) / minimum(σx_values))×")
 
 # Find crossing point (where σx ≈ σy)
 crossing_idx = argmin(abs.(σx_values .- σy_values))
@@ -69,10 +69,11 @@ crossing_z = z_values[crossing_idx]
 println("  Crossing point: z ≈ $(crossing_z) nm (should be ~0)")
 
 # Create visualization
-fig = Figure(size=(1000, 700))
+fig = Figure(size = (1000, 700))
 
 # Main plot
-ax = Axis(fig[1, 1],
+ax = Axis(
+    fig[1, 1],
     xlabel = "Z Position (nm)",
     ylabel = "PSF Width σ (pixels)",
     title = "Astigmatic PSF Width vs Depth\n(Ax=$Ax, Ay=$Ay, Bx=$Bx, By=$By, d=$d nm)",
@@ -82,32 +83,37 @@ ax = Axis(fig[1, 1],
 )
 
 # Plot σx and σy
-lines!(ax, z_values, σx_values, label="σx(z)", color=:blue, linewidth=3)
-lines!(ax, z_values, σy_values, label="σy(z)", color=:red, linewidth=3)
+lines!(ax, z_values, σx_values, label = "σx(z)", color = :blue, linewidth = 3)
+lines!(ax, z_values, σy_values, label = "σy(z)", color = :red, linewidth = 3)
 
 # Mark focal plane
-vlines!(ax, [0.0], color=:gray, linestyle=:dash, linewidth=2, label="Focal plane (z=0)")
+vlines!(ax, [0.0], color = :gray, linestyle = :dash, linewidth = 2, label = "Focal plane (z=0)")
 
 # Mark diffraction limit
-hlines!(ax, [σx₀], color=:gray, linestyle=:dot, linewidth=2, label="Base width σ₀")
+hlines!(ax, [σx₀], color = :gray, linestyle = :dot, linewidth = 2, label = "Base width σ₀")
 
 # Add legend
-axislegend(ax, position=:lt, labelsize=14)
+axislegend(ax, position = :lt, labelsize = 14)
 
 # Add grid
 ax.xgridvisible = true
 ax.ygridvisible = true
 
 # Add annotations
-text!(ax, 200, maximum(σx_values)*0.95,
-    text="σx grows with +z\n(focus in y)",
-    color=:blue, fontsize=12)
-text!(ax, -800, maximum(σy_values)*0.95,
-    text="σy grows with -z\n(focus in x)",
-    color=:red, fontsize=12)
+text!(
+    ax, 200, maximum(σx_values) * 0.95,
+    text = "σx grows with +z\n(focus in y)",
+    color = :blue, fontsize = 12
+)
+text!(
+    ax, -800, maximum(σy_values) * 0.95,
+    text = "σy grows with -z\n(focus in x)",
+    color = :red, fontsize = 12
+)
 
 # Physical interpretation panel
-ax2 = Axis(fig[2, 1],
+ax2 = Axis(
+    fig[2, 1],
     xlabel = "Z Position (nm)",
     ylabel = "α(z) = σ²/σ₀²",
     title = "Alpha Functions (Width Scaling)",
@@ -116,15 +122,15 @@ ax2 = Axis(fig[2, 1],
 )
 
 # Compute and plot alpha values
-αx_values = [(σx/σx₀)^2 for σx in σx_values]
-αy_values = [(σy/σy₀)^2 for σy in σy_values]
+αx_values = [(σx / σx₀)^2 for σx in σx_values]
+αy_values = [(σy / σy₀)^2 for σy in σy_values]
 
-lines!(ax2, z_values, αx_values, label="αx(z)", color=:blue, linewidth=2)
-lines!(ax2, z_values, αy_values, label="αy(z)", color=:red, linewidth=2)
-hlines!(ax2, [1.0], color=:gray, linestyle=:dash, linewidth=1)
-vlines!(ax2, [0.0], color=:gray, linestyle=:dash, linewidth=1)
+lines!(ax2, z_values, αx_values, label = "αx(z)", color = :blue, linewidth = 2)
+lines!(ax2, z_values, αy_values, label = "αy(z)", color = :red, linewidth = 2)
+hlines!(ax2, [1.0], color = :gray, linestyle = :dash, linewidth = 1)
+vlines!(ax2, [0.0], color = :gray, linestyle = :dash, linewidth = 1)
 
-axislegend(ax2, position=:lt, labelsize=12)
+axislegend(ax2, position = :lt, labelsize = 12)
 
 # Save figure
 output_file = joinpath(output_dir, "astigmatic_psf_widths.png")

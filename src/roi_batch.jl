@@ -6,7 +6,7 @@ This file contains only GaussMLE-specific types and conversions.
 """
 
 # Extended results type with camera coordinates
-struct LocalizationResult{T,P<:PSFModel}
+struct LocalizationResult{T, P <: PSFModel}
     parameters::Matrix{T}       # ROI coordinates (as before)
     uncertainties::Matrix{T}     # Uncertainties
     covariances::Matrix{T}       # Off-diagonal covariances [σ_xy, σ_xz, σ_yz] (3 x n_fits)
@@ -27,7 +27,7 @@ struct LocalizationResult{T,P<:PSFModel}
 end
 
 # Convert from ROI coordinates to camera coordinates
-function roi_to_camera_coords(x_roi::T, y_roi::T, x_corner::Int32, y_corner::Int32) where T
+function roi_to_camera_coords(x_roi::T, y_roi::T, x_corner::Int32, y_corner::Int32) where {T}
     # ROI coordinates are 1-indexed (1 = first pixel in ROI)
     # Camera coordinates are 1-indexed (1 = first pixel in camera)
     # Corner is the camera pixel index of the top-left ROI pixel
@@ -36,14 +36,14 @@ end
 
 # Create LocalizationResult from fit results and ROIBatch
 function create_localization_result(
-    parameters::Matrix{T},
-    uncertainties::Matrix{T},
-    covariances::Matrix{T},
-    log_likelihoods::Vector{T},
-    pvalues::Vector{T},
-    roi_batch::SMLMData.ROIBatch,
-    psf_model::P
-) where {T,P<:PSFModel}
+        parameters::Matrix{T},
+        uncertainties::Matrix{T},
+        covariances::Matrix{T},
+        log_likelihoods::Vector{T},
+        pvalues::Vector{T},
+        roi_batch::SMLMData.ROIBatch,
+        psf_model::P
+    ) where {T, P <: PSFModel}
 
     n_fits = size(parameters, 2)
 
@@ -60,7 +60,7 @@ function create_localization_result(
         x_camera[i], y_camera[i] = roi_to_camera_coords(x_roi, y_roi, x_corner, y_corner)
     end
 
-    LocalizationResult(
+    return LocalizationResult(
         parameters,
         uncertainties,
         covariances,
@@ -77,7 +77,7 @@ function create_localization_result(
 end
 
 # Iterator interface for LocalizationResult - enables `for fit in result`
-function Base.iterate(r::LocalizationResult, state=1)
+function Base.iterate(r::LocalizationResult, state = 1)
     if state > r.n_fits
         return nothing
     end
@@ -91,7 +91,7 @@ function Base.iterate(r::LocalizationResult, state=1)
         frame_index = r.frame_indices[state],
         x_roi_corner = r.x_roi_corners[state],
         y_roi_corner = r.y_roi_corners[state],
-        index = state
+        index = state,
     )
     return (fit, state + 1)
 end
@@ -114,7 +114,7 @@ function Base.getindex(r::LocalizationResult, i::Int)
         frame_index = r.frame_indices[i],
         x_roi_corner = r.x_roi_corners[i],
         y_roi_corner = r.y_roi_corners[i],
-        index = i
+        index = i,
     )
 end
 
@@ -128,14 +128,14 @@ to_emitter(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera
 
 # ---- GaussianXYNB: Emitter2DFitGaussMLE (with p-value) ----
 function to_emitter(
-    ::GaussianXYNB,
-    result::LocalizationResult{T},
-    idx::Int,
-    camera::SMLMData.AbstractCamera;
-    dataset::Int = 1,
-    track_id::Int = 0,
-    id::Int = idx
-) where T
+        ::GaussianXYNB,
+        result::LocalizationResult{T},
+        idx::Int,
+        camera::SMLMData.AbstractCamera;
+        dataset::Int = 1,
+        track_id::Int = 0,
+        id::Int = idx
+    ) where {T}
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
@@ -160,7 +160,7 @@ function to_emitter(
     # Goodness-of-fit
     pvalue = result.pvalues[idx]
 
-    Emitter2DFitGaussMLE{T}(
+    return Emitter2DFitGaussMLE{T}(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σ_x), T(σ_y), T(σ_xy),
@@ -173,14 +173,14 @@ end
 
 # ---- GaussianXYNBS: Emitter2DFitSigma (with fitted σ) ----
 function to_emitter(
-    ::GaussianXYNBS,
-    result::LocalizationResult{T},
-    idx::Int,
-    camera::SMLMData.AbstractCamera;
-    dataset::Int = 1,
-    track_id::Int = 0,
-    id::Int = idx
-) where T
+        ::GaussianXYNBS,
+        result::LocalizationResult{T},
+        idx::Int,
+        camera::SMLMData.AbstractCamera;
+        dataset::Int = 1,
+        track_id::Int = 0,
+        id::Int = idx
+    ) where {T}
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
@@ -207,7 +207,7 @@ function to_emitter(
     # Goodness-of-fit
     pvalue = result.pvalues[idx]
 
-    Emitter2DFitSigma{T}(
+    return Emitter2DFitSigma{T}(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σ_microns),
@@ -222,14 +222,14 @@ end
 
 # ---- GaussianXYNBSXSY: Emitter2DFitSigmaXY (with fitted σx, σy) ----
 function to_emitter(
-    ::GaussianXYNBSXSY,
-    result::LocalizationResult{T},
-    idx::Int,
-    camera::SMLMData.AbstractCamera;
-    dataset::Int = 1,
-    track_id::Int = 0,
-    id::Int = idx
-) where T
+        ::GaussianXYNBSXSY,
+        result::LocalizationResult{T},
+        idx::Int,
+        camera::SMLMData.AbstractCamera;
+        dataset::Int = 1,
+        track_id::Int = 0,
+        id::Int = idx
+    ) where {T}
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
@@ -259,7 +259,7 @@ function to_emitter(
     # Goodness-of-fit
     pvalue = result.pvalues[idx]
 
-    Emitter2DFitSigmaXY{T}(
+    return Emitter2DFitSigmaXY{T}(
         T(x_microns), T(y_microns),
         photons, bg,
         T(σx_microns), T(σy_microns),
@@ -274,14 +274,14 @@ end
 
 # ---- AstigmaticXYZNB: Emitter3DFit ----
 function to_emitter(
-    ::AstigmaticXYZNB,
-    result::LocalizationResult{T},
-    idx::Int,
-    camera::SMLMData.AbstractCamera;
-    dataset::Int = 1,
-    track_id::Int = 0,
-    id::Int = idx
-) where T
+        ::AstigmaticXYZNB,
+        result::LocalizationResult{T},
+        idx::Int,
+        camera::SMLMData.AbstractCamera;
+        dataset::Int = 1,
+        track_id::Int = 0,
+        id::Int = idx
+    ) where {T}
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
@@ -312,7 +312,7 @@ function to_emitter(
     # Goodness-of-fit
     pvalue = result.pvalues[idx]
 
-    Emitter3DFitGaussMLE{T}(
+    return Emitter3DFitGaussMLE{T}(
         T(x_microns), T(y_microns), T(z_microns),
         photons, bg,
         T(σ_x), T(σ_y), T(σ_z), T(σ_xy), T(σ_xz), T(σ_yz),
@@ -325,9 +325,9 @@ end
 
 # Legacy function names for backward compatibility
 to_emitter2dfit(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) =
-    to_emitter(GaussianXYNB(0.10f0), result, idx, camera; kwargs...)
+    to_emitter(GaussianXYNB(0.1f0), result, idx, camera; kwargs...)
 
-to_emitter3dfit(result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) where T =
+to_emitter3dfit(result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) where {T} =
     to_emitter(result.psf_model, result, idx, camera; kwargs...)
 
 # ===================================================================
@@ -346,15 +346,15 @@ Dispatches to correct emitter constructor based on PSF model:
 - AstigmaticXYZNB → Emitter3DFit (with z)
 """
 function to_smld(
-    result::LocalizationResult,
-    roi_batch::SMLMData.ROIBatch;
-    dataset::Int = 1,
-    metadata::Dict{String,Any} = Dict{String,Any}()
-)
+        result::LocalizationResult,
+        roi_batch::SMLMData.ROIBatch;
+        dataset::Int = 1,
+        metadata::Dict{String, Any} = Dict{String, Any}()
+    )
     # Create emitters - dispatch handles emitter type selection
     emitters = [
-        to_emitter(result, i, roi_batch.camera; dataset=dataset, id=i)
-        for i in 1:result.n_fits
+        to_emitter(result, i, roi_batch.camera; dataset = dataset, id = i)
+            for i in 1:result.n_fits
     ]
 
     # Determine frame range
@@ -365,7 +365,7 @@ function to_smld(
     metadata["n_fits"] = result.n_fits
 
     # Create BasicSMLD with mixed emitter types (all <: AbstractEmitter)
-    SMLMData.BasicSMLD(
+    return SMLMData.BasicSMLD(
         emitters,
         roi_batch.camera,
         Int(n_frames),

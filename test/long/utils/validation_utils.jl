@@ -57,7 +57,7 @@ function extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, ro
         σ_y[i] = e.σ_y / pixel_size
     end
 
-    return (x_roi=x_roi, y_roi=y_roi, photons=photons, bg=bg, σ_x=σ_x, σ_y=σ_y)
+    return (x_roi = x_roi, y_roi = y_roi, photons = photons, bg = bg, σ_x = σ_x, σ_y = σ_y)
 end
 
 """
@@ -66,32 +66,32 @@ end
 Generate synthetic data with known ground truth for testing
 """
 function generate_test_data(
-    model_type::Symbol,
-    n_blobs::Int,
-    box_size::Int;
-    psf_model::Union{Nothing, GaussMLE.PSFModel} = nothing,
-    n_photons::Float32 = 1000.0f0,
-    background::Float32 = 5.0f0,  # Optimal background for unbiased estimation
-    sigma::Float32 = 1.3f0,
-    position_std::Float32 = 0.5f0,
-    seed::Int = 42
-)
+        model_type::Symbol,
+        n_blobs::Int,
+        box_size::Int;
+        psf_model::Union{Nothing, GaussMLE.PSFModel} = nothing,
+        n_photons::Float32 = 1000.0f0,
+        background::Float32 = 5.0f0,  # Optimal background for unbiased estimation
+        sigma::Float32 = 1.3f0,
+        position_std::Float32 = 0.5f0,
+        seed::Int = 42
+    )
     Random.seed!(seed)
-    
+
     # Initialize data array
     data = zeros(Float32, box_size, box_size, n_blobs)
-    
+
     # Store true parameters
     true_params = Dict{Symbol, Vector{Float32}}()
-    
+
     # Generate blobs
     for k in 1:n_blobs
         # True parameters with small variations
-        x_true = Float32(box_size/2 + position_std * randn())
-        y_true = Float32(box_size/2 + position_std * randn())
+        x_true = Float32(box_size / 2 + position_std * randn())
+        y_true = Float32(box_size / 2 + position_std * randn())
         n_true = n_photons * Float32(0.8 + 0.4 * rand())  # ±20% variation
         bg_true = background * Float32(0.8 + 0.4 * rand())
-        
+
         # Model-specific parameters
         if model_type == :xynb
             # Fixed sigma model
@@ -99,51 +99,51 @@ function generate_test_data(
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
             true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
-            
+
             # Generate data
             for j in 1:box_size, i in 1:box_size
                 mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma, sigma)
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
-            
+
         elseif model_type == :xynbs
             # Variable sigma model
             sigma_true = sigma * Float32(0.8 + 0.4 * rand())
-            
+
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
             true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
             true_params[:sigma] = push!(get(true_params, :sigma, Float32[]), sigma_true)
-            
+
             for j in 1:box_size, i in 1:box_size
                 mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_true, sigma_true)
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
-            
+
         elseif model_type == :xynbsxsy
             # Anisotropic model
             sigma_x_true = sigma * Float32(0.8 + 0.4 * rand())
             sigma_y_true = sigma * Float32(0.8 + 0.4 * rand())
-            
+
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
             true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
             true_params[:sigma_x] = push!(get(true_params, :sigma_x, Float32[]), sigma_x_true)
             true_params[:sigma_y] = push!(get(true_params, :sigma_y, Float32[]), sigma_y_true)
-            
+
             for j in 1:box_size, i in 1:box_size
                 mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_x_true, sigma_y_true)
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
-            
+
         elseif model_type == :xynbz
             # Astigmatic 3D model - DEPRECATED: Use generate_roi_batch_validation instead
             error("Astigmatic validation should use generate_roi_batch_validation, not generate_test_data")
         end
     end
-    
+
     return data, true_params
 end
 
@@ -172,20 +172,20 @@ Validate that fitted parameters match ground truth within tolerances.
 Uses extract_roi_coords() to properly convert from camera coordinates to ROI-local coordinates.
 """
 function validate_fitting_results(
-    smld::SMLMData.BasicSMLD,
-    true_params::Dict{Symbol, Vector{Float32}},
-    param_name::Symbol;
-    bias_tol::Float32 = 0.1f0,
-    std_tol::Float32 = 0.2f0,  # 20% tolerance on std matching
-    roi_size::Int = 11,  # Default ROI size for coordinate extraction
-    verbose::Bool = false
-)
+        smld::SMLMData.BasicSMLD,
+        true_params::Dict{Symbol, Vector{Float32}},
+        param_name::Symbol;
+        bias_tol::Float32 = 0.1f0,
+        std_tol::Float32 = 0.2f0,  # 20% tolerance on std matching
+        roi_size::Int = 11,  # Default ROI size for coordinate extraction
+        verbose::Bool = false
+    )
     # Extract ROI-local coordinates
     # For fit(Array), use dummy corners [1, 12, 23, ...] (matches interface.jl)
     n = length(smld.emitters)
     dummy_corners = zeros(Int32, 2, n)
     for i in 1:n
-        dummy_corners[1, i] = Int32(1 + (i-1) * roi_size)
+        dummy_corners[1, i] = Int32(1 + (i - 1) * roi_size)
         dummy_corners[2, i] = Int32(1)
     end
 
@@ -289,7 +289,7 @@ function validate_fitting_results(
         std_ratio = std_ratio,
         bias_pass = bias_pass,
         std_pass = std_pass,
-        overall_pass = bias_pass && std_pass
+        overall_pass = bias_pass && std_pass,
     )
 end
 
@@ -299,17 +299,17 @@ end
 Run complete validation for a model configuration
 """
 function run_model_validation(
-    model_type::Symbol,
-    psf_model::GaussMLE.PSFModel,
-    n_blobs::Int = 1000;
-    box_size::Int = 11,
-    device = GaussMLE.CPU(),
-    verbose::Bool = false,
-    kwargs...
-)
+        model_type::Symbol,
+        psf_model::GaussMLE.PSFModel,
+        n_blobs::Int = 1000;
+        box_size::Int = 11,
+        device = GaussMLE.CPU(),
+        verbose::Bool = false,
+        kwargs...
+    )
     # Generate test data (pass psf_model for astigmatic model)
-    data, true_params = generate_test_data(model_type, n_blobs, box_size; psf_model=psf_model, kwargs...)
-    
+    data, true_params = generate_test_data(model_type, n_blobs, box_size; psf_model = psf_model, kwargs...)
+
     # Create fitter
     fitter = GaussMLE.GaussMLEConfig(
         psf_model = psf_model,
@@ -323,7 +323,7 @@ function run_model_validation(
     # Validate each parameter
     validation_results = Dict{Symbol, Any}()
     all_pass = true
-    
+
     # Define parameters to validate based on model type
     params_to_validate = if model_type == :xynb
         [:x, :y, :photons, :background]
@@ -336,19 +336,19 @@ function run_model_validation(
     else
         error("Unknown model type: $model_type")
     end
-    
+
     # Define tolerances for each parameter
     tolerances = Dict(
-        :x => (bias_tol=0.15f0, std_tol=0.1f0),  # 10% tolerance for std/CRLB ratio, 0.15 pix bias tolerance
-        :y => (bias_tol=0.15f0, std_tol=0.1f0),  # Increased from 0.05 to account for coordinate conversion
-        :z => (bias_tol=30.0f0, std_tol=0.1f0),  # 10% tolerance for std/CRLB ratio
-        :photons => (bias_tol=100.0f0, std_tol=0.1f0),  # 10% tolerance
-        :background => (bias_tol=2.0f0, std_tol=0.1f0),  # 10% tolerance
-        :sigma => (bias_tol=0.05f0, std_tol=0.1f0),
-        :sigma_x => (bias_tol=0.05f0, std_tol=0.1f0),
-        :sigma_y => (bias_tol=0.05f0, std_tol=0.1f0),
+        :x => (bias_tol = 0.15f0, std_tol = 0.1f0),  # 10% tolerance for std/CRLB ratio, 0.15 pix bias tolerance
+        :y => (bias_tol = 0.15f0, std_tol = 0.1f0),  # Increased from 0.05 to account for coordinate conversion
+        :z => (bias_tol = 30.0f0, std_tol = 0.1f0),  # 10% tolerance for std/CRLB ratio
+        :photons => (bias_tol = 100.0f0, std_tol = 0.1f0),  # 10% tolerance
+        :background => (bias_tol = 2.0f0, std_tol = 0.1f0),  # 10% tolerance
+        :sigma => (bias_tol = 0.05f0, std_tol = 0.1f0),
+        :sigma_x => (bias_tol = 0.05f0, std_tol = 0.1f0),
+        :sigma_y => (bias_tol = 0.05f0, std_tol = 0.1f0),
     )
-    
+
     if verbose
         println("\n" * "="^60)
         println("Model Validation: $model_type")
@@ -356,7 +356,7 @@ function run_model_validation(
         println("Number of blobs: $n_blobs")
         println("="^60)
     end
-    
+
     for param in params_to_validate
         tol = tolerances[param]
         result = validate_fitting_results(
@@ -369,13 +369,13 @@ function run_model_validation(
         validation_results[param] = result
         all_pass = all_pass && result.overall_pass
     end
-    
+
     if verbose
         println("\n" * "="^60)
         println("Overall result: $(all_pass ? "PASS ✓" : "FAIL ✗")")
         println("="^60)
     end
-    
+
     return all_pass, validation_results
 end
 

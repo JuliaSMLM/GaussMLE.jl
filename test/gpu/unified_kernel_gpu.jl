@@ -9,17 +9,17 @@ using Statistics
 using KernelAbstractions
 
 @testset "Unified Kernel Tests" begin
-    
+
     # Test configuration
     n_test_blobs = 100
     box_size = 7
     iterations = 20
-    
+
     # Generate test data
     function generate_simple_test_data(n_blobs, box_size)
         data = zeros(Float32, box_size, box_size, n_blobs)
         center = Float32((box_size + 1) / 2)
-        
+
         for k in 1:n_blobs
             # Simple Gaussian blob
             for j in 1:box_size, i in 1:box_size
@@ -31,13 +31,13 @@ using KernelAbstractions
             # Add some noise
             data[:, :, k] .+= randn(Float32, box_size, box_size) * 5.0f0
         end
-        
+
         return data
     end
-    
+
     @testset "GPU Unified Kernel" begin
         data = generate_simple_test_data(n_test_blobs, box_size)
-        
+
         @testset "GaussianXYNB GPU" begin
             psf_model = GaussMLE.GaussianXYNB(0.13f0)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
@@ -52,7 +52,7 @@ using KernelAbstractions
             d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
 
             # Create dummy corners and variance for new kernel signature
-            d_x_corners = CuArray(Int32[1 + (i-1) * box_size for i in 1:n_test_blobs])
+            d_x_corners = CuArray(Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs])
             d_y_corners = CuArray(fill(Int32(1), n_test_blobs))
             d_variance_map = CUDA.zeros(Float32, 512, 512)
 
@@ -60,10 +60,12 @@ using KernelAbstractions
             backend = CUDABackend()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
-            kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                   d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
-                   constraints, iterations,
-                   ndrange=n_test_blobs)
+            kernel(
+                d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             # Wait for completion
             CUDA.synchronize()
@@ -86,13 +88,13 @@ using KernelAbstractions
             @test all(100 .< results[3, :] .< 20000)  # photons (integrated Gaussian)
             @test all(0 .< results[4, :] .< 100)  # background
         end
-        
+
         @testset "CPU vs GPU Consistency" begin
             psf_model = GaussMLE.GaussianXYNB(0.13f0)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
 
             # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
@@ -104,10 +106,12 @@ using KernelAbstractions
 
             backend_cpu = KernelAbstractions.CPU()
             kernel_cpu = GaussMLE.unified_gaussian_mle_kernel!(backend_cpu)
-            kernel_cpu(results_cpu, uncertainties_cpu, covariances_cpu, log_likelihoods_cpu,
-                      data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                      constraints, iterations,
-                      ndrange=n_test_blobs)
+            kernel_cpu(
+                results_cpu, uncertainties_cpu, covariances_cpu, log_likelihoods_cpu,
+                data, psf_model, Val(false), variance_map, x_corners, y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             # Run on GPU
             d_data = CuArray(data)
@@ -121,10 +125,12 @@ using KernelAbstractions
 
             backend_gpu = CUDABackend()
             kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
-            kernel_gpu(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                      d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
-                      constraints, iterations,
-                      ndrange=n_test_blobs)
+            kernel_gpu(
+                d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             CUDA.synchronize()
 
@@ -134,14 +140,14 @@ using KernelAbstractions
             log_likelihoods_gpu = Array(d_log_likelihoods)
 
             # Compare results (should be very close)
-            @test results_cpu ≈ results_gpu rtol=1e-4
-            @test uncertainties_cpu ≈ uncertainties_gpu rtol=1e-3
+            @test results_cpu ≈ results_gpu rtol = 1.0e-4
+            @test uncertainties_cpu ≈ uncertainties_gpu rtol = 1.0e-3
             # σ_xy of a centred symmetric blob is Float32 roundoff around zero, so compare it
             # on the scale of the x/y variances rather than relative to itself.
             var_xy = maximum(abs2, uncertainties_cpu[1:2, :])
-            @test covariances_cpu ≈ covariances_gpu rtol=1e-3 atol=1e-3 * var_xy
-            @test log_likelihoods_cpu ≈ log_likelihoods_gpu rtol=1e-4
+            @test covariances_cpu ≈ covariances_gpu rtol = 1.0e-3 atol = 1.0e-3 * var_xy
+            @test log_likelihoods_cpu ≈ log_likelihoods_gpu rtol = 1.0e-4
         end
     end
-    
+
 end

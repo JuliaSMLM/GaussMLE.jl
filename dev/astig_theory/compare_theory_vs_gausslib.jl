@@ -45,7 +45,7 @@ y_pos = 8.2f0
 N_photons = 2000.0f0
 bg_level = 1.0f0
 
-z_range = Float32.(range(-600, 600, length=50))
+z_range = Float32.(range(-600, 600, length = 50))
 
 println("PSF Parameters:")
 println("  σx₀ = $sigma_x0, σy₀ = $sigma_y0")
@@ -60,12 +60,12 @@ println()
 
 # Error function implementation
 function erf(x::Real)
-    a1 =  0.254829592
+    a1 = 0.254829592
     a2 = -0.284496736
-    a3 =  1.421413741
+    a3 = 1.421413741
     a4 = -1.453152027
-    a5 =  1.061405429
-    p  =  0.3275911
+    a5 = 1.061405429
+    p = 0.3275911
 
     sign_x = sign(x)
     x = abs(x)
@@ -275,7 +275,7 @@ println("="^80)
 
 mean_diff = mean(crlb_diff_percent)
 max_diff = maximum(crlb_diff_percent)
-rms_diff = sqrt(mean((crlb_theory .- crlb_gausslib).^2))
+rms_diff = sqrt(mean((crlb_theory .- crlb_gausslib) .^ 2))
 
 println("\nPercent Difference (|Theory - GaussLib| / GaussLib × 100%):")
 @printf("  Mean: %.4f%%\n", mean_diff)
@@ -301,10 +301,11 @@ println("\n" * "="^80)
 println("Creating comparison visualization...")
 println("="^80)
 
-fig = Figure(size=(1400, 800))
+fig = Figure(size = (1400, 800))
 
 # Panel 1: CRLB_z comparison
-ax1 = Axis(fig[1, 1],
+ax1 = Axis(
+    fig[1, 1],
     xlabel = "Z Position (nm)",
     ylabel = "Axial Precision CRLB_z (nm)",
     title = "CRLB Comparison: Theoretical vs GaussLib",
@@ -313,13 +314,14 @@ ax1 = Axis(fig[1, 1],
     titlesize = 16
 )
 
-lines!(ax1, z_range, crlb_theory, label="Theoretical (direct)", color=:blue, linewidth=3)
-lines!(ax1, z_range, crlb_gausslib, label="GaussLib (production)", color=:red, linewidth=3, linestyle=:dash)
-vlines!(ax1, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax1, position=:lt)
+lines!(ax1, z_range, crlb_theory, label = "Theoretical (direct)", color = :blue, linewidth = 3)
+lines!(ax1, z_range, crlb_gausslib, label = "GaussLib (production)", color = :red, linewidth = 3, linestyle = :dash)
+vlines!(ax1, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax1, position = :lt)
 
 # Panel 2: Absolute difference
-ax2 = Axis(fig[1, 2],
+ax2 = Axis(
+    fig[1, 2],
     xlabel = "Z Position (nm)",
     ylabel = "Absolute Difference (nm)",
     title = "CRLB_z: |Theoretical - GaussLib|",
@@ -329,14 +331,15 @@ ax2 = Axis(fig[1, 2],
 )
 
 diff_abs = abs.(crlb_theory .- crlb_gausslib)
-lines!(ax2, z_range, diff_abs, color=:purple, linewidth=2.5)
-hlines!(ax2, [0.0], color=:green, linestyle=:dash, linewidth=2, label="Perfect match")
-hlines!(ax2, [0.1], color=:orange, linestyle=:dot, linewidth=1.5, label="±0.1 nm tolerance")
-vlines!(ax2, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax2, position=:lt)
+lines!(ax2, z_range, diff_abs, color = :purple, linewidth = 2.5)
+hlines!(ax2, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
+hlines!(ax2, [0.1], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±0.1 nm tolerance")
+vlines!(ax2, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax2, position = :lt)
 
 # Panel 3: Percent difference
-ax3 = Axis(fig[2, :],
+ax3 = Axis(
+    fig[2, :],
     xlabel = "Z Position (nm)",
     ylabel = "Percent Difference (%)",
     title = "Relative Difference: 100% × |Theory - GaussLib| / GaussLib",
@@ -345,12 +348,12 @@ ax3 = Axis(fig[2, :],
     titlesize = 16
 )
 
-lines!(ax3, z_range, crlb_diff_percent, color=:darkred, linewidth=2.5)
-hlines!(ax3, [0.0], color=:green, linestyle=:dash, linewidth=2, label="Perfect match")
-hlines!(ax3, [0.1, -0.1], color=:orange, linestyle=:dot, linewidth=1.5, label="±0.1% tolerance")
-hlines!(ax3, [1.0, -1.0], color=:red, linestyle=:dot, linewidth=1.5, label="±1% tolerance")
-vlines!(ax3, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax3, position=:rt)
+lines!(ax3, z_range, crlb_diff_percent, color = :darkred, linewidth = 2.5)
+hlines!(ax3, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
+hlines!(ax3, [0.1, -0.1], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±0.1% tolerance")
+hlines!(ax3, [1.0, -1.0], color = :red, linestyle = :dot, linewidth = 1.5, label = "±1% tolerance")
+vlines!(ax3, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax3, position = :rt)
 
 # Save
 output_file = joinpath(output_dir, "theory_vs_gausslib_comparison.png")

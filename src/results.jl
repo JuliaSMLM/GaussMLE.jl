@@ -41,8 +41,8 @@ end
 function Base.show(io::IO, info::GaussMLEFitInfo)
     elapsed_ms = info.elapsed_s * 1000
     device_str = info.backend == :gpu ? "GPU:$(info.device_id)" : "CPU"
-    mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits=1)) MB" : "$(round(info.memory_per_batch / 1024, digits=1)) KB"
-    print(io, "GaussMLEFitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits=2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
+    mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits = 1)) MB" : "$(round(info.memory_per_batch / 1024, digits = 1)) KB"
+    return print(io, "GaussMLEFitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits = 2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
 end
 
 export GaussMLEFitInfo
@@ -90,7 +90,7 @@ all_params = results.parameters  # n_params × n_fits
 # See also
 [`fit`](@ref), [`GaussMLEConfig`](@ref)
 """
-struct GaussMLEResults{T, P<:PSFModel}
+struct GaussMLEResults{T, P <: PSFModel}
     parameters::Matrix{T}
     uncertainties::Matrix{T}
     log_likelihoods::Vector{T}
@@ -99,7 +99,7 @@ struct GaussMLEResults{T, P<:PSFModel}
 end
 
 # Convenient accessors for GaussianXYNB (4 parameters)
-Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNB}, s::Symbol) where T = 
+Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNB}, s::Symbol) where {T} =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :photons ? r.parameters[3, :] :
@@ -111,7 +111,7 @@ Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNB}, s::Symbol) where T =
     getfield(r, s)
 
 # Convenient accessors for GaussianXYNBS (5 parameters)
-Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBS}, s::Symbol) where T =
+Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBS}, s::Symbol) where {T} =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :photons ? r.parameters[3, :] :
@@ -125,7 +125,7 @@ Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBS}, s::Symbol) where T =
     getfield(r, s)
 
 # Convenient accessors for GaussianXYNBSXSY (6 parameters)
-Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBSXSY}, s::Symbol) where T =
+Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBSXSY}, s::Symbol) where {T} =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :photons ? r.parameters[3, :] :
@@ -141,7 +141,7 @@ Base.getproperty(r::GaussMLEResults{T, <:GaussianXYNBSXSY}, s::Symbol) where T =
     getfield(r, s)
 
 # Convenient accessors for AstigmaticXYZNB (5 parameters)
-Base.getproperty(r::GaussMLEResults{T, <:AstigmaticXYZNB}, s::Symbol) where T = 
+Base.getproperty(r::GaussMLEResults{T, <:AstigmaticXYZNB}, s::Symbol) where {T} =
     s === :x ? r.parameters[1, :] :
     s === :y ? r.parameters[2, :] :
     s === :z ? r.parameters[3, :] :
@@ -170,7 +170,7 @@ for fit in results
 end
 ```
 """
-function Base.iterate(r::GaussMLEResults, state=1)
+function Base.iterate(r::GaussMLEResults, state = 1)
     if state > r.n_fits
         return nothing
     end
@@ -178,7 +178,7 @@ function Base.iterate(r::GaussMLEResults, state=1)
         parameters = r.parameters[:, state],
         uncertainties = r.uncertainties[:, state],
         log_likelihood = r.log_likelihoods[state],
-        index = state
+        index = state,
     )
     return (fit, state + 1)
 end
@@ -214,7 +214,7 @@ function Base.getindex(r::GaussMLEResults, i::Int)
         parameters = r.parameters[:, i],
         uncertainties = r.uncertainties[:, i],
         log_likelihood = r.log_likelihoods[i],
-        index = i
+        index = i,
     )
 end
 
@@ -224,8 +224,8 @@ function Base.show(io::IO, r::GaussMLEResults)
     println(io, "  Model: $(typeof(r.psf_model))")
     println(io, "  Mean parameters:")
 
-    params = mean(r.parameters, dims=2)
-    errors = mean(r.uncertainties, dims=2)
+    params = mean(r.parameters, dims = 2)
+    errors = mean(r.uncertainties, dims = 2)
 
     if r.psf_model isa GaussianXYNB
         println(io, "    x: $(params[1]) ± $(errors[1])")
@@ -253,5 +253,5 @@ function Base.show(io::IO, r::GaussMLEResults)
         println(io, "    background: $(params[5]) ± $(errors[5])")
     end
 
-    println(io, "  Mean log-likelihood: $(mean(r.log_likelihoods))")
+    return println(io, "  Mean log-likelihood: $(mean(r.log_likelihoods))")
 end

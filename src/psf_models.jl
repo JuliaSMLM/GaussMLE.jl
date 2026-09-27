@@ -10,7 +10,7 @@ Abstract type for point spread function models.
 The type parameter `NParams` specifies the number of fitting parameters at compile time,
 enabling type-stable code generation. The type parameter `T` specifies the numeric type.
 """
-abstract type PSFModel{NParams,T} end
+abstract type PSFModel{NParams, T} end
 
 """
     GaussianXYNB{T} <: PSFModel{4,T}
@@ -36,7 +36,7 @@ fitter = GaussMLEConfig(psf_model = psf)
 PSF width is specified in physical units (microns) for camera-independence.
 Internally converted to pixels based on camera pixel size during fitting.
 """
-struct GaussianXYNB{T} <: PSFModel{4,T}
+struct GaussianXYNB{T} <: PSFModel{4, T}
     σ::T  # Microns
 end
 
@@ -61,7 +61,7 @@ fitter = GaussMLEConfig(psf_model = psf)
 # Note
 The fitted σ parameter is stored in microns in Emitter2DFitSigma output.
 """
-struct GaussianXYNBS{T} <: PSFModel{5,T} end
+struct GaussianXYNBS{T} <: PSFModel{5, T} end
 
 # Default constructor for GaussianXYNBS
 GaussianXYNBS() = GaussianXYNBS{Float32}()
@@ -88,7 +88,7 @@ fitter = GaussMLEConfig(psf_model = psf)
 # Note
 The fitted σx and σy parameters are stored in microns in Emitter2DFitSigmaXY output.
 """
-struct GaussianXYNBSXSY{T} <: PSFModel{6,T} end
+struct GaussianXYNBSXSY{T} <: PSFModel{6, T} end
 
 # Default constructor for GaussianXYNBSXSY
 GaussianXYNBSXSY() = GaussianXYNBSXSY{Float32}()
@@ -138,7 +138,7 @@ Internally converted to pixels based on camera pixel size during fitting.
 # See also
 The astigmatic PSF model is described in Huang et al., Science 319, 810-813 (2008).
 """
-struct AstigmaticXYZNB{T} <: PSFModel{5,T}
+struct AstigmaticXYZNB{T} <: PSFModel{5, T}
     σx₀::T  # Microns
     σy₀::T  # Microns
     Ax::T   # Dimensionless
@@ -148,8 +148,8 @@ struct AstigmaticXYZNB{T} <: PSFModel{5,T}
     γ::T    # Microns
     d::T    # Microns
 
-    function AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d) where T
-        new{T}(T(σx₀), T(σy₀), T(Ax), T(Ay), T(Bx), T(By), T(γ), T(d))
+    function AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d) where {T}
+        return new{T}(T(σx₀), T(σy₀), T(Ax), T(Ay), T(Bx), T(By), T(γ), T(d))
     end
 end
 
@@ -157,8 +157,8 @@ end
 const Params{N} = SVector{N, Float32}
 
 # Get parameter count for a model
-Base.length(::Type{<:PSFModel{N,T}}) where {N,T} = N
-Base.length(::PSFModel{N,T}) where {N,T} = N
+Base.length(::Type{<:PSFModel{N, T}}) where {N, T} = N
+Base.length(::PSFModel{N, T}) where {N, T} = N
 
 # PSF evaluation interface
 
@@ -204,7 +204,7 @@ end
 # Note: compute_pixel_derivatives is implemented in psf_derivatives.jl for each model type
 
 # Parameter initialization based on data
-function initialize_parameters(roi::AbstractMatrix{T}, psf::GaussianXYNB) where T
+function initialize_parameters(roi::AbstractMatrix{T}, psf::GaussianXYNB) where {T}
     box_size = size(roi, 1)
     center = (box_size + 1) / 2
 
@@ -213,14 +213,14 @@ function initialize_parameters(roi::AbstractMatrix{T}, psf::GaussianXYNB) where 
     bg = minimum(roi)
     signal = roi .- bg
 
-    y = sum((1:box_size) .* sum(signal, dims=2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims=1)[:]) / sum(signal)
+    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
+    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
     N = sum(signal)
 
     return Params{4}(T(x), T(y), T(N), T(bg))
 end
 
-function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBS) where T
+function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBS) where {T}
     box_size = size(roi, 1)
     center = (box_size + 1) / 2
 
@@ -228,15 +228,15 @@ function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBS) where T
     bg = minimum(roi)
     signal = roi .- bg
 
-    y = sum((1:box_size) .* sum(signal, dims=2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims=1)[:]) / sum(signal)
+    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
+    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
     N = sum(signal)
     σ = T(1.3)  # Default starting value
 
     return Params{5}(T(x), T(y), T(N), T(bg), σ)
 end
 
-function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBSXSY) where T
+function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBSXSY) where {T}
     box_size = size(roi, 1)
     center = (box_size + 1) / 2
 
@@ -244,8 +244,8 @@ function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBSXSY) where
     bg = minimum(roi)
     signal = roi .- bg
 
-    y = sum((1:box_size) .* sum(signal, dims=2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims=1)[:]) / sum(signal)
+    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
+    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
     N = sum(signal)
     σx = T(1.3)
     σy = T(1.3)
@@ -253,7 +253,7 @@ function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBSXSY) where
     return Params{6}(T(x), T(y), T(N), T(bg), σx, σy)
 end
 
-function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) where T
+function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) where {T}
     box_size = size(roi, 1)
     center = (box_size + 1) / 2
 
@@ -261,10 +261,10 @@ function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) whe
     bg = minimum(roi)
     signal = roi .- bg
 
-    y = sum((1:box_size) .* sum(signal, dims=2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims=1)[:]) / sum(signal)
+    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
+    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
     N = sum(signal)
-    
+
     # Initialize z to zero - with proper gamma parameter, this is not a local minimum
     # The focal planes are separated by 2γ, so z=0 is a good starting point
     z = T(0)
@@ -280,7 +280,7 @@ function Base.show(io::IO, psf::AstigmaticXYZNB)
     print(io, "AstigmaticXYZNB(")
     print(io, "σx₀=", psf.σx₀, ", σy₀=", psf.σy₀, ", ")
     print(io, "γ=", psf.γ, ", d=", psf.d)
-    print(io, ")")
+    return print(io, ")")
 end
 # ===================================================================
 # Unit Conversion: Physical (microns) → Pixels
@@ -308,17 +308,17 @@ pixel_size = 0.1f0  # 100 nm pixels
 psf_pixels = to_pixel_units(psf_microns, pixel_size)  # σ = 1.3 pixels
 ```
 """
-function to_pixel_units(psf::GaussianXYNB{T}, pixel_size::Real) where T
-    GaussianXYNB{T}(psf.σ / T(pixel_size))
+function to_pixel_units(psf::GaussianXYNB{T}, pixel_size::Real) where {T}
+    return GaussianXYNB{T}(psf.σ / T(pixel_size))
 end
 
 # GaussianXYNBS and GaussianXYNBSXSY have no fixed parameters - no conversion needed
-to_pixel_units(psf::GaussianXYNBS{T}, pixel_size::Real) where T = psf
-to_pixel_units(psf::GaussianXYNBSXSY{T}, pixel_size::Real) where T = psf
+to_pixel_units(psf::GaussianXYNBS{T}, pixel_size::Real) where {T} = psf
+to_pixel_units(psf::GaussianXYNBSXSY{T}, pixel_size::Real) where {T} = psf
 
-function to_pixel_units(psf::AstigmaticXYZNB{T}, pixel_size::Real) where T
+function to_pixel_units(psf::AstigmaticXYZNB{T}, pixel_size::Real) where {T}
     px = T(pixel_size)
-    AstigmaticXYZNB{T}(
+    return AstigmaticXYZNB{T}(
         psf.σx₀ / px,  # Lateral width: microns → pixels
         psf.σy₀ / px,  # Lateral width: microns → pixels
         psf.Ax,        # Dimensionless

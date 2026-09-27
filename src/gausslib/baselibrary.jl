@@ -1,14 +1,12 @@
-
-
 """
     integral_gaussian_1d(ii::Int, position::T, sigma::T) where T <: Real
 
 Calculate the integral of a 1D Gaussian function.
 """
-function integral_gaussian_1d(i::Int, position::T, sigma::T) where T <: Real
+function integral_gaussian_1d(i::Int, position::T, sigma::T) where {T <: Real}
     half = one(T) / 2
     two = one(T) + one(T)
-    
+
     norm = half / sigma^two
     return half * (erf((i - position + half) * sqrt(norm)) - erf((i - position - half) * sqrt(norm)))
 end
@@ -18,10 +16,10 @@ end
 
 Compute the derivative of the integral of a 1D Gaussian function with respect to x.
 """
-function derivative_integral_gaussian_1d(ii::Int, x::T, sigma::T, N::T, PSFy::T) where T <: Real
+function derivative_integral_gaussian_1d(ii::Int, x::T, sigma::T, N::T, PSFy::T) where {T <: Real}
     half = one(T) / 2
     two = one(T) + one(T)
-    
+
     factor_a = exp(-half * ((ii + half - x) / sigma)^two)
     factor_b = exp(-half * ((ii - half - x) / sigma)^two)
 
@@ -37,7 +35,7 @@ end
 
 Compute the derivative of the integral of a 1D Gaussian function with respect to sigma.
 """
-function derivative_integral_gaussian_1d_sigma(i::Int, x::T, Sx::T, N::T, PSFy::T) where T <: Real
+function derivative_integral_gaussian_1d_sigma(i::Int, x::T, Sx::T, N::T, PSFy::T) where {T <: Real}
     half = one(T) / 2
     two = one(T) + one(T)
     pi_val = one(T) * pi
@@ -52,13 +50,12 @@ function derivative_integral_gaussian_1d_sigma(i::Int, x::T, Sx::T, N::T, PSFy::
 end
 
 
-
 """
     derivative_integral_gaussian_2d_sigma(i::Int, j::Int, x::T, y::T, S::T, N::T, PSFx::T, PSFy::T) where T <: Real
 
 Compute the derivative of the integral of a 2D Gaussian function with respect to sigma.
 """
-function derivative_integral_gaussian_2d_sigma(i::Int, j::Int, x::T, y::T, S::T, N::T, PSFx::T, PSFy::T) where T <: Real
+function derivative_integral_gaussian_2d_sigma(i::Int, j::Int, x::T, y::T, S::T, N::T, PSFx::T, PSFy::T) where {T <: Real}
     (dSx, ddSx) = derivative_integral_gaussian_1d_sigma(j, x, S, N, PSFy)
     (dSy, ddSy) = derivative_integral_gaussian_1d_sigma(i, y, S, N, PSFx)
     dudt = dSx + dSy
@@ -72,7 +69,7 @@ end
 
 Compute the alpha value based on the given parameters.
 """
-function compute_alpha(z::T, Ax::T, Bx::T, d::T) where T <: Real
+function compute_alpha(z::T, Ax::T, Bx::T, d::T) where {T <: Real}
     one_val = one(T)
     two_val = one_val + one_val
     three_val = two_val + one_val
@@ -88,7 +85,7 @@ end
 
 Compute the derivative of alpha with respect to z.
 """
-function derivative_alpha_z(z::T, Ax::T, Bx::T, d::T) where T <: Real
+function derivative_alpha_z(z::T, Ax::T, Bx::T, d::T) where {T <: Real}
     two_val = one(T) + one(T)
     three_val = two_val + one(T)
     four_val = three_val + one(T)
@@ -105,7 +102,7 @@ end
 
 Compute the second derivative of alpha with respect to z.
 """
-function second_derivative_alpha_z(z::T, Ax::T, Bx::T, d::T) where T <: Real
+function second_derivative_alpha_z(z::T, Ax::T, Bx::T, d::T) where {T <: Real}
     two_val = one(T) + one(T)
     three_val = two_val + one(T)
     four_val = three_val + one(T)
@@ -120,22 +117,21 @@ function second_derivative_alpha_z(z::T, Ax::T, Bx::T, d::T) where T <: Real
 end
 
 
-
 """
     center_of_mass_2d(sz::Int, data::Array{T}) where T <: Real
 
 Compute the center of mass of a square 2D data array.
 """
-function center_of_mass_2d(sz::Int, data::Array{T}) where T <: Real
+function center_of_mass_2d(sz::Int, data::Array{T}) where {T <: Real}
     tmp_x = zero(T)
     tmp_y = zero(T)
     tmp_sum = zero(T)
 
-    for i = 1:sz
-        for j = 1:sz
-            tmp_x += data[sz*(j-1)+i] * T(i)
-            tmp_y += data[sz*(j-1)+i] * T(j)
-            tmp_sum += data[sz*(j-1)+i]
+    for i in 1:sz
+        for j in 1:sz
+            tmp_x += data[sz * (j - 1) + i] * T(i)
+            tmp_y += data[sz * (j - 1) + i] * T(j)
+            tmp_sum += data[sz * (j - 1) + i]
         end
     end
 
@@ -148,19 +144,19 @@ end
 
 Compute the maximum and minimum values after applying a Gaussian filter to a 2D data array.
 """
-function gaussian_max_min_2d(sz::Int, sigma::T, data::Array{T}) where T <: Real
+function gaussian_max_min_2d(sz::Int, sigma::T, data::Array{T}) where {T <: Real}
     filtered_pixel = zero(T)
     sum_val = zero(T)
     max_n = zero(T)
     min_bg = typemax(T)
     norm = T(0.5) / sigma^T(2)
 
-    for k = 0:sz-1
-        for l = 0:sz-1
+    for k in 0:(sz - 1)
+        for l in 0:(sz - 1)
             filtered_pixel, sum_val = zero(T), zero(T)
-            for i = 0:sz-1
-                for j = 0:sz-1
-                    filtered_pixel += exp(-(i - k)^T(2) * norm) * exp(-(l - j)^T(2) * norm) * data[i*sz+j+1]
+            for i in 0:(sz - 1)
+                for j in 0:(sz - 1)
+                    filtered_pixel += exp(-(i - k)^T(2) * norm) * exp(-(l - j)^T(2) * norm) * data[i * sz + j + 1]
                     sum_val += exp(-(i - k)^T(2) * norm) * exp(-(l - j)^T(2) * norm)
                 end
             end
@@ -175,14 +171,14 @@ function gaussian_max_min_2d(sz::Int, sigma::T, data::Array{T}) where T <: Real
 end
 
 
-function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T, PSFSigma_y::T, Ax::T, Ay::T, Bx::T, By::T, gamma::T, d::T, dudt, d2udt2) where T <: Real
+function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T, PSFSigma_y::T, Ax::T, Ay::T, Bx::T, By::T, gamma::T, d::T, dudt, d2udt2) where {T <: Real}
     # Changed: Now expects theta in order [x, y, z, N, bg] to match our standard
     x = theta[1]
-    y = theta[2] 
+    y = theta[2]
     z = theta[3]  # Changed from theta[5]
     N = theta[4]  # Changed from theta[3]
     bg = theta[5] # Changed from theta[4]
-    
+
     alphax = compute_alpha(z - gamma, Ax, Bx, d)
     alphay = compute_alpha(z + gamma, Ay, By, d)
 
@@ -212,7 +208,7 @@ function derivative_integral_gaussian_2d_z(i::Int, j::Int, theta, PSFSigma_x::T,
     ddSddzy = d2Sdalpha2_y * derivative_alpha_z(z + gamma, Ay, By, d)^2 + dSdalpha_y * second_derivative_alpha_z(z + gamma, Ay, By, d)
 
     d2udt2[3] = ddSx * (dSdzx * dSdzx) + dSx * ddSddzx +
-                ddSy * (dSdzy * dSdzy) + dSy * ddSddzy  # Changed from d2udt2[5] to d2udt2[3]
+        ddSy * (dSdzy * dSdzy) + dSy * ddSddzy  # Changed from d2udt2[5] to d2udt2[3]
 
     return (PSFx, PSFy)
 end

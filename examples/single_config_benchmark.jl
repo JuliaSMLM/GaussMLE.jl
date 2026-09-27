@@ -21,7 +21,7 @@ mkpath(output_dir)  # Create if it doesn't exist
 
 # Ground truth parameters
 nominal_x = 4.0f0
-nominal_y = 4.0f0  
+nominal_y = 4.0f0
 nominal_photons = 1000.0f0
 nominal_bg = 5.0f0  # Optimal background level for unbiased estimation
 
@@ -33,7 +33,7 @@ println()
 function generate_data_with_truth(n_samples, roi_size)
     # Generate random blobs using the simulator
     blobs = GaussMLE.generate_random_blobs(
-        n_samples, 
+        n_samples,
         roi_size;
         x_mean = nominal_x,
         y_mean = nominal_y,
@@ -46,7 +46,7 @@ function generate_data_with_truth(n_samples, roi_size)
         model_type = :xynb,
         seed = 42
     )
-    
+
     # Generate data using the simulator with integrated Gaussians
     data, true_positions = GaussMLE.generate_blobs_data(
         psf_model,
@@ -55,7 +55,7 @@ function generate_data_with_truth(n_samples, roi_size)
         camera_model = camera_model,
         seed = 42
     )
-    
+
     return data, true_positions
 end
 
@@ -93,7 +93,7 @@ fitter = GaussMLE.GaussMLEConfig(
 verbose && println("Fitting with $(device) device...")
 t_start = time()
 
-results = GaussMLE.fit(fitter, data; variance_map=variance_map)
+results = GaussMLE.fit(fitter, data; variance_map = variance_map)
 
 t_elapsed = time() - t_start
 fits_per_second = n_samples / t_elapsed
@@ -126,7 +126,7 @@ push!(results_table, "  ROI Size:   $(roi_size)×$(roi_size)")
 push!(results_table, "  Samples:    $(n_samples)")
 push!(results_table, "")
 push!(results_table, "Performance:")
-push!(results_table, "  Time:       $(round(t_elapsed, digits=2)) seconds")
+push!(results_table, "  Time:       $(round(t_elapsed, digits = 2)) seconds")
 push!(results_table, "  Speed:      $(round(Int, fits_per_second)) fits/second")
 push!(results_table, "")
 push!(results_table, "-"^80)
@@ -138,28 +138,36 @@ for (i, name) in enumerate(param_names)
         fitted = params[i, :]
         uncertainty = uncertainties[i, :]
         true_vals = true_positions[name]
-        
+
         # Calculate bias and std using individual true values
         errors = fitted .- true_vals
         bias = mean(errors)
         std_dev = std(errors)
         mean_crlb = mean(uncertainty)
         ratio = std_dev / mean_crlb
-        
-        push!(results_table, @sprintf("%-12s %12.4f %12.4f %12.4f %12.2f", 
-                        name, bias, std_dev, mean_crlb, ratio))
+
+        push!(
+            results_table, @sprintf(
+                "%-12s %12.4f %12.4f %12.4f %12.2f",
+                name, bias, std_dev, mean_crlb, ratio
+            )
+        )
     elseif name == :sigma && psf_model isa GaussMLE.GaussianXYNBS
         # For sigma parameter when fitting
         fitted = params[i, :]
         uncertainty = uncertainties[i, :]
-        
+
         bias = mean(fitted) - 1.3f0
         std_dev = std(fitted)
         mean_crlb = mean(uncertainty)
         ratio = std_dev / mean_crlb
-        
-        push!(results_table, @sprintf("%-12s %12.4f %12.4f %12.4f %12.2f", 
-                        name, bias, std_dev, mean_crlb, ratio))
+
+        push!(
+            results_table, @sprintf(
+                "%-12s %12.4f %12.4f %12.4f %12.2f",
+                name, bias, std_dev, mean_crlb, ratio
+            )
+        )
     end
 end
 push!(results_table, "="^80)
@@ -167,7 +175,7 @@ push!(results_table, "="^80)
 # Add note about expected ratios
 push!(results_table, "")
 push!(results_table, "Note: Std/CRLB ratio should be ~1.0 for optimal estimators.")
-push!(results_table, "      Bias should be ~CRLB/√n_samples = ~$(round(0.056/sqrt(n_samples), digits=4)) for positions")
+push!(results_table, "      Bias should be ~CRLB/√n_samples = ~$(round(0.056 / sqrt(n_samples), digits = 4)) for positions")
 
 # Print results to console
 for line in results_table

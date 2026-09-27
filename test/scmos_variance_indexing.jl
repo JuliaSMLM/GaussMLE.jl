@@ -51,8 +51,8 @@ box_size = 15
     Random.seed!(123)
     true_params = Matrix{Float32}(undef, 4, n_rois)
     for i in 1:n_rois
-        true_params[1, i] = Float32(box_size/2 + 0.3 * randn())  # x in ROI
-        true_params[2, i] = Float32(box_size/2 + 0.3 * randn())  # y in ROI
+        true_params[1, i] = Float32(box_size / 2 + 0.3 * randn())  # x in ROI
+        true_params[2, i] = Float32(box_size / 2 + 0.3 * randn())  # y in ROI
         true_params[3, i] = 2000.0f0  # High photons for good SNR
         true_params[4, i] = 5.0f0     # Background
     end
@@ -64,14 +64,15 @@ box_size = 15
         corners[1, i] = Int32(400)  # x_corner
         corners[2, i] = Int32(50)   # y_corner
     end
-    for i in (n_per_group+1):n_rois
+    for i in (n_per_group + 1):n_rois
         # Group B: high-y (row 400), low-x (column 50)
         corners[1, i] = Int32(50)   # x_corner
         corners[2, i] = Int32(400)  # y_corner
     end
 
     # Generate and fit
-    batch = GaussMLE.generate_roi_batch(scmos, psf_model;
+    batch = GaussMLE.generate_roi_batch(
+        scmos, psf_model;
         n_rois = n_rois,
         roi_size = box_size,
         true_params = true_params,
@@ -84,7 +85,7 @@ box_size = 15
 
     # Extract uncertainties for each group
     σ_x_A = [smld.emitters[i].σ_x for i in 1:n_per_group]
-    σ_x_B = [smld.emitters[i].σ_x for i in (n_per_group+1):n_rois]
+    σ_x_B = [smld.emitters[i].σ_x for i in (n_per_group + 1):n_rois]
 
     mean_σ_A = mean(σ_x_A)
     mean_σ_B = mean(σ_x_B)

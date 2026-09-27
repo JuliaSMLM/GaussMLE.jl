@@ -9,15 +9,15 @@ Tests that fitted values and uncertainties match expectations within tolerance
 """
 
 @testset "Model Validation Tests" begin
-    
+
     # Test configuration
     n_test_blobs = 1000  # Use 1000 blobs for reasonable statistics
     box_size = 15  # Larger box for better Fisher Information (especially important for astigmatic)
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
-    
+
     @testset "Fixed Sigma Model (xynb)" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
                 :xynb, psf_model, n_test_blobs;
@@ -26,13 +26,13 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
             @test results[:photons].bias_pass
             @test results[:background].bias_pass
-            
+
             # Check that reported uncertainties match empirical
             @test results[:x].std_pass
             @test results[:y].std_pass
@@ -40,10 +40,10 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:background].std_pass
         end
     end
-    
+
     @testset "Variable Sigma Model (xynbs)" begin
         psf_model = GaussMLE.GaussianXYNBS()
-        
+
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
                 :xynbs, psf_model, n_test_blobs;
@@ -52,14 +52,14 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
             @test results[:photons].bias_pass
             @test results[:background].bias_pass
             @test results[:sigma].bias_pass
-            
+
             # Check uncertainty matching
             @test results[:x].std_pass
             @test results[:y].std_pass
@@ -68,10 +68,10 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:sigma].std_pass
         end
     end
-    
+
     @testset "Anisotropic Model (xynbsxsy)" begin
         psf_model = GaussMLE.GaussianXYNBSXSY()
-        
+
         @testset "CPU Backend" begin
             passed, results = run_model_validation(
                 :xynbsxsy, psf_model, n_test_blobs;
@@ -80,7 +80,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
@@ -88,7 +88,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:background].bias_pass
             @test results[:sigma_x].bias_pass
             @test results[:sigma_y].bias_pass
-            
+
             # Check uncertainty matching
             @test results[:x].std_pass
             @test results[:y].std_pass
@@ -98,7 +98,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:sigma_y].std_pass
         end
     end
-    
+
     @testset "Astigmatic 3D Model (xynbz)" begin
         # Realistic astigmatic calibration following Huang et al. (Science 2008)
         # Higher-order terms (cubic/quartic) are necessary for real optical systems
@@ -138,10 +138,10 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:background].std_pass
         end
     end
-    
+
     @testset "Different Photon Levels" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         @testset "Low photons (N=200)" begin
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;  # Fewer spots for speed
@@ -152,13 +152,13 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             # Lower photons = worse precision, but uncertainties should still match
             @test results[:x].std_pass
             @test results[:y].std_pass
         end
-        
+
         @testset "High photons (N=5000)" begin
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
@@ -169,7 +169,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             # Higher photons = better precision
             @test results[:x].std_pass
@@ -177,10 +177,10 @@ Tests that fitted values and uncertainties match expectations within tolerance
             @test results[:x].empirical_std < 0.05  # Should have good precision
         end
     end
-    
+
     @testset "Different PSF Widths" begin
         @testset "Narrow PSF (σ=1.0)" begin
-            psf_model = GaussMLE.GaussianXYNB(0.10f0)
+            psf_model = GaussMLE.GaussianXYNB(0.1f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
@@ -188,14 +188,14 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 1.0f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].std_pass
             @test results[:y].std_pass
         end
-        
+
         @testset "Wide PSF (σ=2.0)" begin
-            psf_model = GaussMLE.GaussianXYNB(0.20f0)
+            psf_model = GaussMLE.GaussianXYNB(0.2f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
@@ -203,13 +203,13 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 sigma = 2.0f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].std_pass
             @test results[:y].std_pass
         end
     end
-    
+
     @testset "sCMOS Camera Model" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 500
@@ -226,8 +226,8 @@ Tests that fitted values and uncertainties match expectations within tolerance
         # Generate ROIBatch with known true parameters
         Random.seed!(42)
         true_params = Float32[
-            Float32(box_size/2) .+ 0.5f0 * randn(Float32, n_rois)';
-            Float32(box_size/2) .+ 0.5f0 * randn(Float32, n_rois)';
+            Float32(box_size / 2) .+ 0.5f0 * randn(Float32, n_rois)';
+            Float32(box_size / 2) .+ 0.5f0 * randn(Float32, n_rois)';
             1000.0f0 .+ 200.0f0 * randn(Float32, n_rois)';
             10.0f0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
@@ -238,13 +238,14 @@ Tests that fitted values and uncertainties match expectations within tolerance
         roi_spacing = box_size
         rois_per_row = div(max_corner, roi_spacing)
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch = GaussMLE.generate_roi_batch(scmos, psf_model;
+        batch = GaussMLE.generate_roi_batch(
+            scmos, psf_model;
             n_rois = n_rois,
             roi_size = box_size,
             true_params = true_params,
@@ -287,32 +288,32 @@ Tests that fitted values and uncertainties match expectations within tolerance
 
     @testset "Edge Cases" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         @testset "Spots near edges" begin
             # Generate data with spots near ROI edges
             Random.seed!(42)
             n_spots = 100
             data = zeros(Float32, box_size, box_size, n_spots)
             true_params = Dict{Symbol, Vector{Float32}}()
-            
+
             for k in 1:n_spots
                 # Place spots near edges
                 x_true = Float32(2.0 + (box_size - 3) * rand())
                 y_true = Float32(2.0 + (box_size - 3) * rand())
                 n_true = 1000.0f0
                 bg_true = 10.0f0
-                
+
                 true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
                 true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
                 true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
                 true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
-                
+
                 for j in 1:box_size, i in 1:box_size
                     mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, 1.3f0, 1.3f0)
                     data[i, j, k] = Float32(rand(Poisson(max(0.01, mu))))
                 end
             end
-            
+
             # Fit
             fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, device = GaussMLE.CPU())
             smld, _info = GaussMLE.fit(data, fitter)

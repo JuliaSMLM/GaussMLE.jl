@@ -2,17 +2,17 @@
 using Test, GaussMLE, KernelAbstractions
 
 @testset "Unified Kernel Tests" begin
-    
+
     # Test configuration
     n_test_blobs = 100
     box_size = 7
     iterations = 20
-    
+
     # Generate test data
     function generate_simple_test_data(n_blobs, box_size)
         data = zeros(Float32, box_size, box_size, n_blobs)
         center = Float32((box_size + 1) / 2)
-        
+
         for k in 1:n_blobs
             # Simple Gaussian blob
             for j in 1:box_size, i in 1:box_size
@@ -24,13 +24,13 @@ using Test, GaussMLE, KernelAbstractions
             # Add some noise
             data[:, :, k] .+= randn(Float32, box_size, box_size) * 5.0f0
         end
-        
+
         return data
     end
-    
+
     @testset "CPU Unified Kernel" begin
         data = generate_simple_test_data(n_test_blobs, box_size)
-        
+
         # Test with different PSF models
         @testset "GaussianXYNB (N=4)" begin
             psf_model = GaussMLE.GaussianXYNB(0.13f0)
@@ -47,14 +47,16 @@ using Test, GaussMLE, KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
             # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                   constraints, iterations,
-                   ndrange=n_test_blobs)
+            kernel(
+                results, uncertainties, covariances, log_likelihoods,
+                data, psf_model, Val(false), variance_map, x_corners, y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             # Check results are reasonable
             @test all(isfinite.(results))
@@ -68,7 +70,7 @@ using Test, GaussMLE, KernelAbstractions
             @test all(100 .< results[3, :] .< 20000)  # photons (integrated Gaussian)
             @test all(0 .< results[4, :] .< 100)  # background
         end
-        
+
         @testset "GaussianXYNBS (N=5)" begin
             psf_model = GaussMLE.GaussianXYNBS{Float32}()
             constraints = GaussMLE.default_constraints(psf_model, box_size)
@@ -82,21 +84,23 @@ using Test, GaussMLE, KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
             # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                   constraints, iterations,
-                   ndrange=n_test_blobs)
+            kernel(
+                results, uncertainties, covariances, log_likelihoods,
+                data, psf_model, Val(false), variance_map, x_corners, y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
         end
-        
+
         @testset "GaussianXYNBSXSY (N=6)" begin
             psf_model = GaussMLE.GaussianXYNBSXSY{Float32}()
             constraints = GaussMLE.default_constraints(psf_model, box_size)
@@ -110,14 +114,16 @@ using Test, GaussMLE, KernelAbstractions
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
             # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i-1) * box_size for i in 1:n_test_blobs]
+            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
             y_corners = fill(Int32(1), n_test_blobs)
             variance_map = zeros(Float32, 512, 512)
 
-            kernel(results, uncertainties, covariances, log_likelihoods,
-                   data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                   constraints, iterations,
-                   ndrange=n_test_blobs)
+            kernel(
+                results, uncertainties, covariances, log_likelihoods,
+                data, psf_model, Val(false), variance_map, x_corners, y_corners,
+                constraints, iterations,
+                ndrange = n_test_blobs
+            )
 
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
@@ -125,5 +131,5 @@ using Test, GaussMLE, KernelAbstractions
             @test all(isfinite.(log_likelihoods))
         end
     end
-    
+
 end

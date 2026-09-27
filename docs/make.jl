@@ -2,7 +2,7 @@ using Documenter
 using GaussMLE
 
 # Set up doctests
-DocMeta.setdocmeta!(GaussMLE, :DocTestSetup, :(using GaussMLE); recursive=true)
+DocMeta.setdocmeta!(GaussMLE, :DocTestSetup, :(using GaussMLE); recursive = true)
 
 makedocs(
     sitename = "GaussMLE.jl",
@@ -34,6 +34,6 @@ makedocs(
 )
 
 deploydocs(;
-    repo="github.com/JuliaSMLM/GaussMLE.jl",
-    devbranch="main",
+    repo = "github.com/JuliaSMLM/GaussMLE.jl",
+    devbranch = "main",
 )

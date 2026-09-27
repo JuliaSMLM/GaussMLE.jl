@@ -41,8 +41,8 @@ println("  γ = $(psf_model.γ) nm, d = $(psf_model.d) nm")
 box_size = 15
 n_photons = 2000.0f0
 background = 1.0f0
-x_pos = Float32(box_size/2 + 0.3)  # Slightly off-center
-y_pos = Float32(box_size/2 + 0.2)
+x_pos = Float32(box_size / 2 + 0.3)  # Slightly off-center
+y_pos = Float32(box_size / 2 + 0.2)
 
 # Z positions to visualize (including extremes and z=0)
 z_positions = Float32[-600, -300, 0, 300, 600]
@@ -67,7 +67,7 @@ for (idx, z) in enumerate(z_positions)
     push!(σx_values, σx)
     push!(σy_values, σy)
 
-    println("  z=$(z) nm: σx=$(round(σx, digits=3)), σy=$(round(σy, digits=3))")
+    println("  z=$(z) nm: σx=$(round(σx, digits = 3)), σy=$(round(σy, digits = 3))")
 
     # Generate PSF image (no noise for clean visualization)
     for j in 1:box_size, i in 1:box_size
@@ -79,7 +79,7 @@ for (idx, z) in enumerate(z_positions)
 end
 
 # Compute σ vs z for full range
-z_range = Float32.(range(-600, 600, length=100))
+z_range = Float32.(range(-600, 600, length = 100))
 σx_curve = similar(z_range)
 σy_curve = similar(z_range)
 
@@ -95,10 +95,11 @@ println("Creating Visualization")
 println("="^70)
 
 # Create figure with PSF widths and images
-fig = Figure(size=(1600, 900))
+fig = Figure(size = (1600, 900))
 
 # Top panel: σx and σy vs z
-ax_widths = Axis(fig[1, 1:n_z],
+ax_widths = Axis(
+    fig[1, 1:n_z],
     xlabel = "Z Position (nm)",
     ylabel = "PSF Width σ (pixels)",
     title = "Astigmatic PSF Width Evolution",
@@ -107,19 +108,20 @@ ax_widths = Axis(fig[1, 1:n_z],
     titlesize = 18
 )
 
-lines!(ax_widths, z_range, σx_curve, label="σx(z)", color=:blue, linewidth=3)
-lines!(ax_widths, z_range, σy_curve, label="σy(z)", color=:red, linewidth=3)
-scatter!(ax_widths, z_positions, σx_values, color=:blue, markersize=15)
-scatter!(ax_widths, z_positions, σy_values, color=:red, markersize=15)
-vlines!(ax_widths, [0.0], color=:gray, linestyle=:dash, linewidth=2)
-axislegend(ax_widths, position=:lt, labelsize=14)
+lines!(ax_widths, z_range, σx_curve, label = "σx(z)", color = :blue, linewidth = 3)
+lines!(ax_widths, z_range, σy_curve, label = "σy(z)", color = :red, linewidth = 3)
+scatter!(ax_widths, z_positions, σx_values, color = :blue, markersize = 15)
+scatter!(ax_widths, z_positions, σy_values, color = :red, markersize = 15)
+vlines!(ax_widths, [0.0], color = :gray, linestyle = :dash, linewidth = 2)
+axislegend(ax_widths, position = :lt, labelsize = 14)
 
 # Bottom panels: PSF images at each z position
 # CRITICAL: Images must display with origin at (1,1) top-left, y going down
 # For CairoMakie: transpose data and set yreversed=true
 for (idx, z) in enumerate(z_positions)
-    ax_img = Axis(fig[2, idx],
-        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits=2)), σy=$(round(σy_values[idx], digits=2))",
+    ax_img = Axis(
+        fig[2, idx],
+        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)), σy=$(round(σy_values[idx], digits = 2))",
         aspect = DataAspect(),
         titlesize = 12,
         yreversed = true  # Origin at top-left, y down
@@ -130,23 +132,27 @@ for (idx, z) in enumerate(z_positions)
     # data[1,1] → top-left, data[1,end] → top-right, data[end,1] → bottom-left
     img_data = psf_images[:, :, idx]'  # Transpose
 
-    heatmap!(ax_img, img_data, colormap=:hot)
+    heatmap!(ax_img, img_data, colormap = :hot)
 
     # Add crosshair at PSF center
-    vlines!(ax_img, [x_pos], color=:cyan, linewidth=1, linestyle=:dash)
-    hlines!(ax_img, [y_pos], color=:cyan, linewidth=1, linestyle=:dash)
+    vlines!(ax_img, [x_pos], color = :cyan, linewidth = 1, linestyle = :dash)
+    hlines!(ax_img, [y_pos], color = :cyan, linewidth = 1, linestyle = :dash)
 
     # Show coordinate convention
     if idx == 1
-        text!(ax_img, 1, 1, text="(1,1)\ntop-left",
-              align=(:left, :top), color=:white, fontsize=10)
+        text!(
+            ax_img, 1, 1, text = "(1,1)\ntop-left",
+            align = (:left, :top), color = :white, fontsize = 10
+        )
     end
 end
 
 # Add annotation about coordinate convention
-Label(fig[3, 1:n_z],
-      "Image Convention: Origin at (1,1) top-left, x→right (columns), y↓down (rows). Data transposed + yreversed for display.",
-      fontsize = 11, color = :gray50)
+Label(
+    fig[3, 1:n_z],
+    "Image Convention: Origin at (1,1) top-left, x→right (columns), y↓down (rows). Data transposed + yreversed for display.",
+    fontsize = 11, color = :gray50
+)
 
 # Save figure
 output_file = joinpath(output_dir, "astigmatic_psf_visual_validation.png")
@@ -160,13 +166,13 @@ println("ANALYSIS")
 println("="^70)
 
 println("\nPSF Width Behavior:")
-println("  σx range: $(round(minimum(σx_values), digits=3)) to $(round(maximum(σx_values), digits=3)) pixels")
-println("  σy range: $(round(minimum(σy_values), digits=3)) to $(round(maximum(σy_values), digits=3)) pixels")
+println("  σx range: $(round(minimum(σx_values), digits = 3)) to $(round(maximum(σx_values), digits = 3)) pixels")
+println("  σy range: $(round(minimum(σy_values), digits = 3)) to $(round(maximum(σy_values), digits = 3)) pixels")
 
 # Check if widths cross (they should around z=0)
 crossing_idx = argmin(abs.(σx_curve .- σy_curve))
 crossing_z = z_range[crossing_idx]
-println("  Crossing point: z ≈ $(round(crossing_z, digits=1)) nm (expected: 0 nm)")
+println("  Crossing point: z ≈ $(round(crossing_z, digits = 1)) nm (expected: 0 nm)")
 
 # Check which dimension elongates with z
 if σx_values[end] > σx_values[1]

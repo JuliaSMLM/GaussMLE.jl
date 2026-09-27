@@ -16,7 +16,7 @@ println("="^70)
 println("Asymmetric Position Test (x≠y, High Photons)")
 println("="^70)
 
-psf = AstigmaticXYZNB{Float32}(1.3f0,1.3f0,0.05f0,-0.05f0,0.01f0,-0.01f0,200.0f0,500.0f0)
+psf = AstigmaticXYZNB{Float32}(1.3f0, 1.3f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 200.0f0, 500.0f0)
 box_size = 15
 pixel_size = 0.1f0
 
@@ -47,7 +47,7 @@ for k in 1:n_rois
 end
 
 # Fit with many iterations for convergence
-fitter = GaussMLEConfig(psf_model=psf, iterations=50)
+fitter = GaussMLEConfig(psf_model = psf, iterations = 50)
 results = fit(fitter, data)
 
 # Extract fitted values (convert from microns to ROI pixels)
@@ -58,7 +58,7 @@ fitted_z = Float32[]
 
 for (i, e) in enumerate(results.emitters)
     # Reverse transform
-    x_corner = 1 + (i-1) * box_size
+    x_corner = 1 + (i - 1) * box_size
     y_corner = 1
 
     x_cam = e.x / pixel_size + 1  # microns → camera pixels
@@ -73,26 +73,26 @@ for (i, e) in enumerate(results.emitters)
 end
 
 println("\nFitted (ROI coordinates):")
-println("  x = $(round(mean(fitted_x_roi), digits=3)) ± $(round(std(fitted_x_roi), digits=3))")
-println("  y = $(round(mean(fitted_y_roi), digits=3)) ± $(round(std(fitted_y_roi), digits=3))")
-println("  z = $(round(mean(fitted_z), digits=2)) ± $(round(std(fitted_z), digits=2))")
+println("  x = $(round(mean(fitted_x_roi), digits = 3)) ± $(round(std(fitted_x_roi), digits = 3))")
+println("  y = $(round(mean(fitted_y_roi), digits = 3)) ± $(round(std(fitted_y_roi), digits = 3))")
+println("  z = $(round(mean(fitted_z), digits = 2)) ± $(round(std(fitted_z), digits = 2))")
 
 println("\nBiases:")
 bias_x = mean(fitted_x_roi) - x_true_roi
 bias_y = mean(fitted_y_roi) - y_true_roi
 bias_z = mean(fitted_z) - z_true
 
-println("  Δx = $(round(bias_x, digits=3)) pixels")
-println("  Δy = $(round(bias_y, digits=3)) pixels")
-println("  Δz = $(round(bias_z, digits=2)) nm")
+println("  Δx = $(round(bias_x, digits = 3)) pixels")
+println("  Δy = $(round(bias_y, digits = 3)) pixels")
+println("  Δz = $(round(bias_z, digits = 2)) nm")
 
 println("\n" * "="^70)
 println("ANALYSIS")
 println("="^70)
 
 println("\nIf x and y were swapped:")
-println("  We'd see: Δx ≈ $(round(y_true_roi - x_true_roi, digits=1)) and Δy ≈ $(round(x_true_roi - y_true_roi, digits=1))")
-println("  We got:   Δx = $(round(bias_x, digits=2)) and Δy = $(round(bias_y, digits=2))")
+println("  We'd see: Δx ≈ $(round(y_true_roi - x_true_roi, digits = 1)) and Δy ≈ $(round(x_true_roi - y_true_roi, digits = 1))")
+println("  We got:   Δx = $(round(bias_x, digits = 2)) and Δy = $(round(bias_y, digits = 2))")
 
 if abs(bias_x - (y_true_roi - x_true_roi)) < 0.5 && abs(bias_y - (x_true_roi - y_true_roi)) < 0.5
     println("  ⚠ SWAP DETECTED! X and Y are swapped somewhere!")

@@ -57,8 +57,8 @@ function create_psf_models()
             0.0f0, 0.0f0,    # Ax, Ay
             0.0f0, 0.0f0,    # Bx, By
             0.25f0,          # γ (microns)
-            0.40f0           # d (microns)
-        )
+            0.4f0           # d (microns)
+        ),
     ]
 end
 
@@ -121,7 +121,7 @@ end
 
 Generate synthetic test data with known ground truth.
 """
-function generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed=42)
+function generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed = 42)
     Random.seed!(seed)
 
     # Base parameters (x, y, N, bg)
@@ -171,12 +171,12 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
 
         # Generate warmup data
         warmup_batch, _ = generate_test_data(
-            config.psf_model, camera, warmup, ROI_SIZE; seed=SEED
+            config.psf_model, camera, warmup, ROI_SIZE; seed = SEED
         )
 
         # Generate benchmark data
         benchmark_batch, true_params = generate_test_data(
-            config.psf_model, camera, benchmark, ROI_SIZE; seed=SEED+1
+            config.psf_model, camera, benchmark, ROI_SIZE; seed = SEED + 1
         )
 
         # Create fitter (camera type determined by ROIBatch)
@@ -330,10 +330,18 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
     println()
 
     # Main table header
-    println(@sprintf("%-18s %-7s %-6s │ %6s %6s %6s %6s %6s %6s │ %10s",
-        "Model", "Camera", "Device", "x", "y", "N", "bg", "σ/z", "extra", "fits/s"))
-    println(@sprintf("%-18s %-7s %-6s │ %s │ %s",
-        "", "", "", "std/CRLB ratios (1.0 = optimal)", ""))
+    println(
+        @sprintf(
+            "%-18s %-7s %-6s │ %6s %6s %6s %6s %6s %6s │ %10s",
+            "Model", "Camera", "Device", "x", "y", "N", "bg", "σ/z", "extra", "fits/s"
+        )
+    )
+    println(
+        @sprintf(
+            "%-18s %-7s %-6s │ %s │ %s",
+            "", "", "", "std/CRLB ratios (1.0 = optimal)", ""
+        )
+    )
     println("─"^100)
 
     # Group by model for better readability
@@ -369,16 +377,22 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
                 "   -   "
             end
 
-            fits_str = @sprintf("%10s", r.fits_per_second >= 1000 ?
-                string(round(Int, r.fits_per_second ÷ 1000), "k") :
-                string(round(Int, r.fits_per_second)))
+            fits_str = @sprintf(
+                "%10s", r.fits_per_second >= 1000 ?
+                    string(round(Int, r.fits_per_second ÷ 1000), "k") :
+                    string(round(Int, r.fits_per_second))
+            )
 
-            println(@sprintf("%-18s %-7s %-6s │%s%s%s%s%s%s │ %10s",
-                r.config.model_name,
-                r.config.camera_symbol,
-                r.config.device_symbol,
-                x_ratio, y_ratio, n_ratio, bg_ratio, sigma_z_ratio, extra_ratio,
-                fits_str))
+            println(
+                @sprintf(
+                    "%-18s %-7s %-6s │%s%s%s%s%s%s │ %10s",
+                    r.config.model_name,
+                    r.config.camera_symbol,
+                    r.config.device_symbol,
+                    x_ratio, y_ratio, n_ratio, bg_ratio, sigma_z_ratio, extra_ratio,
+                    fits_str
+                )
+            )
         end
 
         # Add spacing between models
@@ -396,17 +410,25 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
 
     # Performance analysis
     if !isempty(results)
-        speed_sorted = sort(results, by=r->r.fits_per_second, rev=true)
-        println(@sprintf("  Fastest: %s-%s-%s (%.0f fits/s)",
-            speed_sorted[1].config.model_name,
-            speed_sorted[1].config.camera_symbol,
-            speed_sorted[1].config.device_symbol,
-            speed_sorted[1].fits_per_second))
-        println(@sprintf("  Slowest: %s-%s-%s (%.0f fits/s)",
-            speed_sorted[end].config.model_name,
-            speed_sorted[end].config.camera_symbol,
-            speed_sorted[end].config.device_symbol,
-            speed_sorted[end].fits_per_second))
+        speed_sorted = sort(results, by = r -> r.fits_per_second, rev = true)
+        println(
+            @sprintf(
+                "  Fastest: %s-%s-%s (%.0f fits/s)",
+                speed_sorted[1].config.model_name,
+                speed_sorted[1].config.camera_symbol,
+                speed_sorted[1].config.device_symbol,
+                speed_sorted[1].fits_per_second
+            )
+        )
+        println(
+            @sprintf(
+                "  Slowest: %s-%s-%s (%.0f fits/s)",
+                speed_sorted[end].config.model_name,
+                speed_sorted[end].config.camera_symbol,
+                speed_sorted[end].config.device_symbol,
+                speed_sorted[end].fits_per_second
+            )
+        )
 
         # Find best CRLB match
         best_crlb_matches = []
@@ -418,13 +440,17 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
         end
 
         if !isempty(best_crlb_matches)
-            sort!(best_crlb_matches, by=first)
+            sort!(best_crlb_matches, by = first)
             best = best_crlb_matches[1][2]
-            println(@sprintf("  Best CRLB match (x): %s-%s-%s (ratio=%.3f)",
-                best.config.model_name,
-                best.config.camera_symbol,
-                best.config.device_symbol,
-                best.param_stats[:x].std_crlb_ratio))
+            println(
+                @sprintf(
+                    "  Best CRLB match (x): %s-%s-%s (ratio=%.3f)",
+                    best.config.model_name,
+                    best.config.camera_symbol,
+                    best.config.device_symbol,
+                    best.param_stats[:x].std_crlb_ratio
+                )
+            )
         end
 
         # Convergence analysis
@@ -433,7 +459,7 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
     end
 
     println("="^100)
-    println()
+    return println()
 end
 
 """
