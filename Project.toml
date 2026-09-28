@@ -31,6 +31,7 @@ Documenter = "1"
 ExplicitImports = "1"
 KernelAbstractions = "0.9"
 LinearAlgebra = "1"
+Logging = "1"
 MicroscopePSFs = "0.5.6"
 Pkg = "1"
 Printf = "1"
@@ -48,6 +49,7 @@ julia = "1.10"
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
@@ -55,4 +57,4 @@ TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Documenter", "ExplicitImports", "MicroscopePSFs", "Pkg", "Printf", "TOML", "Test"]
+test = ["Aqua", "Documenter", "ExplicitImports", "Logging", "MicroscopePSFs", "Pkg", "Printf", "TOML", "Test"]
