@@ -262,7 +262,8 @@ function _run_mle_kernel!(
     # --- CPU fast path ---
     # A model the kernel cannot run on a GPU skips GPU polling entirely under :auto
     if !gpu_compatible(psf_pixels) && fitter.backend == :gpu
-        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use backend = :cpu or :auto"))
+        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use \
+            backend = :cpu or :auto"))
     end
     use_cpu = fitter.backend == :cpu || !gpu_compatible(psf_pixels) ||
         (fitter.backend != :gpu && !CUDA.functional())

@@ -1,14 +1,14 @@
 """
-Spline PSF model: 3D fitting (x, y, z, N, bg) with a tabulated PSF, such as a learned PSF from
-PSFLearning saved as a MicroscopePSFs `SplinePSF`. Moved from PSFLearning's GaussMLE bridge
-(PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU only.
+Spline PSF model: 3D fitting (x, y, z, N, bg) with a tabulated PSF, such as a learned PSF
+from PSFLearning saved as a MicroscopePSFs `SplinePSF`. Moved from PSFLearning's GaussMLE
+bridge (PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU only.
 """
 
 """
     SplinePSFModel{T, S} <: PSFModel{5, T}
 
-A 3D PSF model backed by a tabulated PSF `S`: any callable `(x, y, z)` in microns relative to
-the emitter, such as a `MicroscopePSFs.SplinePSF`. It runs on the CPU only (see
+A 3D PSF model backed by a tabulated PSF `S`: any callable `(x, y, z)` in microns relative
+to the emitter, such as a `MicroscopePSFs.SplinePSF`. It runs on the CPU only (see
 [`gpu_compatible`](@ref)).
 
 # Parameters (in order)
@@ -21,8 +21,8 @@ the emitter, such as a `MicroscopePSFs.SplinePSF`. It runs on the CPU only (see
 # Constructors
     SplinePSFModel(spline; pixel_size, z_range, lateral_range = 1.5)
 
-`spline` is any callable `(x, y, z)` in microns. `z_range` is the valid axial range in microns;
-the fit clamps z into it.
+`spline` is any callable `(x, y, z)` in microns. `z_range` is the valid axial range in
+microns; the fit clamps z into it.
 
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
                    z_range = (psf.z_min, psf.z_max), lateral_range = 1.5)
@@ -31,9 +31,9 @@ Available when MicroscopePSFs is loaded (package extension). `psf` must be 3D, a
 must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it), else
 `ArgumentError`.
 
-`pixel_size` is the camera pixel size in microns; `fit` rescales the model to the camera's pixel
-size, which must be square. The PSF is sampled at pixel centres and normalized so that its sum
-over pixels at z = 0 is 1.
+`pixel_size` is the camera pixel size in microns; `fit` rescales the model to the camera's
+pixel size, which must be square. The PSF is sampled at pixel centres and normalized so that
+its sum over pixels at z = 0 is 1.
 
 # Fields
 - `spline_psf::S`: the tabulated PSF, evaluated as `spline_psf(x, y, z)` in microns

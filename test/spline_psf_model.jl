@@ -1,6 +1,6 @@
-# SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel methods,
-# CPU-only backend dispatch and the square-pixel check. The GPU group checks :auto on a GPU host;
-# the Long group checks bias and CRLB.
+# SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
+# methods, CPU-only backend dispatch and the square-pixel check. The GPU group checks :auto
+# on a GPU host; the Long group checks bias and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
 @testset "SplinePSFModel" begin
@@ -10,7 +10,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         ScalarPSF(1.4, 0.68, 1.518);
         lateral_range = 1.0, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
     )
-    model(; kwargs...) = SplinePSFModel(spline; pixel_size = 0.1, z_range = (-0.5, 0.5), kwargs...)
+    model(; kwargs...) = SplinePSFModel(
+        spline; pixel_size = 0.1, z_range = (-0.5, 0.5), kwargs...
+    )
 
     @testset "construction from a SplinePSF" begin
         gpsf = model()
@@ -24,7 +26,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
         # z_range defaults to the spline's own range and must lie within it
         @test SplinePSFModel(spline; pixel_size = 0.1).z_range == gpsf.z_range
-        @test_throws ArgumentError SplinePSFModel(spline; pixel_size = 0.1, z_range = (-1.5, 1.5))
+        @test_throws ArgumentError SplinePSFModel(
+            spline; pixel_size = 0.1, z_range = (-1.5, 1.5)
+        )
 
         # A 2D SplinePSF has no z
         spline2d = SplinePSF(AiryPSF(1.4, 0.68), -0.5:0.1:0.5, -0.5:0.1:0.5)
@@ -41,7 +45,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         n_px = ceil(Int, 1.5 / 0.1)
         @test sum(astig(0.1ix, 0.1iy, 0.0) for ix in (-n_px):n_px, iy in (-n_px):n_px) *
             gpsf.px_scale ≈ 1 rtol = 1.0e-5
-        @test_throws ArgumentError SplinePSFModel(astig; pixel_size = 0.1, z_range = (0.5, -0.5))
+        @test_throws ArgumentError SplinePSFModel(
+            astig; pixel_size = 0.1, z_range = (0.5, -0.5)
+        )
     end
 
     @testset "evaluate_psf" begin
@@ -129,8 +135,8 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
     end
 
     @testset "default_constraints" begin
-        # PSFLearning's test used (-0.8, 0.8); a SplinePSF z_range must lie within the spline's
-        # own range, which is ±0.5 here
+        # PSFLearning's test used (-0.8, 0.8); a SplinePSF z_range must lie within the
+        # spline's own range, which is ±0.5 here
         gpsf = model(z_range = (-0.4, 0.4))
 
         constraints = GaussMLE.default_constraints(gpsf, 11)
@@ -160,8 +166,8 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         @test fitter.iterations == 20
     end
 
-    # Noise-free ROIs from an astigmatic spline (an unaberrated PSF is symmetric in z, so a fit
-    # started at z = 0 cannot leave it)
+    # Noise-free ROIs from an astigmatic spline (an unaberrated PSF is symmetric in z, so a
+    # fit started at z = 0 cannot leave it)
     zc = ZernikeCoefficients(15)
     zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
     astig_spline = SplinePSF(
@@ -173,7 +179,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
     truth = [(6.0, 6.0, 0.2), (5.5, 6.5, -0.2), (6.3, 5.8, 0.0), (6.0, 6.0, 0.1)]
     data = zeros(Float32, box, box, n)
     for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
-        data[i, j, k] = GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(x, y, z, 2000, 10))
+        data[i, j, k] = GaussMLE.evaluate_psf(
+            gpsf, i, j, SVector{5, Float32}(x, y, z, 2000, 10)
+        )
     end
     batch(camera) = ROIBatch(data, ones(Int32, n), ones(Int32, n), Int32.(1:n), camera)
 
@@ -193,17 +201,30 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
     @testset "backend dispatch: CPU only" begin
         @test GaussMLE.gpu_compatible(gpsf) == false
         @test GaussMLE.gpu_compatible(GaussianXYNB(0.13f0)) == true
-        @test GaussMLE.gpu_compatible(AstigmaticXYZNB{Float32}(0.13f0, 0.13f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.25f0, 0.4f0))
+        @test GaussMLE.gpu_compatible(
+            AstigmaticXYZNB{Float32}(
+                0.13f0, 0.13f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.25f0, 0.4f0
+            )
+        )
         # :gpu is refused before any CUDA check, so this holds on hosts without a GPU too
-        @test_throws ArgumentError fit(batch(IdealCamera(64, 64, 0.1)); psf_model = gpsf, backend = :gpu)
+        @test_throws ArgumentError fit(
+            batch(IdealCamera(64, 64, 0.1)); psf_model = gpsf, backend = :gpu
+        )
     end
 
     @testset "non-square pixels" begin
         rect = (0.127, 0.116)  # PSFLearning's default config
-        @test_throws ArgumentError fit(batch(IdealCamera(64, 64, rect)); psf_model = gpsf, backend = :cpu)
-        @test_throws ArgumentError fit(batch(SCMOSCamera(64, 64, rect, 1.6)); psf_model = gpsf, backend = :cpu)
+        @test_throws ArgumentError fit(
+            batch(IdealCamera(64, 64, rect)); psf_model = gpsf, backend = :cpu
+        )
+        @test_throws ArgumentError fit(
+            batch(SCMOSCamera(64, 64, rect, 1.6)); psf_model = gpsf, backend = :cpu
+        )
         # Gaussian models keep their current behaviour
-        smld, _ = fit(batch(IdealCamera(64, 64, rect)); psf_model = GaussianXYNB(0.13f0), backend = :cpu)
+        smld, _ = fit(
+            batch(IdealCamera(64, 64, rect));
+            psf_model = GaussianXYNB(0.13f0), backend = :cpu
+        )
         @test length(smld.emitters) == n
     end
 

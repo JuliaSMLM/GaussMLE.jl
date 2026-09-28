@@ -1,7 +1,9 @@
-# SplinePSFModel accuracy: 200 Poisson ROIs from an astigmatic MicroscopePSFs SplinePSF, fitted
-# through fit(::ROIBatch). The data come from the model's own forward model (PSF sampled at pixel
-# centres), so this checks the fitter and its CRLB, not pixel-integration effects.
-using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Distributions, Random, Statistics
+# SplinePSFModel accuracy: 200 Poisson ROIs from an astigmatic MicroscopePSFs SplinePSF,
+# fitted through fit(::ROIBatch). The data come from the model's own forward model (PSF
+# sampled at pixel centres), so this checks the fitter and its CRLB, not pixel-integration
+# effects.
+using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Distributions, Random,
+    Statistics
 
 @testset "SplinePSFModel: bias and CRLB (astigmatic SplinePSF)" begin
     zc = ZernikeCoefficients(15)
@@ -22,7 +24,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Distributions, Ran
         μ = GaussMLE.evaluate_psf(model, i, j, SVector{5, Float32}(x, y, z, n_photons, bg))
         data[i, j, k] = rand(rng, Poisson(μ))
     end
-    batch = ROIBatch(data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px))
+    batch = ROIBatch(
+        data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)
+    )
 
     smld, info = fit(batch; psf_model = model, backend = :cpu)
     @test info.backend == :cpu
