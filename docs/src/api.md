@@ -25,6 +25,8 @@ GaussianXYNB
 GaussianXYNBS
 GaussianXYNBSXSY
 AstigmaticXYZNB
+SplinePSFModel
+GaussMLE.gpu_compatible
 ```
 
 ### Custom Emitter Types
@@ -95,3 +97,4 @@ The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.
 | `GaussianXYNBS` | `Emitter2DFitSigma` |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` |

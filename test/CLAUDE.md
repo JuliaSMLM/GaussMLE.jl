@@ -6,10 +6,10 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, SplinePSFModel (CPU fit, dispatch, square pixels) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks | lab GPU machine |
-| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, SplinePSFModel `:auto` goes to the CPU | lab GPU machine |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera, SplinePSFModel | lab machine |
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
 - `test/test_groups.toml` declares the groups.

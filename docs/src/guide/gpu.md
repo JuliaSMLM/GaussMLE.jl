@@ -30,6 +30,10 @@ The `backend` parameter controls compute device selection:
 | `:cpu` | Always CPU, no GPU interaction | N/A |
 | `:gpu` | Require GPU | Error |
 
+A PSF model the kernel cannot run on a GPU (`GaussMLE.gpu_compatible(model) == false`, currently
+`SplinePSFModel`) always runs on the CPU: `:auto` goes straight to the CPU without polling the GPU,
+and `:gpu` throws `ArgumentError`.
+
 ### Timeout Configuration
 
 | Field | Default | Description |
