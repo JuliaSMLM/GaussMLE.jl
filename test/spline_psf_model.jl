@@ -119,9 +119,24 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         @test length(θ) == 5
         @test θ[1] ≈ center atol = 1.0
         @test θ[2] ≈ center atol = 1.0
-        @test θ[3] ≈ 0.0f0
+        @test -0.5f0 <= θ[3] <= 0.5f0
         @test θ[4] > 0
         @test θ[5] > 0
+
+        # z starts at the best point of a likelihood scan over z_range (0.1 µm grid), not
+        # at 0: exact ROIs from the model come back at their own z
+        roi_at(m, z) = [
+            GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(6, 6, z, 1000, 10))
+                for i in 1:box_size, j in 1:box_size
+        ]
+        z0 = GaussMLE.simple_initialize(roi_at(model(), 0.0f0), box_size, model())[3]
+        @test z0 ≈ 0.0f0 atol = 1.0e-6
+        astig(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2))
+        amodel = SplinePSFModel(astig; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        for z in (-0.4f0, 0.4f0)
+            z0 = GaussMLE.simple_initialize(roi_at(amodel, z), box_size, amodel)[3]
+            @test z0 ≈ z atol = 1.0e-5
+        end
     end
 
     @testset "to_pixel_units" begin

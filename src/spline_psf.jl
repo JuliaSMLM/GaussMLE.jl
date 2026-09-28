@@ -206,7 +206,7 @@ end
 
 @inline function simple_initialize(
         roi, box_size::Int,
-        ::SplinePSFModel{T}
+        model::SplinePSFModel{T}
     ) where {T}
     # Background from edge pixels
     edge_sum = zero(T)
@@ -230,8 +230,41 @@ end
         total += val
     end
     total = max(total, one(T))
+    x, y = sum_x / total, sum_y / total
 
-    return MVector{5, T}(sum_x / total, sum_y / total, zero(T), total, bg)
+    # Starting every fit at z = 0 sends ROIs far from focus (|z| 0.4-0.5 µm for the
+    # astigmatic test spline) into a wrong minimum on the other side of focus, so start at
+    # the best z of a coarse likelihood scan instead.
+    z = _spline_z_scan(roi, box_size, model, x, y, total, bg)
+    return MVector{5, T}(x, y, z, total, bg)
+end
+
+# Grid spacing (µm) of the z start scan. The basin of the true z is several tenths of a µm
+# wide; a 0.2 µm grid already picks a neighbouring basin at |z| 0.3-0.4 µm.
+const SPLINE_Z_SCAN_STEP = 0.1f0
+
+# z on an even grid over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the highest
+# Poisson log-likelihood at the given x, y, N and bg.
+@inline function _spline_z_scan(
+        roi, box_size::Int, model::SplinePSFModel{T}, x, y, N, bg
+    ) where {T}
+    zlo, zhi = model.z_range
+    n = max(2, ceil(Int, (zhi - zlo) / SPLINE_Z_SCAN_STEP) + 1)
+    bg_scan = max(bg, T(0.01))  # the bg lower bound of default_constraints; keeps μ > 0
+    best_z, best_ll = zero(T), typemin(T)
+    for k in 0:(n - 1)
+        z = zlo + (zhi - zlo) * T(k) / T(n - 1)
+        θ = SVector{5, T}(x, y, z, N, bg_scan)
+        ll = zero(T)
+        @inbounds for j in 1:box_size, i in 1:box_size
+            μ = evaluate_psf(model, i, j, θ)
+            ll += T(roi[i, j]) * log(μ) - μ
+        end
+        if ll > best_ll
+            best_z, best_ll = z, ll
+        end
+    end
+    return best_z
 end
 
 function to_pixel_units(model::SplinePSFModel{T}, pixel_size::Real) where {T}

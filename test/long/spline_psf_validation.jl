@@ -46,3 +46,55 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Distributions, Ran
     @test std(dx) <= 1.3 * crlb_x
     @test std(dy) <= 1.3 * crlb_y
 end
+
+# Every 0.1 µm band of z over ±0.5 µm meets the same thresholds. SMLMAnalysis S1 found fits
+# at |z| 0.4-0.5 µm falling into a wrong minimum on the other side of focus (z near ∓0.25,
+# a third of the photons) when every fit started at z = 0.
+@testset "SplinePSFModel: every z band over ±0.5 µm" begin
+    zc = ZernikeCoefficients(15)
+    zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
+    spline = SplinePSF(
+        ScalarPSF(1.4, 0.6, 1.518; zernike_coeffs = zc);
+        lateral_range = 1.0, axial_range = 0.8, lateral_step = 0.05, axial_step = 0.05
+    )
+    px, box, n = 0.1, 15, 200
+    n_photons, bg = 3000.0f0, 10.0f0
+    model = SplinePSFModel(spline; pixel_size = px)
+    rng = Xoshiro(7)
+
+    for zlo in -0.5:0.1:0.4
+        truth = [(8 + 2rand(rng) - 1, 8 + 2rand(rng) - 1, zlo + 0.1rand(rng)) for _ in 1:n]
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
+            θ = SVector{5, Float32}(x, y, z, n_photons, bg)
+            data[i, j, k] = rand(rng, Poisson(GaussMLE.evaluate_psf(model, i, j, θ)))
+        end
+        batch = ROIBatch(
+            data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)
+        )
+        e = first(fit(batch; psf_model = model, backend = :cpu)).emitters
+
+        dx = [(e[k].x - (truth[k][1] - 0.5) * px) * 1000 for k in 1:n]
+        dy = [(e[k].y - (truth[k][2] - 0.5) * px) * 1000 for k in 1:n]
+        dz = [(e[k].z - truth[k][3]) * 1000 for k in 1:n]
+        crlb_x = sqrt(mean(abs2, [em.σ_x for em in e])) * 1000
+        crlb_y = sqrt(mean(abs2, [em.σ_y for em in e])) * 1000
+        crlb_z = sqrt(mean(abs2, [em.σ_z for em in e])) * 1000
+
+        @testset "z in [$(round(zlo; digits = 1)), $(round(zlo + 0.1; digits = 1))]" begin
+            @test abs(mean(dx)) <= 3
+            @test abs(mean(dy)) <= 3
+            @test abs(mean(dz)) <= 10
+            @test std(dx) <= 1.3 * crlb_x
+            @test std(dy) <= 1.3 * crlb_y
+            @test std(dz) <= 1.3 * crlb_z
+        end
+        println(
+            "z band ", round(zlo; digits = 1), ": bias x ", round(mean(dx); digits = 2),
+            " y ", round(mean(dy); digits = 2), " z ", round(mean(dz); digits = 2),
+            " nm; SD/CRLB x ", round(std(dx) / crlb_x; digits = 3), " y ",
+            round(std(dy) / crlb_y; digits = 3), " z ", round(std(dz) / crlb_z; digits = 3),
+            "; |dz| > 200 nm: ", count(>(200) ∘ abs, dz), "/", n
+        )
+    end
+end
