@@ -5,6 +5,7 @@ Generates ROIBatch with appropriate noise models based on camera type
 
 # PSF-specific default parameters
 get_default_params(::GaussianXYNB) = Float32[6.0, 6.0, 1000.0, 10.0]
+get_default_params(::GaussianXYNBAniso) = Float32[6.0, 6.0, 1000.0, 10.0]
 get_default_params(::GaussianXYNBS) = Float32[6.0, 6.0, 1000.0, 10.0, 1.3]
 get_default_params(::GaussianXYNBSXSY) = Float32[6.0, 6.0, 1000.0, 10.0, 1.3, 1.3]
 get_default_params(::AstigmaticXYZNB) = Float32[6.0, 6.0, 0.0, 1000.0, 10.0]
@@ -48,9 +49,10 @@ function generate_roi_batch(
     # Set random seed if provided
     !isnothing(seed) && Random.seed!(seed)
 
-    # Convert PSF from microns to pixels for simulation
-    pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-    psf_pixels = to_pixel_units(psf_model, pixel_size)
+    # Convert PSF from microns to pixels for simulation (per axis: pixels may be non-square)
+    pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
+    psf_pixels = to_pixel_units(psf_model, pixel_size_x, pixel_size_y)
 
     # Generate or validate parameters
     if isnothing(true_params)
@@ -313,6 +315,13 @@ function _evaluate_psf_pixel(psf::GaussianXYNB, i::Int, j::Int, params::Abstract
     x, y, photons, bg = params
     psf_x = integral_gaussian_1d(j, x, psf.σ)
     psf_y = integral_gaussian_1d(i, y, psf.σ)
+    return bg + photons * psf_x * psf_y
+end
+
+function _evaluate_psf_pixel(psf::GaussianXYNBAniso, i::Int, j::Int, params::AbstractVector)
+    x, y, photons, bg = params
+    psf_x = integral_gaussian_1d(j, x, psf.σx)
+    psf_y = integral_gaussian_1d(i, y, psf.σy)
     return bg + photons * psf_x * psf_y
 end
 

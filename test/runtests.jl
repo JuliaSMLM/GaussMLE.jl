@@ -42,6 +42,9 @@ try
             # Comprehensive validation tests
             include("model_validation_tests.jl")
             include("comprehensive_cpu_tests.jl")
+
+            # Non-square camera pixels (per-axis pixel units, or refusal)
+            include("nonsquare_pixels_tests.jl")
         end
 
         # GPU tests (auto-detected)

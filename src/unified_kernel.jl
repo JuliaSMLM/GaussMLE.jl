@@ -197,6 +197,11 @@ end
     return MVector{4,T}(x, y, photons, bg)
 end
 
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBAniso{T}) where {T}
+    (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
+    return MVector{4, T}(x, y, photons, bg)
+end
+
 @inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBS{T}) where T
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
     return MVector{5,T}(x, y, photons, bg, T(1.3))

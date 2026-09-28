@@ -4,15 +4,24 @@ Analytical derivatives for PSF models using GaussLib functions
 
 # Fixed sigma model derivatives
 @inline function compute_pixel_derivatives(i, j, θ::Params{4}, psf::GaussianXYNB)
+    return _fixed_sigma_derivatives(i, j, θ, psf.σ, psf.σ)
+end
+
+# Fixed sigma on non-square pixels: the same model with a per-axis width in pixels
+@inline function compute_pixel_derivatives(i, j, θ::Params{4}, psf::GaussianXYNBAniso)
+    return _fixed_sigma_derivatives(i, j, θ, psf.σx, psf.σy)
+end
+
+@inline function _fixed_sigma_derivatives(i, j, θ::Params{4}, σx, σy)
     x, y, N, bg = θ
 
     # Compute PSF values
-    psf_x = integral_gaussian_1d(j, x, psf.σ)
-    psf_y = integral_gaussian_1d(i, y, psf.σ)
+    psf_x = integral_gaussian_1d(j, x, σx)
+    psf_y = integral_gaussian_1d(i, y, σy)
 
     # Get derivatives using GaussLib functions
-    dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, psf.σ, N, psf_y)
-    dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, psf.σ, N, psf_x)
+    dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
+    dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
     
     # Model value
     model = bg + N * psf_x * psf_y

@@ -12,6 +12,9 @@ GaussMLE re-exports `ROIBatch`, `IdealCamera`, `SCMOSCamera`, and `@filter` from
 !!! info "Unit Convention"
     PSF parameters and output positions are in **microns**. The camera's `pixel_size` handles all internal conversions.
 
+!!! note "Non-square pixels"
+    A camera may have different pixel sizes along x and y, e.g. `IdealCamera(512, 512, (0.127, 0.116))`. `GaussianXYNB`, `GaussianXYNBSXSY` and `AstigmaticXYZNB` convert their widths per axis and fit correctly. `GaussianXYNBS` fits one width in pixels, which is undefined on such a camera, so `fit` throws an `ArgumentError`; use `GaussianXYNBSXSY` instead.
+
 ## Basic Workflow
 
 ### Step 1: Define Camera and PSF
