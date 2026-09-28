@@ -12,8 +12,6 @@ All emitter types include:
 - PSF-specific parameters (σ, σx, σy, z)
 """
 
-using SMLMData
-
 """
     Emitter2DFitGaussMLE{T} <: AbstractEmitter
 
@@ -204,7 +202,8 @@ Identical to SMLMData.Emitter3DFit but adds p-value and covariance fields.
 
 ## Uncertainties (CRLB, microns for spatial)
 - `σ_x::T`, `σ_y::T`, `σ_z::T`: Position uncertainties (microns)
-- `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of Fisher matrix inverse
+- `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of
+  Fisher matrix inverse
 - `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
 
 ## Goodness-of-Fit

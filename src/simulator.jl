@@ -33,18 +33,18 @@ Generate synthetic ROI data with camera-appropriate noise.
 - `ROIBatch`: Complete ROI batch with camera attached, ready for fitting
 """
 function generate_roi_batch(
-    camera::SMLMData.AbstractCamera,
-    psf_model::PSFModel;
-    n_rois::Int = 100,
-    roi_size::Int = 11,
-    true_params::Union{Nothing, Matrix} = nothing,
-    corners::Union{Nothing, Matrix{Int32}} = nothing,
-    frame_indices::Union{Nothing, Vector{Int32}} = nothing,
-    xy_variation::Float32 = 1.0f0,
-    corner_mode::Symbol = :random,
-    min_spacing::Int = 20,
-    seed::Union{Nothing, Int} = nothing
-)
+        camera::SMLMData.AbstractCamera,
+        psf_model::PSFModel;
+        n_rois::Int = 100,
+        roi_size::Int = 11,
+        true_params::Union{Nothing, Matrix} = nothing,
+        corners::Union{Nothing, Matrix{Int32}} = nothing,
+        frame_indices::Union{Nothing, Vector{Int32}} = nothing,
+        xy_variation::Float32 = 1.0f0,
+        corner_mode::Symbol = :random,
+        min_spacing::Int = 20,
+        seed::Union{Nothing, Int} = nothing
+    )
     # Set random seed if provided
     !isnothing(seed) && Random.seed!(seed)
 
@@ -61,11 +61,11 @@ function generate_roi_batch(
             n_rois = actual_n_rois  # Use actual count from params
         end
     end
-    
+
     # Generate or validate corners
     camera_size = (
         length(camera.pixel_edges_x) - 1,
-        length(camera.pixel_edges_y) - 1
+        length(camera.pixel_edges_y) - 1,
     )
 
     if isnothing(corners)
@@ -82,29 +82,33 @@ function generate_roi_batch(
             y_corner = corners[2, i]
 
             if x_corner < 1 || x_corner > max_x
-                error("ROI $i: x corner ($x_corner) must be in range [1, $max_x] " *
-                      "for ROI size $roi_size on camera width $(camera_size[1])")
+                error(
+                    "ROI $i: x corner ($x_corner) must be in range [1, $max_x] " *
+                        "for ROI size $roi_size on camera width $(camera_size[1])"
+                )
             end
 
             if y_corner < 1 || y_corner > max_y
-                error("ROI $i: y corner ($y_corner) must be in range [1, $max_y] " *
-                      "for ROI size $roi_size on camera height $(camera_size[2])")
+                error(
+                    "ROI $i: y corner ($y_corner) must be in range [1, $max_y] " *
+                        "for ROI size $roi_size on camera height $(camera_size[2])"
+                )
             end
         end
     end
-    
+
     # Generate or validate frame indices
     if isnothing(frame_indices)
         frame_indices = ones(Int32, n_rois)
     else
         @assert length(frame_indices) == n_rois "Must have one frame index per ROI"
     end
-    
+
     # Generate the ROI data with appropriate noise (use pixel-based PSF)
     data = _generate_roi_data(camera, psf_pixels, true_params, corners, roi_size)
 
     # Create and return ROIBatch (split corners into x_corners and y_corners)
-    ROIBatch(data, corners[1, :], corners[2, :], frame_indices, camera)
+    return ROIBatch(data, corners[1, :], corners[2, :], frame_indices, camera)
 end
 
 """
@@ -113,47 +117,49 @@ Generate default parameters with PSF-specific values and position variation
 function _generate_default_params(psf_model::PSFModel, n_rois::Int, xy_variation::Float32)
     base_params = get_default_params(psf_model)
     n_params = length(base_params)
-    
+
     # Replicate for all ROIs
     params = Matrix{Float32}(undef, n_params, n_rois)
     for i in 1:n_rois
         params[:, i] = base_params
-        
+
         # Add position variation only to x,y (first two parameters)
         if xy_variation > 0
             params[1, i] += (rand() - 0.5f0) * 2.0f0 * xy_variation  # x variation
             params[2, i] += (rand() - 0.5f0) * 2.0f0 * xy_variation  # y variation
         end
     end
-    
+
     return params
 end
 
 """
 Generate corners based on specified mode
 """
-function _generate_corners(n_rois::Int, camera_size::Tuple{Int,Int}, roi_size::Int,
-                          mode::Symbol, min_spacing::Int)
+function _generate_corners(
+        n_rois::Int, camera_size::Tuple{Int, Int}, roi_size::Int,
+        mode::Symbol, min_spacing::Int
+    )
     nx, ny = camera_size
     corners = Matrix{Int32}(undef, 2, n_rois)
-    
+
     # Ensure ROIs fit within camera
     max_x = nx - roi_size + 1
     max_y = ny - roi_size + 1
-    
+
     if mode == :random
         # Random placement with minimum spacing
-        placed = Vector{Tuple{Int,Int}}()
+        placed = Vector{Tuple{Int, Int}}()
         attempts = 0
         max_attempts = n_rois * 100
-        
+
         for i in 1:n_rois
             valid = false
             while !valid && attempts < max_attempts
                 attempts += 1
                 x = rand(1:max_x)
                 y = rand(1:max_y)
-                
+
                 # Check minimum spacing
                 valid = true
                 for (px, py) in placed
@@ -162,27 +168,27 @@ function _generate_corners(n_rois::Int, camera_size::Tuple{Int,Int}, roi_size::I
                         break
                     end
                 end
-                
+
                 if valid
                     corners[1, i] = x
                     corners[2, i] = y
                     push!(placed, (x, y))
                 end
             end
-            
+
             # Fallback if spacing constraint too strict
             if !valid
                 corners[1, i] = rand(1:max_x)
                 corners[2, i] = rand(1:max_y)
             end
         end
-        
+
     elseif mode == :grid
         # Regular grid pattern
         n_grid = ceil(Int, sqrt(n_rois))
         spacing_x = max(min_spacing, (max_x - 1) ÷ n_grid)
         spacing_y = max(min_spacing, (max_y - 1) ÷ n_grid)
-        
+
         idx = 1
         for j in 1:spacing_y:max_y
             for i in 1:spacing_x:max_x
@@ -193,23 +199,23 @@ function _generate_corners(n_rois::Int, camera_size::Tuple{Int,Int}, roi_size::I
                 end
             end
         end
-        
+
     elseif mode == :clustered
         # Clusters of ROIs (simulating multi-emitter regions)
         n_clusters = max(1, n_rois ÷ 10)
         rois_per_cluster = n_rois ÷ n_clusters
-        
+
         idx = 1
         for c in 1:n_clusters
             # Random cluster center
-            cx = rand(roi_size:max_x-roi_size)
-            cy = rand(roi_size:max_y-roi_size)
-            
+            cx = rand(roi_size:(max_x - roi_size))
+            cy = rand(roi_size:(max_y - roi_size))
+
             # Place ROIs around cluster center
             for _ in 1:min(rois_per_cluster, n_rois - idx + 1)
                 offset_x = rand(-min_spacing:min_spacing)
                 offset_y = rand(-min_spacing:min_spacing)
-                
+
                 corners[1, idx] = clamp(cx + offset_x, 1, max_x)
                 corners[2, idx] = clamp(cy + offset_y, 1, max_y)
                 idx += 1
@@ -218,29 +224,33 @@ function _generate_corners(n_rois::Int, camera_size::Tuple{Int,Int}, roi_size::I
     else
         error("Unknown corner_mode: $mode. Use :random, :grid, or :clustered")
     end
-    
+
     return corners
 end
 
 """
 Generate ROI data with camera-specific noise - dispatches on camera type
 """
-function _generate_roi_data(camera::SMLMData.IdealCamera, psf_model::PSFModel,
-                           true_params::Matrix, corners::Matrix{Int32}, roi_size::Int)
+function _generate_roi_data(
+        camera::SMLMData.IdealCamera, psf_model::PSFModel,
+        true_params::Matrix, corners::Matrix{Int32}, roi_size::Int
+    )
     n_rois = size(true_params, 2)
     data = zeros(Float32, roi_size, roi_size, n_rois)
-    
+
     for k in 1:n_rois
         roi = @view data[:, :, k]
         params = @view true_params[:, k]
         _generate_single_roi!(roi, psf_model, params, camera, corners[:, k])
     end
-    
+
     return data
 end
 
-function _generate_roi_data(camera::SMLMData.SCMOSCamera, psf_model::PSFModel,
-                           true_params::Matrix, corners::Matrix{Int32}, roi_size::Int)
+function _generate_roi_data(
+        camera::SMLMData.SCMOSCamera, psf_model::PSFModel,
+        true_params::Matrix, corners::Matrix{Int32}, roi_size::Int
+    )
     n_rois = size(true_params, 2)
     data = zeros(Float32, roi_size, roi_size, n_rois)
 
@@ -256,15 +266,17 @@ end
 """
 Generate single ROI with IdealCamera (Poisson noise only)
 """
-function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
-                              params::AbstractVector, ::SMLMData.IdealCamera,
-                              corner::AbstractVector)
+function _generate_single_roi!(
+        roi::AbstractMatrix, psf_model::PSFModel,
+        params::AbstractVector, ::SMLMData.IdealCamera,
+        corner::AbstractVector
+    )
     roi_size = size(roi, 1)
-    
+
     # Generate expected signal for each pixel
     for j in 1:roi_size, i in 1:roi_size
         expected = _evaluate_psf_pixel(psf_model, i, j, params)
-        
+
         # Poisson noise
         if expected > 0
             roi[i, j] = rand(Poisson(expected))
@@ -272,15 +284,18 @@ function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
             roi[i, j] = 0
         end
     end
+    return
 end
 
 """
 Generate single ROI with SMLMData.SCMOSCamera (Poisson + readout noise + ADU conversion)
 Simulates full camera pipeline: photons → electrons → ADU
 """
-function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
-                              params::AbstractVector, camera::SMLMData.SCMOSCamera,
-                              corner::AbstractVector)
+function _generate_single_roi!(
+        roi::AbstractMatrix, psf_model::PSFModel,
+        params::AbstractVector, camera::SMLMData.SCMOSCamera,
+        corner::AbstractVector
+    )
     roi_size = size(roi, 1)
     x_corner, y_corner = corner
 
@@ -289,14 +304,17 @@ function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
         expected_photons = _evaluate_psf_pixel(psf_model, i, j, params)
 
         # Apply QE and Poisson noise (photons → electrons)
-        qe = camera.qe isa Number ? camera.qe : camera.qe[i + x_corner - 1, j + y_corner - 1]
+        qe = camera.qe isa Number ? camera.qe :
+            camera.qe[i + x_corner - 1, j + y_corner - 1]
         expected_electrons = expected_photons * qe
-        signal_electrons = expected_electrons > 0 ? Float32(rand(Poisson(expected_electrons))) : 0.0f0
+        signal_electrons = expected_electrons > 0 ?
+            Float32(rand(Poisson(expected_electrons))) : 0.0f0
 
         # Add readout noise (Gaussian, in electrons)
         cam_i = i + x_corner - 1
         cam_j = j + y_corner - 1
-        readnoise = camera.readnoise isa Number ? camera.readnoise : camera.readnoise[cam_i, cam_j]
+        readnoise = camera.readnoise isa Number ? camera.readnoise :
+            camera.readnoise[cam_i, cam_j]
         total_electrons = signal_electrons + randn(Float32) * readnoise
 
         # Convert to ADU
@@ -304,6 +322,7 @@ function _generate_single_roi!(roi::AbstractMatrix, psf_model::PSFModel,
         offset = camera.offset isa Number ? camera.offset : camera.offset[cam_i, cam_j]
         roi[i, j] = total_electrons / gain + offset
     end
+    return
 end
 
 """

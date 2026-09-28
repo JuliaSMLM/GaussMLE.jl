@@ -1,20 +1,31 @@
+"""
+    GaussMLE
+
+Maximum-likelihood fitting of Gaussian PSF models to single-molecule ROIs, on the CPU or a
+CUDA GPU, with Cramér-Rao lower bound uncertainties. Noise models: Poisson (`IdealCamera`)
+and sCMOS (`SCMOSCamera`, per-pixel readout noise).
+
+Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
+`GaussianXYNBS`, `GaussianXYNBSXSY` and `AstigmaticXYZNB`; `generate_roi_batch` for
+simulated data. Results are `SMLMData.BasicSMLD` with model-specific emitter types.
+"""
 module GaussMLE
 
-using KernelAbstractions
-using CUDA
-using StaticArrays
-using LinearAlgebra
-using Statistics
-using SpecialFunctions
-using SMLMData
-using Random
+using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel
+using CUDA: CUDA, CUDABackend
+using StaticArrays: StaticArrays, @SVector, MMatrix, MVector, SVector
+using LinearAlgebra: LinearAlgebra
+using Statistics: Statistics, mean
+using SpecialFunctions: SpecialFunctions
+using SMLMData: SMLMData
+using Random: Random
 using Distributions: Chisq, cdf, Poisson  # Only import what we need
 
 import StatsAPI: fit  # Extend canonical Julia fit function
 
 # Import commonly used types from SMLMData (ecosystem standard)
 using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter,
-                AbstractSMLMConfig, AbstractSMLMInfo
+    AbstractSMLMConfig, AbstractSMLMInfo
 
 import Adapt
 

@@ -103,8 +103,11 @@ end
 axislegend(ax_curve, position=:ct)
 rowsize!(fig.layout, 1, Relative(0.35))
 
-fig
+save("astigmatic_psf.png", fig)
+nothing # hide
 ```
+
+![Astigmatic PSF shapes and widths versus z](astigmatic_psf.png)
 
 At z < 0, the PSF is elongated vertically (σy > σx). At z > 0, it's elongated horizontally (σx > σy). The crossing point near z=0 is where the PSF is most circular. The fitter uses this ellipticity to determine z position.
 

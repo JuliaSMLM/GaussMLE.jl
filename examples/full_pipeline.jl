@@ -29,7 +29,7 @@ println("\nSMLMSim → SMLMBoxer → GaussMLE → BasicSMLD\n")
 
 # Step 1: Generate SMLM data with SMLMSim
 println("Step 1: Generate Data (SMLMSim)")
-println("-" ^ 50)
+println("-"^50)
 
 # Create camera
 camera = SMLMData.IdealCamera(0:255, 0:255, 0.1)  # 256×256, 100nm pixels
@@ -47,28 +47,31 @@ for i in 1:n_emitters
     y = rand() * 25.0
     frame = rand(1:n_frames)
 
-    push!(emitters_true, SMLMData.Emitter2DFit{Float64}(
-        x=x, y=y,
-        photons=1500.0,
-        bg=10.0,
-        σ_x=0.0, σ_y=0.0, σ_photons=0.0, σ_bg=0.0,  # uncertainties (unknown for ground truth)
-        frame=frame, dataset=1, track_id=0, id=i
-    ))
+    push!(
+        emitters_true, SMLMData.Emitter2DFit{Float64}(
+            x = x, y = y,
+            photons = 1500.0,
+            bg = 10.0,
+            # uncertainties (unknown for ground truth)
+            σ_x = 0.0, σ_y = 0.0, σ_photons = 0.0, σ_bg = 0.0,
+            frame = frame, dataset = 1, track_id = 0, id = i
+        )
+    )
 end
 
-smld_true = SMLMData.BasicSMLD(emitters_true, camera, n_frames, 1, Dict{String,Any}())
+smld_true = SMLMData.BasicSMLD(emitters_true, camera, n_frames, 1, Dict{String, Any}())
 println("  ✓ Created ground truth: $n_emitters emitters")
 
 # Generate image stack using SMLMSim
 println("  Generating image stack with SMLMSim...")
 psf = MicroscopePSFs.GaussianPSF(0.13)  # 130nm PSF
-imagestack = SMLMSim.gen_images(smld_true, psf, poisson_noise=true, bg=10.0)
+imagestack = SMLMSim.gen_images(smld_true, psf, poisson_noise = true, bg = 10.0)
 println("  ✓ Image stack: $(size(imagestack))")
-println("  Mean intensity: $(round(mean(imagestack), digits=2))")
+println("  Mean intensity: $(round(mean(imagestack), digits = 2))")
 
 # Step 2: Detect spots with SMLMBoxer
 println("\nStep 2: Detect Spots (SMLMBoxer)")
-println("-" ^ 50)
+println("-"^50)
 
 batch = getboxes(
     imagestack,
@@ -84,11 +87,11 @@ batch = getboxes(
 n_detected = length(batch)
 println("  ✓ Detected $n_detected ROIs")
 println("  Input emitters: $n_emitters")
-println("  Detection efficiency: $(round(n_detected/n_emitters*100, digits=1))%")
+println("  Detection efficiency: $(round(n_detected / n_emitters * 100, digits = 1))%")
 
 # Step 3: Fit with GaussMLE
 println("\nStep 3: Fit PSFs (GaussMLE)")
-println("-" ^ 50)
+println("-"^50)
 
 fitter = GaussMLE.GaussMLEConfig(
     psf_model = GaussMLE.GaussianXYNB(0.13f0),
@@ -103,7 +106,7 @@ println("  ✓ Fitted $(length(smld_output.emitters)) localizations → BasicSML
 
 # Step 4: Analyze Results
 println("\nStep 4: Analyze Results")
-println("-" ^ 50)
+println("-"^50)
 
 # Extract statistics
 x_positions = [e.x for e in smld_output.emitters]
@@ -111,18 +114,21 @@ photons_fit = [e.photons for e in smld_output.emitters]
 precision = [e.σ_x for e in smld_output.emitters]
 
 println("  Position range:")
-println("    x: $(round(minimum(x_positions), digits=2)) - $(round(maximum(x_positions), digits=2)) μm")
-println("  Mean photons: $(round(mean(photons_fit), digits=1)) (input: 1500)")
-println("  Mean precision: $(round(mean(precision)*1000, digits=1)) nm")
+println("    x: $(round(minimum(x_positions), digits = 2)) - \
+    $(round(maximum(x_positions), digits = 2)) μm")
+println("  Mean photons: $(round(mean(photons_fit), digits = 1)) (input: 1500)")
+println("  Mean precision: $(round(mean(precision) * 1000, digits = 1)) nm")
 
 # Ground truth comparison
 println("\nStep 5: Ground Truth Comparison")
-println("-" ^ 50)
+println("-"^50)
 
 println("  Input: $n_emitters emitters")
 println("  Detected: $n_detected spots")
 println("  Fitted: $(length(smld_output.emitters)) localizations")
-println("  Recovery: $(round(length(smld_output.emitters)/n_emitters*100, digits=1))%")
+println(
+    "  Recovery: $(round(length(smld_output.emitters) / n_emitters * 100, digits = 1))%",
+)
 
 println("\n" * "="^60)
 println("✅ COMPLETE PIPELINE SUCCESS!")
