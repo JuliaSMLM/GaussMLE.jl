@@ -288,7 +288,8 @@ end
 
 # Pretty printing for PSF models
 Base.show(io::IO, psf::GaussianXYNB) = print(io, "GaussianXYNB(σ=$(psf.σ))")
-Base.show(io::IO, psf::GaussianXYNBS) = print(io, "GaussianXYNBS()")  # No fields, just default
+# No fields, just default
+Base.show(io::IO, psf::GaussianXYNBS) = print(io, "GaussianXYNBS()")
 Base.show(io::IO, psf::GaussianXYNBSXSY) = print(io, "GaussianXYNBSXSY()")  # No fields
 function Base.show(io::IO, psf::AstigmaticXYZNB)
     print(io, "AstigmaticXYZNB(")

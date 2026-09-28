@@ -49,7 +49,10 @@ roi_batch = generate_roi_batch(
     seed = 42
 )
 println("  Created ROIBatch with $(length(roi_batch)) ROIs")
-println("  Frames covered: $(minimum(roi_batch.frame_indices)) to $(maximum(roi_batch.frame_indices))")
+println(
+    "  Frames covered: $(minimum(roi_batch.frame_indices)) to \
+        $(maximum(roi_batch.frame_indices))",
+)
 
 # 2. Fit with ideal camera model
 println("\n2. Fitting with ideal camera model...")
@@ -97,7 +100,9 @@ scmos_camera = SMLMData.SCMOSCamera(
 
 println("  sCMOS camera created with spatial variation")
 println("  Base readnoise: $(sqrt(10.0f0)) e⁻ rms (variance: 10 e⁻²)")
-println("  High-noise region: $(sqrt(50.0f0)) e⁻ rms (variance: 50 e⁻²) at (200:300, 200:300)")
+println(
+    "  High-noise region: $(sqrt(50.0f0)) e⁻ rms (variance: 50 e⁻²) at (200:300, 200:300)",
+)
 
 # Generate new data with sCMOS noise
 roi_batch_scmos = generate_roi_batch(
@@ -155,9 +160,18 @@ for i in 1:min(3, n_rois)
 
     println("\n  ROI $i:")
     println("    Corner (pixels): ($(roi_batch.corners[1, i]), $(roi_batch.corners[2, i]))")
-    println("    ROI coords: ($(round(roi_x, digits = 2)), $(round(roi_y, digits = 2))) pixels")
-    println("    Camera coords: ($(round(cam_x, digits = 2)), $(round(cam_y, digits = 2))) pixels")
-    println("    Physical coords: ($(round(emitter.x, digits = 3)), $(round(emitter.y, digits = 3))) μm")
+    println(
+        "    ROI coords: ($(round(roi_x, digits = 2)), \
+            $(round(roi_y, digits = 2))) pixels",
+    )
+    println(
+        "    Camera coords: ($(round(cam_x, digits = 2)), \
+            $(round(cam_y, digits = 2))) pixels",
+    )
+    println(
+        "    Physical coords: ($(round(emitter.x, digits = 3)), \
+            $(round(emitter.y, digits = 3))) μm",
+    )
 end
 
 # 6. Filter using SMLMData capabilities

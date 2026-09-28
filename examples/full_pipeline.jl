@@ -52,7 +52,8 @@ for i in 1:n_emitters
             x = x, y = y,
             photons = 1500.0,
             bg = 10.0,
-            σ_x = 0.0, σ_y = 0.0, σ_photons = 0.0, σ_bg = 0.0,  # uncertainties (unknown for ground truth)
+            # uncertainties (unknown for ground truth)
+            σ_x = 0.0, σ_y = 0.0, σ_photons = 0.0, σ_bg = 0.0,
             frame = frame, dataset = 1, track_id = 0, id = i
         )
     )
@@ -113,7 +114,8 @@ photons_fit = [e.photons for e in smld_output.emitters]
 precision = [e.σ_x for e in smld_output.emitters]
 
 println("  Position range:")
-println("    x: $(round(minimum(x_positions), digits = 2)) - $(round(maximum(x_positions), digits = 2)) μm")
+println("    x: $(round(minimum(x_positions), digits = 2)) - \
+    $(round(maximum(x_positions), digits = 2)) μm")
 println("  Mean photons: $(round(mean(photons_fit), digits = 1)) (input: 1500)")
 println("  Mean precision: $(round(mean(precision) * 1000, digits = 1)) nm")
 
@@ -124,7 +126,9 @@ println("-"^50)
 println("  Input: $n_emitters emitters")
 println("  Detected: $n_detected spots")
 println("  Fitted: $(length(smld_output.emitters)) localizations")
-println("  Recovery: $(round(length(smld_output.emitters) / n_emitters * 100, digits = 1))%")
+println(
+    "  Recovery: $(round(length(smld_output.emitters) / n_emitters * 100, digits = 1))%",
+)
 
 println("\n" * "="^60)
 println("✅ COMPLETE PIPELINE SUCCESS!")

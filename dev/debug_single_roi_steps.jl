@@ -51,8 +51,12 @@ println("  Position: x=$x_true, y=$y_true, z=$z_true")
 println("  Photons: $n_true, Background: $bg_true")
 
 # Compute expected widths at z=0
-αx = GaussMLE.GaussLib.compute_alpha(z_true - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d)
-αy = GaussMLE.GaussLib.compute_alpha(z_true + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d)
+αx = GaussMLE.GaussLib.compute_alpha(
+    z_true - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d
+)
+αy = GaussMLE.GaussLib.compute_alpha(
+    z_true + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d
+)
 σx_true = psf_model.σx₀ * sqrt(αx)
 σy_true = psf_model.σy₀ * sqrt(αy)
 println("  At z=0: σx=$σx_true, σy=$σy_true")
@@ -95,13 +99,23 @@ for n_iter in iteration_counts
     z_fitted = e.z / pixel_size
 
     println("\n[$n_iter iterations]")
-    println("  x: $(round(x_fitted_roi, digits = 3)) (Δ = $(round(x_fitted_roi - x_true, digits = 3)), σ=$(round(e.σ_x / pixel_size, digits = 3)))")
-    println("  y: $(round(y_fitted_roi, digits = 3)) (Δ = $(round(y_fitted_roi - y_true, digits = 3)), σ=$(round(e.σ_y / pixel_size, digits = 3)))")
-    println("  z: $(round(z_fitted, digits = 3)) (Δ = $(round(z_fitted - z_true, digits = 3)), σ=$(round(e.σ_z / pixel_size, digits = 3)))")
-    println("  N: $(round(e.photons, digits = 1)) (Δ = $(round(e.photons - n_true, digits = 1)))")
+    println("  x: $(round(x_fitted_roi, digits = 3)) \
+        (Δ = $(round(x_fitted_roi - x_true, digits = 3)), \
+        σ=$(round(e.σ_x / pixel_size, digits = 3)))")
+    println("  y: $(round(y_fitted_roi, digits = 3)) \
+        (Δ = $(round(y_fitted_roi - y_true, digits = 3)), \
+        σ=$(round(e.σ_y / pixel_size, digits = 3)))")
+    println("  z: $(round(z_fitted, digits = 3)) \
+        (Δ = $(round(z_fitted - z_true, digits = 3)), \
+        σ=$(round(e.σ_z / pixel_size, digits = 3)))")
+    println("  N: $(round(e.photons, digits = 1)) \
+        (Δ = $(round(e.photons - n_true, digits = 1)))")
     println("  bg: $(round(e.bg, digits = 2)) (Δ = $(round(e.bg - bg_true, digits = 2)))")
 
-    push!(results_at_iters, (n_iter = n_iter, emitter = e, x_roi = x_fitted_roi, y_roi = y_fitted_roi))
+    push!(
+        results_at_iters,
+        (n_iter = n_iter, emitter = e, x_roi = x_fitted_roi, y_roi = y_fitted_roi)
+    )
 end
 
 # Generate model PSFs at each iteration (convert emitter values to ROI pixels)
@@ -109,7 +123,9 @@ model_psfs = []
 for r in results_at_iters
     model_roi = zeros(Float32, box_size, box_size)
     # Use ROI pixel coordinates, not microns!
-    fitted_params = Float32[r.x_roi, r.y_roi, r.emitter.z / pixel_size, r.emitter.photons, r.emitter.bg]
+    fitted_params = Float32[
+        r.x_roi, r.y_roi, r.emitter.z / pixel_size, r.emitter.photons, r.emitter.bg,
+    ]
 
     for j in 1:box_size, i in 1:box_size
         model_roi[i, j] = GaussMLE._evaluate_psf_pixel(psf_model, i, j, fitted_params)
@@ -126,7 +142,10 @@ println("="^70)
 fig = Figure(size = (1800, 1200))
 
 # Row 1: Data and models
-titles = ["Ground Truth\nData", "0 iter\n(Initialization)", "1 iter\n(First Step)", "10 iter\n(Converged?)"]
+titles = [
+    "Ground Truth\nData", "0 iter\n(Initialization)", "1 iter\n(First Step)",
+    "10 iter\n(Converged?)",
+]
 for (col, (title, img)) in enumerate(zip(titles, [roi_data[:, :, 1], model_psfs...]))
     ax = Axis(
         fig[1, col],
@@ -146,7 +165,9 @@ for (col, (title, img)) in enumerate(zip(titles, [roi_data[:, :, 1], model_psfs.
     # Mark fitted center if not ground truth (use ROI coordinates)
     if col > 1
         r = results_at_iters[col - 1]
-        scatter!(ax, [r.x_roi], [r.y_roi], color = :yellow, markersize = 12, marker = :xcross)
+        scatter!(
+            ax, [r.x_roi], [r.y_roi], color = :yellow, markersize = 12, marker = :xcross
+        )
     end
 end
 
@@ -175,8 +196,10 @@ Label(
                 "$(r.n_iter) iter | " *
                     "$(round(x_r, digits = 2)) ($(round(x_r - x_true, digits = 2))) | " *
                     "$(round(y_r, digits = 2)) ($(round(y_r - y_true, digits = 2))) | " *
-                    "$(round(e.z / pixel_size, digits = 1)) ($(round(e.z / pixel_size - z_true, digits = 1))) | " *
-                    "$(round(e.photons, digits = 0)) ($(round(e.photons - n_true, digits = 0))) | " *
+                    "$(round(e.z / pixel_size, digits = 1)) \
+                    ($(round(e.z / pixel_size - z_true, digits = 1))) | " *
+                    "$(round(e.photons, digits = 0)) \
+                    ($(round(e.photons - n_true, digits = 0))) | " *
                     "$(round(e.bg, digits = 2)) ($(round(e.bg - bg_true, digits = 2)))"
             end for r in results_at_iters
         ], "\n"
@@ -202,7 +225,8 @@ r0 = results_at_iters[1]
 if abs(r0.x_roi - x_true) < 1.0 && abs(r0.y_roi - y_true) < 1.0
     println("  ✓ Initialization: x,y within 1 pixel of truth")
 else
-    println("  ✗ Initialization: x,y OFF by $(round(r0.x_roi - x_true, digits = 2)), $(round(r0.y_roi - y_true, digits = 2)) pixels")
+    println("  ✗ Initialization: x,y OFF by $(round(r0.x_roi - x_true, digits = 2)), \
+        $(round(r0.y_roi - y_true, digits = 2)) pixels")
 end
 
 # Check first iteration
@@ -210,13 +234,15 @@ r1 = results_at_iters[2]
 if abs(r1.x_roi - x_true) < abs(r0.x_roi - x_true)
     println("  ✓ First iteration: x improved")
 else
-    println("  ✗ First iteration: x got WORSE (Δ: $(round(r0.x_roi - x_true, digits = 3)) → $(round(r1.x_roi - x_true, digits = 3)))")
+    println("  ✗ First iteration: x got WORSE (Δ: $(round(r0.x_roi - x_true, digits = 3)) \
+        → $(round(r1.x_roi - x_true, digits = 3)))")
 end
 
 if abs(r1.y_roi - y_true) < abs(r0.y_roi - y_true)
     println("  ✓ First iteration: y improved")
 else
-    println("  ✗ First iteration: y got WORSE (Δ: $(round(r0.y_roi - y_true, digits = 3)) → $(round(r1.y_roi - y_true, digits = 3)))")
+    println("  ✗ First iteration: y got WORSE (Δ: $(round(r0.y_roi - y_true, digits = 3)) \
+        → $(round(r1.y_roi - y_true, digits = 3)))")
 end
 
 # Check convergence
@@ -224,7 +250,8 @@ r10 = results_at_iters[3]
 if abs(r10.x_roi - x_true) < 0.1 && abs(r10.y_roi - y_true) < 0.1
     println("  ✓ After 10 iter: x,y converged to truth")
 else
-    println("  ✗ After 10 iter: x,y still OFF by $(round(r10.x_roi - x_true, digits = 2)), $(round(r10.y_roi - y_true, digits = 2))")
+    println("  ✗ After 10 iter: x,y still OFF by $(round(r10.x_roi - x_true, digits = 2)), \
+        $(round(r10.y_roi - y_true, digits = 2))")
 end
 
 # Check residuals

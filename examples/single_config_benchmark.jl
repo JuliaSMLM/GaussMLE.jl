@@ -8,7 +8,8 @@ using Printf
 using Distributions
 
 # Example parameters (users can adjust these)
-psf_model = GaussMLE.GaussianXYNB(0.13f0)      # Can also use GaussianXYNBS(), AstigmaticXYZNB(), etc.
+# Can also use GaussianXYNBS(), AstigmaticXYZNB(), etc.
+psf_model = GaussMLE.GaussianXYNB(0.13f0)
 device = :gpu                                  # :cpu, :gpu, or :auto
 camera_type = :ideal                          # :ideal or :scmos
 roi_size = 7
@@ -130,7 +131,13 @@ push!(results_table, "  Time:       $(round(t_elapsed, digits = 2)) seconds")
 push!(results_table, "  Speed:      $(round(Int, fits_per_second)) fits/second")
 push!(results_table, "")
 push!(results_table, "-"^80)
-push!(results_table, @sprintf("%-12s %12s %12s %12s %12s", "Parameter", "Bias", "Std Dev", "Mean CRLB", "Std/CRLB"))
+push!(
+    results_table,
+    @sprintf(
+        "%-12s %12s %12s %12s %12s",
+        "Parameter", "Bias", "Std Dev", "Mean CRLB", "Std/CRLB",
+    ),
+)
 push!(results_table, "-"^80)
 
 for (i, name) in enumerate(param_names)
@@ -175,7 +182,11 @@ push!(results_table, "="^80)
 # Add note about expected ratios
 push!(results_table, "")
 push!(results_table, "Note: Std/CRLB ratio should be ~1.0 for optimal estimators.")
-push!(results_table, "      Bias should be ~CRLB/√n_samples = ~$(round(0.056 / sqrt(n_samples), digits = 4)) for positions")
+push!(
+    results_table,
+    "      Bias should be ~CRLB/√n_samples = ~\
+    $(round(0.056 / sqrt(n_samples), digits = 4)) for positions",
+)
 
 # Print results to console
 for line in results_table

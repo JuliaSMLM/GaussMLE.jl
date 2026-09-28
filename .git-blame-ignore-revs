@@ -3,3 +3,6 @@
 
 # style: format with Runic
 d63a9376e547538e8d99f6fc91322005c2eb4175
+
+# style: wrap Julia lines to 92 columns
+a9007a3c8622684d7951a857f9f9adf252c8acbd

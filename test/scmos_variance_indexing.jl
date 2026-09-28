@@ -1,5 +1,6 @@
-# Regression test: the sCMOS variance map is indexed at camera coordinates (corner + ROI pixel),
-# with x and y not swapped. Moved from the Monte Carlo validation file, which is now in Long.
+# Regression test: the sCMOS variance map is indexed at camera coordinates (corner + ROI
+# pixel), with x and y not swapped. Moved from the Monte Carlo validation file, which is now
+# in Long.
 using Test, GaussMLE, SMLMData, Random, Statistics
 
 box_size = 15

@@ -139,7 +139,8 @@ end
     dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
 
-    # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy * dσy/dz
+    # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy *
+    # dσy/dz
     dudt_sx, d2udt2_sx = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
     dudt_sy, d2udt2_sy = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
 
@@ -156,8 +157,10 @@ end
     d2αx_dz2 = (2 + 6 * psf.Ax * z_d_x + 12 * psf.Bx * z_d_x^2) / (psf.d^2)
     d2αy_dz2 = (2 + 6 * psf.Ay * z_d_y + 12 * psf.By * z_d_y^2) / (psf.d^2)
 
-    d2σx_dz2 = -(psf.σx₀ / (4 * αx^1.5f0)) * dαx_dz^2 + (psf.σx₀ / (2 * sqrt(αx))) * d2αx_dz2
-    d2σy_dz2 = -(psf.σy₀ / (4 * αy^1.5f0)) * dαy_dz^2 + (psf.σy₀ / (2 * sqrt(αy))) * d2αy_dz2
+    d2σx_dz2 = -(psf.σx₀ / (4 * αx^1.5f0)) * dαx_dz^2 +
+        (psf.σx₀ / (2 * sqrt(αx))) * d2αx_dz2
+    d2σy_dz2 = -(psf.σy₀ / (4 * αy^1.5f0)) * dαy_dz^2 +
+        (psf.σy₀ / (2 * sqrt(αy))) * d2αy_dz2
 
     d2udt2_z = d2udt2_sx * dσx_dz^2 + dudt_sx * d2σx_dz2 +
         d2udt2_sy * dσy_dz^2 + dudt_sy * d2σy_dz2

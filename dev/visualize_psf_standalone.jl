@@ -98,8 +98,14 @@ ax_widths = Axis(
     titlesize = 18
 )
 
-lines!(ax_widths, z_range, σx_curve, label = "σx(z) [HORIZONTAL width]", color = :blue, linewidth = 3)
-lines!(ax_widths, z_range, σy_curve, label = "σy(z) [VERTICAL width]", color = :red, linewidth = 3)
+lines!(
+    ax_widths, z_range, σx_curve, label = "σx(z) [HORIZONTAL width]", color = :blue,
+    linewidth = 3
+)
+lines!(
+    ax_widths, z_range, σy_curve, label = "σy(z) [VERTICAL width]", color = :red,
+    linewidth = 3
+)
 scatter!(ax_widths, z_positions, σx_values, color = :blue, markersize = 15)
 scatter!(ax_widths, z_positions, σy_values, color = :red, markersize = 15)
 vlines!(ax_widths, [0.0], color = :gray, linestyle = :dash, linewidth = 2, label = "z=0")
@@ -111,7 +117,8 @@ axislegend(ax_widths, position = :lt, labelsize = 14)
 for (idx, z) in enumerate(z_positions)
     ax_img = Axis(
         fig[2, idx],
-        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)) σy=$(round(σy_values[idx], digits = 2))",
+        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)) \
+            σy=$(round(σy_values[idx], digits = 2))",
         aspect = DataAspect(),
         titlesize = 12,
         yreversed = true  # Y axis goes DOWN (origin at top)
@@ -154,7 +161,8 @@ end
 # Convention note
 Label(
     fig[3, 1:n_z],
-    "Convention: data[i,j] with i=row (y-axis), j=column (x-axis). Display: transposed + yreversed → origin (1,1) at top-left.",
+    "Convention: data[i,j] with i=row (y-axis), j=column (x-axis). Display: transposed + \
+        yreversed → origin (1,1) at top-left.",
     fontsize = 11, color = :gray50
 )
 
@@ -172,8 +180,10 @@ crossing_idx = argmin(abs.(σx_curve .- σy_curve))
 crossing_z = z_range[crossing_idx]
 
 println("\nWidth Behavior:")
-println("  σx: $(round(minimum(σx_values), digits = 2)) → $(round(maximum(σx_values), digits = 2)) pixels")
-println("  σy: $(round(minimum(σy_values), digits = 2)) → $(round(maximum(σy_values), digits = 2)) pixels")
+println("  σx: $(round(minimum(σx_values), digits = 2)) → \
+    $(round(maximum(σx_values), digits = 2)) pixels")
+println("  σy: $(round(minimum(σy_values), digits = 2)) → \
+    $(round(maximum(σy_values), digits = 2)) pixels")
 println("  Crossing: z ≈ $(round(crossing_z, digits = 1)) nm (expected 0)")
 
 println("\nCurrent Convention (j=x horizontal, i=y vertical):")

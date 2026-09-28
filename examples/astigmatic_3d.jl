@@ -45,8 +45,10 @@ photons = [e.photons for e in smld.emitters]
 σ_x = [e.σ_x for e in smld.emitters]
 
 println("\nPositions:")
-println("  Mean x: $(round(mean(x_pos), digits = 2)) ± $(round(mean(σ_x) * 1000, digits = 1)) nm")
-println("  Mean y: $(round(mean(y_pos), digits = 2)) ± $(round(mean(σ_x) * 1000, digits = 1)) nm")
+println("  Mean x: $(round(mean(x_pos), digits = 2)) ± \
+    $(round(mean(σ_x) * 1000, digits = 1)) nm")
+println("  Mean y: $(round(mean(y_pos), digits = 2)) ± \
+    $(round(mean(σ_x) * 1000, digits = 1)) nm")
 
 println("\nPhotometry:")
 println("  Mean photons: $(round(mean(photons), digits = 1))")

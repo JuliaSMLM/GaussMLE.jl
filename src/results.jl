@@ -12,7 +12,8 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
 - `backend::Symbol`: Actual execution backend (`:cpu` or `:gpu`, never `:auto`)
 - `device_id::Int`: GPU device index (0-based) or -1 for CPU
 - `n_fits::Int`: Number of ROIs attempted
-- `n_converged::Int`: Number of ROIs that converged (currently equals n_fits since all iterations run)
+- `n_converged::Int`: Number of ROIs that converged (currently equals n_fits since all
+  iterations run)
 - `batch_size::Int`: Actual batch size used for processing
 - `n_batches::Int`: Number of batches processed (1 if all-at-once)
 - `memory_per_batch::Int`: Estimated memory bytes per batch
@@ -41,8 +42,14 @@ end
 function Base.show(io::IO, info::GaussMLEFitInfo)
     elapsed_ms = info.elapsed_s * 1000
     device_str = info.backend == :gpu ? "GPU:$(info.device_id)" : "CPU"
-    mem_str = info.memory_per_batch > 1024^2 ? "$(round(info.memory_per_batch / 1024^2, digits = 1)) MB" : "$(round(info.memory_per_batch / 1024, digits = 1)) KB"
-    return print(io, "GaussMLEFitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits = 2)) ms, $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)")
+    mem_str = info.memory_per_batch > 1024^2 ?
+        "$(round(info.memory_per_batch / 1024^2, digits = 1)) MB" :
+        "$(round(info.memory_per_batch / 1024, digits = 1)) KB"
+    return print(
+        io,
+        "GaussMLEFitInfo($(info.n_fits) fits, $(round(elapsed_ms, digits = 2)) ms, \
+        $device_str, $(info.n_batches) batches × $(info.batch_size), $mem_str/batch)",
+    )
 end
 
 export GaussMLEFitInfo

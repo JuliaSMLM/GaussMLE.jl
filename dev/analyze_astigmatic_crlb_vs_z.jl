@@ -70,8 +70,12 @@ println("="^70)
 σy_at_z = Float32[]
 
 for z in z_range
-    αx = GaussMLE.GaussLib.compute_alpha(z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d)
-    αy = GaussMLE.GaussLib.compute_alpha(z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d)
+    αx = GaussMLE.GaussLib.compute_alpha(
+        z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d
+    )
+    αy = GaussMLE.GaussLib.compute_alpha(
+        z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d
+    )
 
     σx = psf_model.σx₀ * sqrt(αx)
     σy = psf_model.σy₀ * sqrt(αy)
@@ -147,7 +151,8 @@ for (idx, z_true) in enumerate(z_range)
     push!(empirical_std_y, emp_y)
     push!(empirical_std_z, emp_z)
 
-    println("CRLB z=$(round(mean_z_error, digits = 1)) nm, empirical=$(round(emp_z, digits = 1)) nm")
+    println("CRLB z=$(round(mean_z_error, digits = 1)) nm, \
+        empirical=$(round(emp_z, digits = 1)) nm")
 end
 
 # =============================================================================
@@ -163,16 +168,20 @@ ratio_y = empirical_std_y ./ crlb_y
 ratio_z = empirical_std_z ./ crlb_z
 
 println("\nCRLB vs Empirical STD Ratios:")
-println("  X: mean=$(round(mean(ratio_x), digits = 3)), range=$(round(minimum(ratio_x), digits = 2)) to $(round(maximum(ratio_x), digits = 2))")
-println("  Y: mean=$(round(mean(ratio_y), digits = 3)), range=$(round(minimum(ratio_y), digits = 2)) to $(round(maximum(ratio_y), digits = 2))")
-println("  Z: mean=$(round(mean(ratio_z), digits = 3)), range=$(round(minimum(ratio_z), digits = 2)) to $(round(maximum(ratio_z), digits = 2))")
+println("  X: mean=$(round(mean(ratio_x), digits = 3)), \
+    range=$(round(minimum(ratio_x), digits = 2)) to $(round(maximum(ratio_x), digits = 2))")
+println("  Y: mean=$(round(mean(ratio_y), digits = 3)), \
+    range=$(round(minimum(ratio_y), digits = 2)) to $(round(maximum(ratio_y), digits = 2))")
+println("  Z: mean=$(round(mean(ratio_z), digits = 3)), \
+    range=$(round(minimum(ratio_z), digits = 2)) to $(round(maximum(ratio_z), digits = 2))")
 
 # Identify problematic z positions
 bad_z_idx = findall(ratio_z .> 1.2 .|| ratio_z .< 0.8)
 if !isempty(bad_z_idx)
     println("\n⚠ Z positions with poor CRLB match (ratio outside 0.8-1.2):")
     for idx in bad_z_idx
-        println("  z=$(round(z_range[idx], digits = 1)) nm: ratio=$(round(ratio_z[idx], digits = 3))")
+        println("  z=$(round(z_range[idx], digits = 1)) nm: \
+            ratio=$(round(ratio_z[idx], digits = 3))")
     end
 end
 
@@ -214,8 +223,14 @@ ax2 = Axis(
 
 lines!(ax2, z_range, crlb_x, label = "CRLB x", color = :blue, linewidth = 2.5)
 lines!(ax2, z_range, crlb_y, label = "CRLB y", color = :red, linewidth = 2.5)
-scatter!(ax2, z_range, empirical_std_x, label = "Empirical x", color = :blue, marker = :circle, markersize = 8, alpha = 0.6)
-scatter!(ax2, z_range, empirical_std_y, label = "Empirical y", color = :red, marker = :circle, markersize = 8, alpha = 0.6)
+scatter!(
+    ax2, z_range, empirical_std_x, label = "Empirical x", color = :blue, marker = :circle,
+    markersize = 8, alpha = 0.6
+)
+scatter!(
+    ax2, z_range, empirical_std_y, label = "Empirical y", color = :red, marker = :circle,
+    markersize = 8, alpha = 0.6
+)
 vlines!(ax2, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
 axislegend(ax2, position = :lt)
 
@@ -231,7 +246,10 @@ ax3 = Axis(
 )
 
 lines!(ax3, z_range, crlb_z, label = "CRLB z (reported)", color = :purple, linewidth = 2.5)
-scatter!(ax3, z_range, empirical_std_z, label = "Empirical z", color = :purple, marker = :circle, markersize = 8, alpha = 0.6)
+scatter!(
+    ax3, z_range, empirical_std_z, label = "Empirical z", color = :purple, marker = :circle,
+    markersize = 8, alpha = 0.6
+)
 vlines!(ax3, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
 axislegend(ax3, position = :lt)
 
@@ -248,9 +266,17 @@ ax4 = Axis(
 
 lines!(ax4, z_range, ratio_x, label = "X ratio", color = :blue, linewidth = 2.5)
 lines!(ax4, z_range, ratio_y, label = "Y ratio", color = :red, linewidth = 2.5)
-lines!(ax4, z_range, ratio_z, label = "Z ratio", color = :purple, linewidth = 2.5, linestyle = :dash)
-hlines!(ax4, [1.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
-hlines!(ax4, [0.8, 1.2], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±20% tolerance")
+lines!(
+    ax4, z_range, ratio_z, label = "Z ratio", color = :purple, linewidth = 2.5,
+    linestyle = :dash
+)
+hlines!(
+    ax4, [1.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match"
+)
+hlines!(
+    ax4, [0.8, 1.2], color = :orange, linestyle = :dot, linewidth = 1.5,
+    label = "±20% tolerance"
+)
 vlines!(ax4, [0.0], color = :gray, linestyle = :dash, linewidth = 1.5)
 axislegend(ax4, position = :rb)
 
@@ -268,13 +294,32 @@ println("SUMMARY")
 println("="^70)
 
 println("\nPSF Width Behavior:")
-println("  • σx and σy vary from $(round(minimum([σx_at_z; σy_at_z]), digits = 2)) to $(round(maximum([σx_at_z; σy_at_z]), digits = 2)) pixels")
+println("  • σx and σy vary from $(round(minimum([σx_at_z; σy_at_z]), digits = 2)) to \
+    $(round(maximum([σx_at_z; σy_at_z]), digits = 2)) pixels")
 println("  • Crossing point: z ≈ 0 (as expected for γ=$(psf_model.γ)nm)")
 
 println("\nCRLB Accuracy (Empirical std(error)/CRLB should be ≈1.0):")
-println("  • X: $(round(mean(ratio_x), digits = 3)) ± $(round(std(ratio_x), digits = 3)) → $(all(0.9 .< ratio_x .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_x .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
-println("  • Y: $(round(mean(ratio_y), digits = 3)) ± $(round(std(ratio_y), digits = 3)) → $(all(0.9 .< ratio_y .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_y .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
-println("  • Z: $(round(mean(ratio_z), digits = 3)) ± $(round(std(ratio_z), digits = 3)) → $(all(0.9 .< ratio_z .< 1.1) ? "✓ EXCELLENT" : all(0.8 .< ratio_z .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW")")
+println(
+    "  • X: $(round(mean(ratio_x), digits = 3)) ± $(round(std(ratio_x), digits = 3)) → \
+    $(
+        all(0.9 .< ratio_x .< 1.1) ? "✓ EXCELLENT" :
+            all(0.8 .< ratio_x .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW"
+    )"
+)
+println(
+    "  • Y: $(round(mean(ratio_y), digits = 3)) ± $(round(std(ratio_y), digits = 3)) → \
+    $(
+        all(0.9 .< ratio_y .< 1.1) ? "✓ EXCELLENT" :
+            all(0.8 .< ratio_y .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW"
+    )"
+)
+println(
+    "  • Z: $(round(mean(ratio_z), digits = 3)) ± $(round(std(ratio_z), digits = 3)) → \
+    $(
+        all(0.9 .< ratio_z .< 1.1) ? "✓ EXCELLENT" :
+            all(0.8 .< ratio_z .< 1.2) ? "✓ GOOD" : "⚠ NEEDS REVIEW"
+    )"
+)
 
 # Overall assessment
 x_ok = all(0.8 .< ratio_x .< 1.2)

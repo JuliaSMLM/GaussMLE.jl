@@ -27,7 +27,9 @@ struct LocalizationResult{T, P <: PSFModel}
 end
 
 # Convert from ROI coordinates to camera coordinates
-function roi_to_camera_coords(x_roi::T, y_roi::T, x_corner::Int32, y_corner::Int32) where {T}
+function roi_to_camera_coords(
+        x_roi::T, y_roi::T, x_corner::Int32, y_corner::Int32
+    ) where {T}
     # ROI coordinates are 1-indexed (1 = first pixel in ROI)
     # Camera coordinates are 1-indexed (1 = first pixel in camera)
     # Corner is the camera pixel index of the top-left ROI pixel
@@ -123,7 +125,9 @@ end
 # ===================================================================
 
 # Generic dispatcher - routes to appropriate emitter constructor based on PSF model
-to_emitter(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) =
+to_emitter(
+    result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...
+) =
     to_emitter(result.psf_model, result, idx, camera; kwargs...)
 
 # ---- GaussianXYNB: Emitter2DFitGaussMLE (with p-value) ----
@@ -141,7 +145,8 @@ function to_emitter(
 
     # Convert to microns (using camera origin for proper coordinate mapping)
     # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
-    # integral_gaussian_1d integrates from i-0.5 to i+0.5, so pixel centers are at integer positions
+    # integral_gaussian_1d integrates from i-0.5 to i+0.5, so pixel centers are at integer
+    # positions
     x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
     y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
 
@@ -324,10 +329,15 @@ function to_emitter(
 end
 
 # Legacy function names for backward compatibility
-to_emitter2dfit(result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) =
+to_emitter2dfit(
+    result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...
+) =
     to_emitter(GaussianXYNB(0.1f0), result, idx, camera; kwargs...)
 
-to_emitter3dfit(result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int, camera::SMLMData.AbstractCamera; kwargs...) where {T} =
+to_emitter3dfit(
+    result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int,
+    camera::SMLMData.AbstractCamera; kwargs...
+) where {T} =
     to_emitter(result.psf_model, result, idx, camera; kwargs...)
 
 # ===================================================================

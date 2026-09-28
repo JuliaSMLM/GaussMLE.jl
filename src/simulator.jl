@@ -304,14 +304,17 @@ function _generate_single_roi!(
         expected_photons = _evaluate_psf_pixel(psf_model, i, j, params)
 
         # Apply QE and Poisson noise (photons → electrons)
-        qe = camera.qe isa Number ? camera.qe : camera.qe[i + x_corner - 1, j + y_corner - 1]
+        qe = camera.qe isa Number ? camera.qe :
+            camera.qe[i + x_corner - 1, j + y_corner - 1]
         expected_electrons = expected_photons * qe
-        signal_electrons = expected_electrons > 0 ? Float32(rand(Poisson(expected_electrons))) : 0.0f0
+        signal_electrons = expected_electrons > 0 ?
+            Float32(rand(Poisson(expected_electrons))) : 0.0f0
 
         # Add readout noise (Gaussian, in electrons)
         cam_i = i + x_corner - 1
         cam_j = j + y_corner - 1
-        readnoise = camera.readnoise isa Number ? camera.readnoise : camera.readnoise[cam_i, cam_j]
+        readnoise = camera.readnoise isa Number ? camera.readnoise :
+            camera.readnoise[cam_i, cam_j]
         total_electrons = signal_electrons + randn(Float32) * readnoise
 
         # Convert to ADU

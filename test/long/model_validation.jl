@@ -12,7 +12,8 @@ Tests that fitted values and uncertainties match expectations within tolerance
 
     # Test configuration
     n_test_blobs = 1000  # Use 1000 blobs for reasonable statistics
-    box_size = 15  # Larger box for better Fisher Information (especially important for astigmatic)
+    # Larger box for better Fisher Information (especially important for astigmatic)
+    box_size = 15
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
 
     @testset "Fixed Sigma Model (xynb)" begin
@@ -113,7 +114,8 @@ Tests that fitted values and uncertainties match expectations within tolerance
         )
 
         @testset "CPU Backend" begin
-            # Use ROIBatch-based validation for astigmatic model (proper statistical validation)
+            # Use ROIBatch-based validation for astigmatic model (proper statistical
+            # validation)
             passed, results = validate_roibatch_fitting(
                 psf_model, n_test_blobs;
                 box_size = box_size,
@@ -306,10 +308,14 @@ Tests that fitted values and uncertainties match expectations within tolerance
                 true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
                 true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
                 true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
-                true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
+                true_params[:background] = push!(
+                    get(true_params, :background, Float32[]), bg_true,
+                )
 
                 for j in 1:box_size, i in 1:box_size
-                    mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, 1.3f0, 1.3f0)
+                    mu = generate_pixel_value(
+                        i, j, x_true, y_true, n_true, bg_true, 1.3f0, 1.3f0,
+                    )
                     data[i, j, k] = Float32(rand(Poisson(max(0.01, mu))))
                 end
             end

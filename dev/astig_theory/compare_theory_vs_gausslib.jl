@@ -110,12 +110,16 @@ function dalpha_dz(z::Float32, A::Float32, B::Float32, d::Float32)
     return (2.0f0 / d^2) * z + (3.0f0 * A / d^3) * z^2 + (4.0f0 * B / d^4) * z^3
 end
 
-function sigma(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function sigma(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32
+    )
     alpha_val = alpha(z - gamma, gamma, A, B, d)
     return sigma0 * sqrt(alpha_val)
 end
 
-function dsigma_dz(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function dsigma_dz(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32
+    )
     z_shifted = z - gamma
     alpha_val = alpha(z_shifted, gamma, A, B, d)
     dalpha_val = dalpha_dz(z_shifted, A, B, d)
@@ -123,7 +127,9 @@ function dsigma_dz(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::F
 end
 
 # Fisher Information calculation
-function compute_fisher_theoretical(x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32)
+function compute_fisher_theoretical(
+        x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32
+    )
     FI = zeros(Float32, 5, 5)
 
     sigma_x = sigma(z, sigma_x0, gamma, Ax, Bx, d)
@@ -145,7 +151,9 @@ function compute_fisher_theoretical(x::Float32, y::Float32, z::Float32, N::Float
 
             dmu_dx = N * dphi_x_dx * phi_y
             dmu_dy = N * phi_x * dphi_y_dy
-            dmu_dz = N * (dphi_x_dsigma * dsigma_x_dz * phi_y + phi_x * dphi_y_dsigma * dsigma_y_dz)
+            dmu_dz = N * (
+                dphi_x_dsigma * dsigma_x_dz * phi_y + phi_x * dphi_y_dsigma * dsigma_y_dz
+            )
             dmu_dN = phi_x * phi_y
             dmu_dbg = 1.0f0
 
@@ -174,7 +182,9 @@ psf_model = GaussMLE.AstigmaticXYZNB{Float32}(
 )
 
 # Compute Fisher Information using production kernel
-function compute_fisher_gausslib(x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32)
+function compute_fisher_gausslib(
+        x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32
+    )
     # Call the actual production kernel to get Fisher Information
     FI = zeros(Float32, 5, 5)
 
@@ -202,10 +212,18 @@ function compute_fisher_gausslib(x::Float32, y::Float32, z::Float32, N::Float32,
 
         if model > 0.0f0
             # Derivatives (GaussLib functions return (dudt, d2udt2) tuples)
-            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(j, x, σx_z, N_photons, phi_y)
-            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(i, y, σy_z, N_photons, phi_x)
-            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(j, x, σx_z, N_photons, phi_y)
-            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(i, y, σy_z, N_photons, phi_x)
+            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+                j, x, σx_z, N_photons, phi_y
+            )
+            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+                i, y, σy_z, N_photons, phi_x
+            )
+            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+                j, x, σx_z, N_photons, phi_y
+            )
+            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+                i, y, σy_z, N_photons, phi_x
+            )
 
             # These derivatives include N already, so adjust
             dmu_dx = dphi_x_dx
@@ -260,7 +278,9 @@ for z in z_range
     diff_percent = 100.0f0 * abs(crlb_z_theory - crlb_z_gausslib) / crlb_z_gausslib
     push!(crlb_diff_percent, diff_percent)
 
-    @printf("%6.0f | %11.2f | %13.2f | %7.3f\n", z, crlb_z_theory, crlb_z_gausslib, diff_percent)
+    @printf(
+        "%6.0f | %11.2f | %13.2f | %7.3f\n", z, crlb_z_theory, crlb_z_gausslib, diff_percent
+    )
 end
 
 println()
@@ -314,8 +334,13 @@ ax1 = Axis(
     titlesize = 16
 )
 
-lines!(ax1, z_range, crlb_theory, label = "Theoretical (direct)", color = :blue, linewidth = 3)
-lines!(ax1, z_range, crlb_gausslib, label = "GaussLib (production)", color = :red, linewidth = 3, linestyle = :dash)
+lines!(
+    ax1, z_range, crlb_theory, label = "Theoretical (direct)", color = :blue, linewidth = 3
+)
+lines!(
+    ax1, z_range, crlb_gausslib, label = "GaussLib (production)", color = :red,
+    linewidth = 3, linestyle = :dash
+)
 vlines!(ax1, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
 axislegend(ax1, position = :lt)
 
@@ -332,8 +357,13 @@ ax2 = Axis(
 
 diff_abs = abs.(crlb_theory .- crlb_gausslib)
 lines!(ax2, z_range, diff_abs, color = :purple, linewidth = 2.5)
-hlines!(ax2, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
-hlines!(ax2, [0.1], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±0.1 nm tolerance")
+hlines!(
+    ax2, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match"
+)
+hlines!(
+    ax2, [0.1], color = :orange, linestyle = :dot, linewidth = 1.5,
+    label = "±0.1 nm tolerance"
+)
 vlines!(ax2, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
 axislegend(ax2, position = :lt)
 
@@ -349,9 +379,17 @@ ax3 = Axis(
 )
 
 lines!(ax3, z_range, crlb_diff_percent, color = :darkred, linewidth = 2.5)
-hlines!(ax3, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match")
-hlines!(ax3, [0.1, -0.1], color = :orange, linestyle = :dot, linewidth = 1.5, label = "±0.1% tolerance")
-hlines!(ax3, [1.0, -1.0], color = :red, linestyle = :dot, linewidth = 1.5, label = "±1% tolerance")
+hlines!(
+    ax3, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match"
+)
+hlines!(
+    ax3, [0.1, -0.1], color = :orange, linestyle = :dot, linewidth = 1.5,
+    label = "±0.1% tolerance"
+)
+hlines!(
+    ax3, [1.0, -1.0], color = :red, linestyle = :dot, linewidth = 1.5,
+    label = "±1% tolerance"
+)
 vlines!(ax3, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
 axislegend(ax3, position = :rt)
 

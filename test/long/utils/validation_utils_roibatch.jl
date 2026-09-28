@@ -83,7 +83,10 @@ function validate_roibatch_fitting(
     )
 
     # Fit (data-first API, returns tuple)
-    fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, backend = device isa GaussMLE.CPU ? :cpu : :gpu, iterations = 20)
+    fitter = GaussMLE.GaussMLEConfig(
+        psf_model = psf_model, backend = device isa GaussMLE.CPU ? :cpu : :gpu,
+        iterations = 20,
+    )
     smld, _info = GaussMLE.fit(roi_batch, fitter)
 
     # Extract fitted params in ROI coordinates
@@ -129,7 +132,9 @@ function validate_roibatch_fitting(
     true_bg = true_params_matrix[5, :]
 
     # Helper function to compute validation stats
-    function compute_param_stats(fitted, true_vals, uncertainties, name; bias_tol = bias_tol, std_tol = std_tol)
+    function compute_param_stats(
+            fitted, true_vals, uncertainties, name; bias_tol = bias_tol, std_tol = std_tol,
+        )
         errors = fitted .- true_vals
         bias = mean(errors)
         empirical_std = std(errors)
@@ -142,13 +147,15 @@ function validate_roibatch_fitting(
 
         if verbose
             println(
-                "  $name: bias=$(round(bias, digits = 3)), std_ratio=$(round(std_ratio, digits = 3)) " *
+                "  $name: bias=$(round(bias, digits = 3)), \
+                    std_ratio=$(round(std_ratio, digits = 3)) " *
                     "(bias_pass=$bias_pass, std_pass=$std_pass)"
             )
         end
 
         return (
-            bias = bias, empirical_std = empirical_std, mean_reported_std = mean_reported_std,
+            bias = bias, empirical_std = empirical_std,
+            mean_reported_std = mean_reported_std,
             std_ratio = std_ratio, bias_pass = bias_pass, std_pass = std_pass,
             overall_pass = bias_pass && std_pass,
         )
@@ -162,9 +169,14 @@ function validate_roibatch_fitting(
     results = Dict{Symbol, Any}()
     results[:x] = compute_param_stats(fitted_x_roi, true_x, σ_x, :x)
     results[:y] = compute_param_stats(fitted_y_roi, true_y, σ_y, :y)
-    results[:z] = compute_param_stats(fitted_z, true_z, σ_z, :z; bias_tol = 0.03f0)  # z in microns, 30nm = 0.03μm tolerance
-    results[:photons] = compute_param_stats(fitted_photons, true_photons, σ_photons, :photons; bias_tol = 100.0f0)
-    results[:background] = compute_param_stats(fitted_bg, true_bg, σ_bg, :background; bias_tol = 2.0f0)
+    # z in microns, 30nm = 0.03μm tolerance
+    results[:z] = compute_param_stats(fitted_z, true_z, σ_z, :z; bias_tol = 0.03f0)
+    results[:photons] = compute_param_stats(
+        fitted_photons, true_photons, σ_photons, :photons; bias_tol = 100.0f0,
+    )
+    results[:background] = compute_param_stats(
+        fitted_bg, true_bg, σ_bg, :background; bias_tol = 2.0f0,
+    )
 
     # Overall pass
     all_pass = all(r.overall_pass for r in values(results))
