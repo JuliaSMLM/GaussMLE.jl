@@ -271,6 +271,8 @@ The math is dimensionally consistent:
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
 - `src/gausslib/` - Legacy GaussLib reference implementation (CPU only)
+- `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), CPU only via the `gpu_compatible` trait
+- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor (weak dependency)
 
 ### SMLMData Ecosystem Integration
 

@@ -252,7 +252,12 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && !CUDA.functional())
+    # A model the kernel cannot run on a GPU skips GPU polling entirely under :auto
+    if !gpu_compatible(psf_pixels) && fitter.backend == :gpu
+        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use backend = :cpu or :auto"))
+    end
+    use_cpu = fitter.backend == :cpu || !gpu_compatible(psf_pixels) ||
+        (fitter.backend != :gpu && !CUDA.functional())
 
     if fitter.backend == :gpu && !CUDA.functional()
         error("GPU requested but CUDA not functional")
@@ -531,6 +536,7 @@ function fit(roi_batch::ROIBatch{T, N, A, <:SMLMData.IdealCamera}, fitter::Gauss
     box_size = size(roi_batch.data, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
@@ -590,6 +596,7 @@ function fit(roi_batch::ROIBatch{T, N, A, <:SMLMData.SCMOSCamera}, fitter::Gauss
     box_size = size(data_electrons, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 

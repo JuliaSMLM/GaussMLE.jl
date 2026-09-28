@@ -136,6 +136,27 @@ The PSF width varies with z according to:
 - You need z-position information
 - You have calibrated the PSF-z relationship
 
+### SplinePSFModel - Tabulated 3D PSF
+
+A 3D model (x, y, z, N, bg) backed by a tabulated PSF: a measured or learned PSF, such as a
+MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The PSF is sampled at pixel centres,
+z is in microns throughout, and the model runs on the CPU only.
+
+```julia
+using GaussMLE, MicroscopePSFs
+
+psf = load_psf("psf.h5")                       # a 3D SplinePSF, in microns
+model = SplinePSFModel(psf; pixel_size = 0.1)  # z_range defaults to the spline's own range
+smld, info = fit(batch; psf_model = model)     # runs on the CPU
+```
+
+Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
+`SplinePSFModel(f; pixel_size, z_range)`. The camera's pixels must be square.
+
+**Use this model when:**
+- You have a calibrated PSF that a Gaussian does not describe well
+- You need z-position information from that PSF
+
 ## Model Comparison
 
 | Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB |
