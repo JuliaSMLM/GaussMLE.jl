@@ -3,10 +3,16 @@
 name: CI
 
 on:
+  push:
+    branches: [main, master]
+    tags: ['*']
+    paths-ignore: ['**.md', 'dev/**', '.claude/**']
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths-ignore: ['**.md', 'dev/**', '.claude/**']
   workflow_dispatch:
+  schedule:
+    - cron: '23 5 1 * *'  # monthly
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
