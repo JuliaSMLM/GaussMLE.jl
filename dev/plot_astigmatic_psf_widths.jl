@@ -87,7 +87,9 @@ lines!(ax, z_values, σx_values, label = "σx(z)", color = :blue, linewidth = 3)
 lines!(ax, z_values, σy_values, label = "σy(z)", color = :red, linewidth = 3)
 
 # Mark focal plane
-vlines!(ax, [0.0], color = :gray, linestyle = :dash, linewidth = 2, label = "Focal plane (z=0)")
+vlines!(
+    ax, [0.0], color = :gray, linestyle = :dash, linewidth = 2, label = "Focal plane (z=0)",
+)
 
 # Mark diffraction limit
 hlines!(ax, [σx₀], color = :gray, linestyle = :dot, linewidth = 2, label = "Base width σ₀")

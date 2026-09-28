@@ -1,6 +1,6 @@
 # Monte Carlo validation on 11x11 ROIs (restored from comprehensive_cpu_tests.jl): the
-# run_model_validation checks of model_validation.jl at a smaller box and other sample counts,
-# plus four precision bounds nothing else keeps (low/high photons, narrow/wide PSF).
+# run_model_validation checks of model_validation.jl at a smaller box and other sample
+# counts, plus four precision bounds nothing else keeps (low/high photons, narrow/wide PSF).
 using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
 
 include(joinpath(@__DIR__, "utils", "validation_utils.jl"))

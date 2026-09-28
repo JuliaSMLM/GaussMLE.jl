@@ -29,7 +29,9 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 end
 
 # Invert a Cholesky-decomposed matrix (A = L * L^T)
-@inline function static_cholesky_inverse!(A_inv::MMatrix{N, N, T}, L::MMatrix{N, N, T}) where {N, T}
+@inline function static_cholesky_inverse!(
+        A_inv::MMatrix{N, N, T}, L::MMatrix{N, N, T}
+    ) where {N, T}
     # First invert L (lower triangular)
     L_inv = MMatrix{N, N, T}(undef)
     @inbounds for j in 1:N
@@ -82,7 +84,9 @@ end
 end
 
 # GPU-compatible back substitution for solving Ax = b with LU-decomposed A
-@inline function static_back_substitution!(x::MVector{N, T}, A::MMatrix{N, N, T}, b::MVector{N, T}) where {N, T}
+@inline function static_back_substitution!(
+        x::MVector{N, T}, A::MMatrix{N, N, T}, b::MVector{N, T}
+    ) where {N, T}
     # Forward substitution for Ly = b
     @inbounds for i in 1:N
         x[i] = b[i]
@@ -101,7 +105,9 @@ end
 end
 
 # GPU-compatible matrix inverse using LU decomposition
-@inline function static_matrix_inverse!(A_inv::MMatrix{N, N, T}, A::MMatrix{N, N, T}) where {N, T}
+@inline function static_matrix_inverse!(
+        A_inv::MMatrix{N, N, T}, A::MMatrix{N, N, T}
+    ) where {N, T}
     # Make a copy for LU decomposition (don't modify original)
     A_lu = MMatrix{N, N, T}(A)
 
@@ -269,12 +275,16 @@ end
 
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
 # Val{false} → IdealCamera (Poisson only)
-@inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where {T}
+@inline function _dispatch_likelihood(
+        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
     return compute_likelihood_terms(data, model, IdealCameraInternal())
 end
 
 # Val{true} → SCMOSCamera (Poisson + variance)
-@inline function _dispatch_likelihood(::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where {T}
+@inline function _dispatch_likelihood(
+        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
     # Convert ROI-local (i,j) to camera coordinates for variance lookup
     cam_i = corner_y + i - 1
     cam_j = corner_x + j - 1
@@ -285,7 +295,8 @@ end
 @kernel function unified_gaussian_mle_kernel!(
         results::AbstractArray{T, 2},
         uncertainties::AbstractArray{T, 2},
-        covariances::AbstractArray{T, 2},  # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
+        # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
+        covariances::AbstractArray{T, 2},
         log_likelihoods::AbstractArray{T, 1},
         @Const(data::AbstractArray{T, 3}),
         @Const(psf_model::PSFModel{N, T}),
@@ -323,9 +334,12 @@ end
             θ_static = SVector{N, T}(θ)
             model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ_static, psf_model)
 
-            # Likelihood terms based on camera model (Val dispatch for compile-time optimization)
+            # Likelihood terms based on camera model (Val dispatch for compile-time
+            # optimization)
             data_ij = roi[i, j]
-            cf, df = _dispatch_likelihood(camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j)
+            cf, df = _dispatch_likelihood(
+                camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
+            )
 
             # Accumulate gradient and diagonal Hessian
             for k in 1:N

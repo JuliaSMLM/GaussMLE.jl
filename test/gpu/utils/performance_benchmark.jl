@@ -101,7 +101,8 @@ function create_camera(camera_symbol::Symbol, roi_size::Int)
         return SMLMData.IdealCamera(512, 512, 0.1f0)
     elseif camera_symbol == :scmos
         # Realistic sCMOS parameters: 5.0 e⁻ rms readnoise
-        # Must use array-based readnoise (not scalar) because fitting code indexes variance_map[i,j]
+        # Must use array-based readnoise (not scalar) because fitting code indexes
+        # variance_map[i,j]
         readnoise_map = fill(5.0f0, 512, 512)  # Uniform 5 e⁻ rms across sensor
         return SMLMData.SCMOSCamera(
             512, 512,
@@ -121,7 +122,9 @@ end
 
 Generate synthetic test data with known ground truth.
 """
-function generate_test_data(psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed = 42)
+function generate_test_data(
+        psf::GaussMLE.PSFModel, camera, n_rois::Int, roi_size::Int; seed = 42,
+    )
     Random.seed!(seed)
 
     # Base parameters (x, y, N, bg)
@@ -197,8 +200,10 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         fits_per_second = benchmark / t_elapsed
 
         # Extract ROI-local coordinates using actual batch corners
-        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for extract_roi_coords
-        pixel_size = benchmark_batch.camera.pixel_edges_x[2] - benchmark_batch.camera.pixel_edges_x[1]
+        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for
+        # extract_roi_coords
+        pixel_size = benchmark_batch.camera.pixel_edges_x[2] -
+            benchmark_batch.camera.pixel_edges_x[1]
         corners = vcat(benchmark_batch.x_corners', benchmark_batch.y_corners')
         coords = extract_roi_coords(smld, corners, ROI_SIZE, pixel_size)
 
@@ -249,13 +254,17 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
                 σx_idx = findfirst(x -> x == :σx, param_names)
                 # Emitter2DFitSigmaXY has σx field (in microns), convert to pixels
                 params[σx_idx, :] = Float32[e.σx / pixel_size for e in smld.emitters]
-                uncertainties[σx_idx, :] = Float32[e.σ_σx / pixel_size for e in smld.emitters]
+                uncertainties[σx_idx, :] = Float32[
+                    e.σ_σx / pixel_size for e in smld.emitters
+                ]
             end
             if :σy in param_names
                 σy_idx = findfirst(x -> x == :σy, param_names)
                 # Emitter2DFitSigmaXY has σy field (in microns), convert to pixels
                 params[σy_idx, :] = Float32[e.σy / pixel_size for e in smld.emitters]
-                uncertainties[σy_idx, :] = Float32[e.σ_σy / pixel_size for e in smld.emitters]
+                uncertainties[σy_idx, :] = Float32[
+                    e.σ_σy / pixel_size for e in smld.emitters
+                ]
             end
         end
 
@@ -285,7 +294,8 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
         return BenchmarkResult(config, fits_per_second, convergence_rate, param_stats)
 
     catch e
-        @warn "Benchmark failed for $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol): $e"
+        @warn "Benchmark failed for \
+            $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol): $e"
         return nothing
     finally
         # Clean up GPU memory after each benchmark to prevent accumulation
@@ -321,7 +331,10 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
     println("="^100)
     println("PERFORMANCE BENCHMARK - Kernel Abstract Implementation")
     println("="^100)
-    println("Configuration: Warmup=$WARMUP_ITERATIONS, Benchmark=$BENCHMARK_ITERATIONS iterations")
+    println(
+        "Configuration: Warmup=$WARMUP_ITERATIONS, \
+            Benchmark=$BENCHMARK_ITERATIONS iterations",
+    )
     println("ROI Size: $(ROI_SIZE)×$(ROI_SIZE) pixels")
     println()
     println("Std/CRLB Ratio: 1.00 = optimal (statistically efficient estimator)")
@@ -352,10 +365,26 @@ function print_benchmark_table(results::Vector{BenchmarkResult})
 
         for r in model_results
             # Get stats for each parameter
-            x_ratio = format_ratio(get(r.param_stats, :x, ParameterStats(NaN32, NaN32, NaN32, NaN32)).std_crlb_ratio)
-            y_ratio = format_ratio(get(r.param_stats, :y, ParameterStats(NaN32, NaN32, NaN32, NaN32)).std_crlb_ratio)
-            n_ratio = format_ratio(get(r.param_stats, :N, ParameterStats(NaN32, NaN32, NaN32, NaN32)).std_crlb_ratio)
-            bg_ratio = format_ratio(get(r.param_stats, :bg, ParameterStats(NaN32, NaN32, NaN32, NaN32)).std_crlb_ratio)
+            x_ratio = format_ratio(
+                get(
+                    r.param_stats, :x, ParameterStats(NaN32, NaN32, NaN32, NaN32),
+                ).std_crlb_ratio,
+            )
+            y_ratio = format_ratio(
+                get(
+                    r.param_stats, :y, ParameterStats(NaN32, NaN32, NaN32, NaN32),
+                ).std_crlb_ratio,
+            )
+            n_ratio = format_ratio(
+                get(
+                    r.param_stats, :N, ParameterStats(NaN32, NaN32, NaN32, NaN32),
+                ).std_crlb_ratio,
+            )
+            bg_ratio = format_ratio(
+                get(
+                    r.param_stats, :bg, ParameterStats(NaN32, NaN32, NaN32, NaN32),
+                ).std_crlb_ratio,
+            )
 
             # Handle model-specific parameters
             # For SXSY: show σx in first column, σy in second
@@ -514,7 +543,10 @@ function run_comprehensive_benchmark()
     # Run benchmarks
     results = BenchmarkResult[]
     for (i, config) in enumerate(configs)
-        print("[$i/$total] Testing $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol)... ")
+        print(
+            "[$i/$total] Testing \
+                $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol)... ",
+        )
         flush(stdout)
 
         result = run_single_benchmark(config, WARMUP_ITERATIONS, BENCHMARK_ITERATIONS)

@@ -103,7 +103,8 @@ false if timeout reached.
 - `required_bytes`: Minimum bytes needed (will wait for 1.5x this amount as safety margin)
 - `timeout`: Maximum seconds to wait (default 30.0)
 - `poll`: Polling interval in seconds (default 0.5)
-- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress feedback
+- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
+  feedback
 """
 function wait_for_gpu_memory(
         required_bytes::Integer;
@@ -140,7 +141,8 @@ end
 """
     wait_for_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing)
 
-Wait for a GPU with sufficient free memory using NVML queries only (no CUDA context creation).
+Wait for a GPU with sufficient free memory using NVML queries only (no CUDA context
+creation).
 Scans ALL GPUs each iteration - first available wins.
 
 Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeout reached.
@@ -209,7 +211,9 @@ function wait_for_gpu_nvml(
 
         if on_wait !== nothing
             # Report best available memory across all GPUs
-            best_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n_devices - 1))
+            best_free = maximum(
+                CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n_devices - 1)
+            )
             on_wait(time() - start, best_free, required_bytes)
         end
 
@@ -284,7 +288,8 @@ function select_backend(
                 if time() >= deadline
                     rethrow()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception = e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
 
@@ -311,10 +316,12 @@ function select_backend(
             catch e
                 _release_gpu_context(device_idx)
                 if time() >= deadline
-                    @warn "GPU context creation failed and timeout reached, using CPU" exception = e
+                    @warn "GPU context creation failed and timeout reached, using \
+                        CPU" exception = e
                     return CPU()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception = e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
     end
@@ -322,4 +329,5 @@ end
 
 # Default on_wait callback for user feedback
 const DEFAULT_ON_WAIT = (elapsed, available, required) ->
-@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available = Base.format_bytes(available) required = Base.format_bytes(required)
+@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available =
+    Base.format_bytes(available) required = Base.format_bytes(required)

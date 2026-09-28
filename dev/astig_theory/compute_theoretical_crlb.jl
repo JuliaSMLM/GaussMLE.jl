@@ -104,7 +104,9 @@ end
 """
 Width as function of z: σ(z) = σ₀ √α(z)
 """
-function sigma(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function sigma(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32,
+    )
     alpha_val = alpha(z - gamma, gamma, A, B, d)
     return sigma0 * sqrt(alpha_val)
 end
@@ -112,7 +114,9 @@ end
 """
 Derivative of width with respect to z: dσ/dz = (σ₀/(2√α)) dα/dz
 """
-function dsigma_dz(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function dsigma_dz(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32,
+    )
     z_shifted = z - gamma
     alpha_val = alpha(z_shifted, gamma, A, B, d)
     dalpha_val = dalpha_dz(z_shifted, A, B, d)

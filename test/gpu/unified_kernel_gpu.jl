@@ -1,5 +1,6 @@
 """
-GPU kernel tests: the unified kernel on CUDA, and CPU vs GPU agreement (GPU group; the CPU backend is in test/unified_kernel_cpu.jl)
+GPU kernel tests: the unified kernel on CUDA, and CPU vs GPU agreement (GPU group; the CPU
+backend is in test/unified_kernel_cpu.jl)
 """
 
 using GaussMLE
@@ -143,8 +144,8 @@ using LinearAlgebra
             # Compare results (should be very close)
             @test results_cpu ≈ results_gpu rtol = 1.0e-4
             @test uncertainties_cpu ≈ uncertainties_gpu rtol = 1.0e-3
-            # σ_xy of a centred symmetric blob is Float32 roundoff around zero, so compare it
-            # on the scale of the x/y variances rather than relative to itself.
+            # σ_xy of a centred symmetric blob is Float32 roundoff around zero, so compare
+            # it on the scale of the x/y variances rather than relative to itself.
             var_xy = maximum(abs2, uncertainties_cpu[1:2, :])
             @test covariances_cpu ≈ covariances_gpu rtol = 1.0e-3 atol = 1.0e-3 * var_xy
             @test log_likelihoods_cpu ≈ log_likelihoods_gpu rtol = 1.0e-4

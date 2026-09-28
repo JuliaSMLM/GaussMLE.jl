@@ -27,7 +27,9 @@ struct BenchmarkResult
     device::Symbol
     camera::Symbol
     fits_per_second::Float64
-    param_stats::Dict{Symbol, NamedTuple{(:bias, :std, :crlb), Tuple{Float32, Float32, Float32}}}
+    param_stats::Dict{
+        Symbol, NamedTuple{(:bias, :std, :crlb), Tuple{Float32, Float32, Float32}},
+    }
     convergence_rate::Float64
 end
 
@@ -128,7 +130,10 @@ function run_single_benchmark(psf_model, device, camera_type)
         convergence_rate = n_converged / n_samples
 
         model_name = split(string(typeof(psf_model)), ".")[end]
-        return BenchmarkResult(model_name, device, camera_type, n_samples / t_elapsed, param_stats, convergence_rate)
+        return BenchmarkResult(
+            model_name, device, camera_type, n_samples / t_elapsed, param_stats,
+            convergence_rate,
+        )
 
     catch e
         # Return nothing if benchmark fails
@@ -175,7 +180,10 @@ for psf_model in psf_models
             result = run_single_benchmark(psf_model, device, camera)
             if result !== nothing
                 push!(results, result)
-                println("✓ ($(round(Int, result.fits_per_second)) fits/s, $(round(result.convergence_rate * 100, digits = 1))% converged)")
+                println(
+                    "✓ ($(round(Int, result.fits_per_second)) fits/s, \
+                        $(round(result.convergence_rate * 100, digits = 1))% converged)",
+                )
             else
                 println("✗ (failed)")
             end
@@ -273,11 +281,14 @@ if !isempty(results)
     )
 
     # Accuracy analysis (X position bias)
-    accuracy_sorted = sort(results, by = r -> abs(get(r.param_stats, :x, (bias = Inf32,)).bias))
+    accuracy_sorted = sort(
+        results, by = r -> abs(get(r.param_stats, :x, (bias = Inf32,)).bias),
+    )
     push!(
         output_lines, @sprintf(
             "Most accurate (X bias): %s-%s-%s (%.4f pixels)",
-            accuracy_sorted[1].psf_model, accuracy_sorted[1].device, accuracy_sorted[1].camera,
+            accuracy_sorted[1].psf_model, accuracy_sorted[1].device,
+            accuracy_sorted[1].camera,
             get(accuracy_sorted[1].param_stats, :x, (bias = NaN32,)).bias
         )
     )
@@ -287,7 +298,8 @@ if !isempty(results)
     push!(
         output_lines, @sprintf(
             "Most precise (X std): %s-%s-%s (%.4f pixels)",
-            precision_sorted[1].psf_model, precision_sorted[1].device, precision_sorted[1].camera,
+            precision_sorted[1].psf_model, precision_sorted[1].device,
+            precision_sorted[1].camera,
             get(precision_sorted[1].param_stats, :x, (std = NaN32,)).std
         )
     )
@@ -296,7 +308,8 @@ if !isempty(results)
     crlb_ratios = []
     for r in results
         x_stats = get(r.param_stats, :x, nothing)
-        if x_stats !== nothing && isfinite(x_stats.std) && isfinite(x_stats.crlb) && x_stats.crlb > 0
+        if x_stats !== nothing && isfinite(x_stats.std) && isfinite(x_stats.crlb) &&
+                x_stats.crlb > 0
             push!(crlb_ratios, (abs(1.0 - x_stats.std / x_stats.crlb), r))
         end
     end

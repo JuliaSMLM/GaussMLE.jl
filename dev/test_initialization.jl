@@ -16,7 +16,9 @@ println("="^70)
 
 function test_init()
     # Create same ROI as debug script
-    psf_model = AstigmaticXYZNB{Float32}(1.3f0, 1.3f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 200.0f0, 500.0f0)
+    psf_model = AstigmaticXYZNB{Float32}(
+        1.3f0, 1.3f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 200.0f0, 500.0f0,
+    )
     box_size = 15
     x_true = 7.8f0
     y_true = 7.7f0

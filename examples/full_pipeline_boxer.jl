@@ -52,7 +52,8 @@ for frame in 1:n_frames
         for i in max(1, y - 10):min(256, y + 10)
             for j in max(1, x - 10):min(256, x + 10)
                 r2 = (j - x)^2 + (i - y)^2
-                imagestack[i, j, frame] += photons * exp(-r2 / (2 * σ_psf^2)) / (2π * σ_psf^2)
+                imagestack[i, j, frame] +=
+                    photons * exp(-r2 / (2 * σ_psf^2)) / (2π * σ_psf^2)
             end
         end
     end
@@ -96,8 +97,10 @@ if boxer_result isa NamedTuple
     # CRITICAL: boxcoords is [row, col, frame] but ROIBatch needs [x, y] = [col, row]!
     batch = SMLMData.ROIBatch(
         boxer_result.boxes,
-        Int32.(permutedims(boxer_result.boxcoords[:, [2, 1]])),  # [row,col] → [col,row] → (2×N)
-        Int32.(boxer_result.boxcoords[:, 3]),                   # Frame indices
+        # [row,col] → [col,row] → (2×N)
+        Int32.(permutedims(boxer_result.boxcoords[:, [2, 1]])),
+        # Frame indices
+        Int32.(boxer_result.boxcoords[:, 3]),
         camera
     )
 
@@ -151,8 +154,14 @@ photons = [e.photons for e in smld.emitters]
 x_errors = [e.σ_x for e in smld.emitters]
 
 println("  Mean position (microns):")
-println("    x: $(round(mean(x_positions), digits = 3)) ± $(round(mean(x_errors) * 1000, digits = 1)) nm")
-println("    y: $(round(mean(y_positions), digits = 3)) ± $(round(mean(x_errors) * 1000, digits = 1)) nm")
+println(
+    "    x: $(round(mean(x_positions), digits = 3)) ± \
+        $(round(mean(x_errors) * 1000, digits = 1)) nm",
+)
+println(
+    "    y: $(round(mean(y_positions), digits = 3)) ± \
+        $(round(mean(x_errors) * 1000, digits = 1)) nm",
+)
 println("  Mean photons: $(round(mean(photons), digits = 1))")
 println("  Localization precision: $(round(mean(x_errors) * 1000, digits = 1)) nm")
 
@@ -162,7 +171,10 @@ if !isempty(smld.emitters)
     println("\n  First emitter:")
     println("    Position: ($(round(e1.x, digits = 3)), $(round(e1.y, digits = 3))) μm")
     println("    Photons: $(round(e1.photons, digits = 1))")
-    println("    σ: ($(round(e1.σ_x * 1000, digits = 1)), $(round(e1.σ_y * 1000, digits = 1))) nm")
+    println(
+        "    σ: ($(round(e1.σ_x * 1000, digits = 1)), \
+            $(round(e1.σ_y * 1000, digits = 1))) nm",
+    )
     println("    Frame: $(e1.frame)")
 end
 

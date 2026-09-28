@@ -25,7 +25,8 @@ Using the new camera-aware simulator for reliable test data generation
         roi_size = size(roi_batch.data, 1)
 
         # Extract ROI-local coordinates using actual corners from ROIBatch
-        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for extract_roi_coords
+        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for
+        # extract_roi_coords
         corners = vcat(roi_batch.x_corners', roi_batch.y_corners')
         coords = extract_roi_coords(smld, corners, roi_size, pixel_size)
 
@@ -74,7 +75,9 @@ Using the new camera-aware simulator for reliable test data generation
         std_pass = abs(1.0f0 - std_ratio) < std_ratio_tol
 
         if verbose
-            param_names = ["x", "y", "photons", "background", "sigma", "sigma_x", "sigma_y", "z"]
+            param_names = [
+                "x", "y", "photons", "background", "sigma", "sigma_x", "sigma_y", "z",
+            ]
             println("\nParameter: $(param_names[min(param_idx, length(param_names))])")
             println("  Bias: $(round(bias, digits = 4)) (tolerance: ±$bias_tol)")
             println("  Empirical STD: $(round(empirical_std, digits = 4))")
@@ -133,10 +136,18 @@ Using the new camera-aware simulator for reliable test data generation
         # Validate each parameter
         verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
 
-        x_val = validate_fits(smld, batch, true_params, param_idx = 1, bias_tol = 0.1f0, verbose = verbose)
-        y_val = validate_fits(smld, batch, true_params, param_idx = 2, bias_tol = 0.1f0, verbose = verbose)
-        n_val = validate_fits(smld, batch, true_params, param_idx = 3, bias_tol = 50.0f0, verbose = verbose)
-        b_val = validate_fits(smld, batch, true_params, param_idx = 4, bias_tol = 2.0f0, verbose = verbose)
+        x_val = validate_fits(
+            smld, batch, true_params, param_idx = 1, bias_tol = 0.1f0, verbose = verbose,
+        )
+        y_val = validate_fits(
+            smld, batch, true_params, param_idx = 2, bias_tol = 0.1f0, verbose = verbose,
+        )
+        n_val = validate_fits(
+            smld, batch, true_params, param_idx = 3, bias_tol = 50.0f0, verbose = verbose,
+        )
+        b_val = validate_fits(
+            smld, batch, true_params, param_idx = 4, bias_tol = 2.0f0, verbose = verbose,
+        )
 
         @test x_val.bias_pass  # Always true for positions (see helper)
         @test y_val.bias_pass
@@ -188,7 +199,10 @@ Using the new camera-aware simulator for reliable test data generation
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # More relaxed tolerances for low SNR
-        x_val = validate_fits(smld, batch, true_params, param_idx = 1, bias_tol = 0.2f0, std_ratio_tol = 0.35f0)
+        x_val = validate_fits(
+            smld, batch, true_params, param_idx = 1,
+            bias_tol = 0.2f0, std_ratio_tol = 0.35f0,
+        )
 
         @test x_val.bias_pass  # Always true for positions
         @test x_val.std_pass
@@ -254,8 +268,10 @@ Using the new camera-aware simulator for reliable test data generation
         @test !any(isinf.(σ_photons_vals))
         @test !any(isnan.(σ_photons_vals))
 
-        # Just check that uncertainties are reasonable (can't easily check bias for positions)
-        @test mean(σ_x_vals) < 0.02  # Reasonable precision in microns (< 0.2 pixels for 0.1 μm pixels)
+        # Just check that uncertainties are reasonable (can't easily check bias for
+        # positions)
+        # Reasonable precision in microns (< 0.2 pixels for 0.1 μm pixels)
+        @test mean(σ_x_vals) < 0.02
     end
 
     @testset "sCMOS Camera with Variance Map" begin
@@ -358,7 +374,9 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 46
         )
 
-        fitter_nbs = GaussMLE.GaussMLEConfig(psf_model = psf_nbs, backend = :cpu, iterations = 20)
+        fitter_nbs = GaussMLE.GaussMLEConfig(
+            psf_model = psf_nbs, backend = :cpu, iterations = 20,
+        )
         smld_nbs, _info = GaussMLE.fit(batch_nbs, fitter_nbs)
 
         # Validate sigma parameter (more challenging than position/photons)
@@ -385,7 +403,9 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 47
         )
 
-        fitter_sxsy = GaussMLE.GaussMLEConfig(psf_model = psf_sxsy, backend = :cpu, iterations = 20)
+        fitter_sxsy = GaussMLE.GaussMLEConfig(
+            psf_model = psf_sxsy, backend = :cpu, iterations = 20,
+        )
         smld_sxsy, _info = GaussMLE.fit(batch_sxsy, fitter_sxsy)
 
         @test all([isfinite(e.σ_x) && isfinite(e.σ_y) for e in smld_sxsy.emitters])
@@ -439,7 +459,9 @@ Using the new camera-aware simulator for reliable test data generation
                 seed = 48
             )
 
-            fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+            fitter = GaussMLE.GaussMLEConfig(
+                psf_model = psf, backend = :cpu, iterations = 20,
+            )
             smld, _info = GaussMLE.fit(batch, fitter)
 
             pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
@@ -452,7 +474,8 @@ Using the new camera-aware simulator for reliable test data generation
         end
 
         # Check that precision improves with photon count
-        @test precision_values[1] > precision_values[2] > precision_values[3] > precision_values[4]
+        @test precision_values[1] > precision_values[2] > precision_values[3] >
+            precision_values[4]
         @test precision_values[1] < 0.5  # Reasonable upper bound
         @test precision_values[4] < 0.05  # Good precision at high photon count
     end

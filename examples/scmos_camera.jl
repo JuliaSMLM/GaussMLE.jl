@@ -50,7 +50,8 @@ for k in 1:n_rois
 end
 
 println("  Generated $n_rois ROIs with sCMOS-like noise")
-println("  Variance map range: $(round(minimum(variance_map), digits = 2)) - $(round(maximum(variance_map), digits = 2))")
+println("  Variance map range: $(round(minimum(variance_map), digits = 2)) - \
+    $(round(maximum(variance_map), digits = 2))")
 
 # Fit WITHOUT sCMOS model (ignores pixel-dependent variance)
 println("\n--- Fit 1: Ideal Camera (uniform noise) ---")

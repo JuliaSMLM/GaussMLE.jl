@@ -59,8 +59,12 @@ psf_images = zeros(Float32, box_size, box_size, n_z)
 
 for (idx, z) in enumerate(z_positions)
     # Compute widths at this z
-    αx = GaussMLE.GaussLib.compute_alpha(z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d)
-    αy = GaussMLE.GaussLib.compute_alpha(z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d)
+    αx = GaussMLE.GaussLib.compute_alpha(
+        z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d
+    )
+    αy = GaussMLE.GaussLib.compute_alpha(
+        z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d
+    )
     σx = psf_model.σx₀ * sqrt(αx)
     σy = psf_model.σy₀ * sqrt(αy)
 
@@ -84,8 +88,12 @@ z_range = Float32.(range(-600, 600, length = 100))
 σy_curve = similar(z_range)
 
 for (idx, z) in enumerate(z_range)
-    αx = GaussMLE.GaussLib.compute_alpha(z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d)
-    αy = GaussMLE.GaussLib.compute_alpha(z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d)
+    αx = GaussMLE.GaussLib.compute_alpha(
+        z - psf_model.γ, psf_model.Ax, psf_model.Bx, psf_model.d
+    )
+    αy = GaussMLE.GaussLib.compute_alpha(
+        z + psf_model.γ, psf_model.Ay, psf_model.By, psf_model.d
+    )
     σx_curve[idx] = psf_model.σx₀ * sqrt(αx)
     σy_curve[idx] = psf_model.σy₀ * sqrt(αy)
 end
@@ -121,7 +129,8 @@ axislegend(ax_widths, position = :lt, labelsize = 14)
 for (idx, z) in enumerate(z_positions)
     ax_img = Axis(
         fig[2, idx],
-        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)), σy=$(round(σy_values[idx], digits = 2))",
+        title = "z = $(Int(z)) nm\nσx=$(round(σx_values[idx], digits = 2)), \
+            σy=$(round(σy_values[idx], digits = 2))",
         aspect = DataAspect(),
         titlesize = 12,
         yreversed = true  # Origin at top-left, y down
@@ -150,7 +159,8 @@ end
 # Add annotation about coordinate convention
 Label(
     fig[3, 1:n_z],
-    "Image Convention: Origin at (1,1) top-left, x→right (columns), y↓down (rows). Data transposed + yreversed for display.",
+    "Image Convention: Origin at (1,1) top-left, x→right (columns), y↓down (rows). Data \
+        transposed + yreversed for display.",
     fontsize = 11, color = :gray50
 )
 
@@ -166,8 +176,10 @@ println("ANALYSIS")
 println("="^70)
 
 println("\nPSF Width Behavior:")
-println("  σx range: $(round(minimum(σx_values), digits = 3)) to $(round(maximum(σx_values), digits = 3)) pixels")
-println("  σy range: $(round(minimum(σy_values), digits = 3)) to $(round(maximum(σy_values), digits = 3)) pixels")
+println("  σx range: $(round(minimum(σx_values), digits = 3)) to \
+    $(round(maximum(σx_values), digits = 3)) pixels")
+println("  σy range: $(round(minimum(σy_values), digits = 3)) to \
+    $(round(maximum(σy_values), digits = 3)) pixels")
 
 # Check if widths cross (they should around z=0)
 crossing_idx = argmin(abs.(σx_curve .- σy_curve))

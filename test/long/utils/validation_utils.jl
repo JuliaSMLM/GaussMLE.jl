@@ -10,7 +10,9 @@ using Statistics
 using Distributions
 
 """
-    extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real)
+    extract_roi_coords(
+        smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real,
+    )
 
 Extract ROI-local coordinates from BasicSMLD using actual ROI corners.
 
@@ -29,7 +31,9 @@ NamedTuple with ROI-local parameters (in pixels):
 - photons, bg: Photometry (unchanged)
 - σ_x, σ_y: Uncertainties (in pixels)
 """
-function extract_roi_coords(smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real)
+function extract_roi_coords(
+        smld::SMLMData.BasicSMLD, corners::Matrix{Int32}, roi_size::Int, pixel_size::Real,
+    )
     n = length(smld.emitters)
     @assert size(corners, 2) == n "Number of corners must match number of emitters"
 
@@ -101,11 +105,15 @@ function generate_test_data(
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
-            true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
+            true_params[:background] = push!(
+                get(true_params, :background, Float32[]), bg_true,
+            )
 
             # Generate data
             for j in 1:box_size, i in 1:box_size
-                mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma, sigma)
+                mu = generate_pixel_value(
+                    i, j, x_true, y_true, n_true, bg_true, sigma, sigma,
+                )
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
 
@@ -116,11 +124,15 @@ function generate_test_data(
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
-            true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
+            true_params[:background] = push!(
+                get(true_params, :background, Float32[]), bg_true,
+            )
             true_params[:sigma] = push!(get(true_params, :sigma, Float32[]), sigma_true)
 
             for j in 1:box_size, i in 1:box_size
-                mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_true, sigma_true)
+                mu = generate_pixel_value(
+                    i, j, x_true, y_true, n_true, bg_true, sigma_true, sigma_true,
+                )
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
 
@@ -132,18 +144,29 @@ function generate_test_data(
             true_params[:x] = push!(get(true_params, :x, Float32[]), x_true)
             true_params[:y] = push!(get(true_params, :y, Float32[]), y_true)
             true_params[:photons] = push!(get(true_params, :photons, Float32[]), n_true)
-            true_params[:background] = push!(get(true_params, :background, Float32[]), bg_true)
-            true_params[:sigma_x] = push!(get(true_params, :sigma_x, Float32[]), sigma_x_true)
-            true_params[:sigma_y] = push!(get(true_params, :sigma_y, Float32[]), sigma_y_true)
+            true_params[:background] = push!(
+                get(true_params, :background, Float32[]), bg_true,
+            )
+            true_params[:sigma_x] = push!(
+                get(true_params, :sigma_x, Float32[]), sigma_x_true,
+            )
+            true_params[:sigma_y] = push!(
+                get(true_params, :sigma_y, Float32[]), sigma_y_true,
+            )
 
             for j in 1:box_size, i in 1:box_size
-                mu = generate_pixel_value(i, j, x_true, y_true, n_true, bg_true, sigma_x_true, sigma_y_true)
+                mu = generate_pixel_value(
+                    i, j, x_true, y_true, n_true, bg_true, sigma_x_true, sigma_y_true,
+                )
                 data[i, j, k] = Float32(rand(Poisson(mu)))
             end
 
         elseif model_type == :xynbz
             # Astigmatic 3D model - DEPRECATED: Use generate_roi_batch_validation instead
-            error("Astigmatic validation should use generate_roi_batch_validation, not generate_test_data")
+            error(
+                "Astigmatic validation should use generate_roi_batch_validation, not \
+                generate_test_data",
+            )
         end
     end
 
@@ -172,7 +195,8 @@ end
     validate_fitting_results(smld, true_params, param_name; bias_tol, std_tol, roi_size)
 
 Validate that fitted parameters match ground truth within tolerances.
-Uses extract_roi_coords() to properly convert from camera coordinates to ROI-local coordinates.
+Uses extract_roi_coords() to properly convert from camera coordinates to ROI-local
+coordinates.
 """
 function validate_fitting_results(
         smld::SMLMData.BasicSMLD,
@@ -311,7 +335,9 @@ function run_model_validation(
         kwargs...
     )
     # Generate test data (pass psf_model for astigmatic model)
-    data, true_params = generate_test_data(model_type, n_blobs, box_size; psf_model = psf_model, kwargs...)
+    data, true_params = generate_test_data(
+        model_type, n_blobs, box_size; psf_model = psf_model, kwargs...,
+    )
 
     # Create fitter
     fitter = GaussMLE.GaussMLEConfig(
@@ -342,8 +368,10 @@ function run_model_validation(
 
     # Define tolerances for each parameter
     tolerances = Dict(
-        :x => (bias_tol = 0.15f0, std_tol = 0.1f0),  # 10% tolerance for std/CRLB ratio, 0.15 pix bias tolerance
-        :y => (bias_tol = 0.15f0, std_tol = 0.1f0),  # Increased from 0.05 to account for coordinate conversion
+        # 10% tolerance for std/CRLB ratio, 0.15 pix bias tolerance
+        :x => (bias_tol = 0.15f0, std_tol = 0.1f0),
+        # Increased from 0.05 to account for coordinate conversion
+        :y => (bias_tol = 0.15f0, std_tol = 0.1f0),
         :z => (bias_tol = 30.0f0, std_tol = 0.1f0),  # 10% tolerance for std/CRLB ratio
         :photons => (bias_tol = 100.0f0, std_tol = 0.1f0),  # 10% tolerance
         :background => (bias_tol = 2.0f0, std_tol = 0.1f0),  # 10% tolerance
