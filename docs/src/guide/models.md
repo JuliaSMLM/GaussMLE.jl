@@ -145,6 +145,7 @@ The PSF width varies with z according to:
 | Dimensions | 2D | 2D | 2D | 3D |
 | Speed | Fastest | Medium | Slowest | Medium |
 | Stability | Most stable | Less stable | Least stable | Stable |
+| Non-square pixels | Yes | No (throws) | Yes | Yes |
 
 ## Unit Convention
 
@@ -154,6 +155,9 @@ The PSF width varies with z according to:
 - `AstigmaticXYZNB`: sigma_x0, sigma_y0, gamma, d all in microns
 
 The package internally converts to pixel units based on the camera pixel size during fitting.
+On a camera with non-square pixels the conversion is per axis. `GaussianXYNBS` fits one
+width in pixels, which is undefined there, so `fit` throws an `ArgumentError` naming
+`GaussianXYNBSXSY` as the model to use.
 
 ## Choosing the Right Model
 

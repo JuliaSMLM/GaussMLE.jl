@@ -520,9 +520,10 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.IdealCamera}, fitter::GaussMLE
     n_params = length(fitter.psf_model)
     box_size = size(roi_batch.data, 1)
 
-    # Get pixel size and convert PSF from microns to pixels
-    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
-    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+    # Get pixel size per axis and convert PSF from microns to pixels
+    pixel_size_x = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
+    pixel_size_y = roi_batch.camera.pixel_edges_y[2] - roi_batch.camera.pixel_edges_y[1]
+    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size_x, pixel_size_y)
 
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
@@ -579,9 +580,10 @@ function fit(roi_batch::ROIBatch{T,N,A,<:SMLMData.SCMOSCamera}, fitter::GaussMLE
     n_params = length(fitter.psf_model)
     box_size = size(data_electrons, 1)
 
-    # Get pixel size and convert PSF from microns to pixels
-    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
-    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+    # Get pixel size per axis and convert PSF from microns to pixels
+    pixel_size_x = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
+    pixel_size_y = roi_batch.camera.pixel_edges_y[2] - roi_batch.camera.pixel_edges_y[1]
+    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size_x, pixel_size_y)
 
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
