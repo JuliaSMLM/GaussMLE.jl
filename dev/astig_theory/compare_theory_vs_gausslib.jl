@@ -45,7 +45,7 @@ y_pos = 8.2f0
 N_photons = 2000.0f0
 bg_level = 1.0f0
 
-z_range = Float32.(range(-600, 600, length=50))
+z_range = Float32.(range(-600, 600, length = 50))
 
 println("PSF Parameters:")
 println("  σx₀ = $sigma_x0, σy₀ = $sigma_y0")
@@ -60,12 +60,12 @@ println()
 
 # Error function implementation
 function erf(x::Real)
-    a1 =  0.254829592
+    a1 = 0.254829592
     a2 = -0.284496736
-    a3 =  1.421413741
+    a3 = 1.421413741
     a4 = -1.453152027
-    a5 =  1.061405429
-    p  =  0.3275911
+    a5 = 1.061405429
+    p = 0.3275911
 
     sign_x = sign(x)
     x = abs(x)
@@ -110,12 +110,16 @@ function dalpha_dz(z::Float32, A::Float32, B::Float32, d::Float32)
     return (2.0f0 / d^2) * z + (3.0f0 * A / d^3) * z^2 + (4.0f0 * B / d^4) * z^3
 end
 
-function sigma(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function sigma(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32
+    )
     alpha_val = alpha(z - gamma, gamma, A, B, d)
     return sigma0 * sqrt(alpha_val)
 end
 
-function dsigma_dz(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32)
+function dsigma_dz(
+        z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::Float32, d::Float32
+    )
     z_shifted = z - gamma
     alpha_val = alpha(z_shifted, gamma, A, B, d)
     dalpha_val = dalpha_dz(z_shifted, A, B, d)
@@ -123,7 +127,9 @@ function dsigma_dz(z::Float32, sigma0::Float32, gamma::Float32, A::Float32, B::F
 end
 
 # Fisher Information calculation
-function compute_fisher_theoretical(x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32)
+function compute_fisher_theoretical(
+        x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32
+    )
     FI = zeros(Float32, 5, 5)
 
     sigma_x = sigma(z, sigma_x0, gamma, Ax, Bx, d)
@@ -145,7 +151,9 @@ function compute_fisher_theoretical(x::Float32, y::Float32, z::Float32, N::Float
 
             dmu_dx = N * dphi_x_dx * phi_y
             dmu_dy = N * phi_x * dphi_y_dy
-            dmu_dz = N * (dphi_x_dsigma * dsigma_x_dz * phi_y + phi_x * dphi_y_dsigma * dsigma_y_dz)
+            dmu_dz = N * (
+                dphi_x_dsigma * dsigma_x_dz * phi_y + phi_x * dphi_y_dsigma * dsigma_y_dz
+            )
             dmu_dN = phi_x * phi_y
             dmu_dbg = 1.0f0
 
@@ -174,7 +182,9 @@ psf_model = GaussMLE.AstigmaticXYZNB{Float32}(
 )
 
 # Compute Fisher Information using production kernel
-function compute_fisher_gausslib(x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32)
+function compute_fisher_gausslib(
+        x::Float32, y::Float32, z::Float32, N::Float32, bg::Float32
+    )
     # Call the actual production kernel to get Fisher Information
     FI = zeros(Float32, 5, 5)
 
@@ -202,10 +212,18 @@ function compute_fisher_gausslib(x::Float32, y::Float32, z::Float32, N::Float32,
 
         if model > 0.0f0
             # Derivatives (GaussLib functions return (dudt, d2udt2) tuples)
-            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(j, x, σx_z, N_photons, phi_y)
-            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(i, y, σy_z, N_photons, phi_x)
-            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(j, x, σx_z, N_photons, phi_y)
-            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(i, y, σy_z, N_photons, phi_x)
+            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+                j, x, σx_z, N_photons, phi_y
+            )
+            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+                i, y, σy_z, N_photons, phi_x
+            )
+            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+                j, x, σx_z, N_photons, phi_y
+            )
+            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+                i, y, σy_z, N_photons, phi_x
+            )
 
             # These derivatives include N already, so adjust
             dmu_dx = dphi_x_dx
@@ -260,7 +278,9 @@ for z in z_range
     diff_percent = 100.0f0 * abs(crlb_z_theory - crlb_z_gausslib) / crlb_z_gausslib
     push!(crlb_diff_percent, diff_percent)
 
-    @printf("%6.0f | %11.2f | %13.2f | %7.3f\n", z, crlb_z_theory, crlb_z_gausslib, diff_percent)
+    @printf(
+        "%6.0f | %11.2f | %13.2f | %7.3f\n", z, crlb_z_theory, crlb_z_gausslib, diff_percent
+    )
 end
 
 println()
@@ -275,7 +295,7 @@ println("="^80)
 
 mean_diff = mean(crlb_diff_percent)
 max_diff = maximum(crlb_diff_percent)
-rms_diff = sqrt(mean((crlb_theory .- crlb_gausslib).^2))
+rms_diff = sqrt(mean((crlb_theory .- crlb_gausslib) .^ 2))
 
 println("\nPercent Difference (|Theory - GaussLib| / GaussLib × 100%):")
 @printf("  Mean: %.4f%%\n", mean_diff)
@@ -301,10 +321,11 @@ println("\n" * "="^80)
 println("Creating comparison visualization...")
 println("="^80)
 
-fig = Figure(size=(1400, 800))
+fig = Figure(size = (1400, 800))
 
 # Panel 1: CRLB_z comparison
-ax1 = Axis(fig[1, 1],
+ax1 = Axis(
+    fig[1, 1],
     xlabel = "Z Position (nm)",
     ylabel = "Axial Precision CRLB_z (nm)",
     title = "CRLB Comparison: Theoretical vs GaussLib",
@@ -313,13 +334,19 @@ ax1 = Axis(fig[1, 1],
     titlesize = 16
 )
 
-lines!(ax1, z_range, crlb_theory, label="Theoretical (direct)", color=:blue, linewidth=3)
-lines!(ax1, z_range, crlb_gausslib, label="GaussLib (production)", color=:red, linewidth=3, linestyle=:dash)
-vlines!(ax1, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax1, position=:lt)
+lines!(
+    ax1, z_range, crlb_theory, label = "Theoretical (direct)", color = :blue, linewidth = 3
+)
+lines!(
+    ax1, z_range, crlb_gausslib, label = "GaussLib (production)", color = :red,
+    linewidth = 3, linestyle = :dash
+)
+vlines!(ax1, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax1, position = :lt)
 
 # Panel 2: Absolute difference
-ax2 = Axis(fig[1, 2],
+ax2 = Axis(
+    fig[1, 2],
     xlabel = "Z Position (nm)",
     ylabel = "Absolute Difference (nm)",
     title = "CRLB_z: |Theoretical - GaussLib|",
@@ -329,14 +356,20 @@ ax2 = Axis(fig[1, 2],
 )
 
 diff_abs = abs.(crlb_theory .- crlb_gausslib)
-lines!(ax2, z_range, diff_abs, color=:purple, linewidth=2.5)
-hlines!(ax2, [0.0], color=:green, linestyle=:dash, linewidth=2, label="Perfect match")
-hlines!(ax2, [0.1], color=:orange, linestyle=:dot, linewidth=1.5, label="±0.1 nm tolerance")
-vlines!(ax2, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax2, position=:lt)
+lines!(ax2, z_range, diff_abs, color = :purple, linewidth = 2.5)
+hlines!(
+    ax2, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match"
+)
+hlines!(
+    ax2, [0.1], color = :orange, linestyle = :dot, linewidth = 1.5,
+    label = "±0.1 nm tolerance"
+)
+vlines!(ax2, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax2, position = :lt)
 
 # Panel 3: Percent difference
-ax3 = Axis(fig[2, :],
+ax3 = Axis(
+    fig[2, :],
     xlabel = "Z Position (nm)",
     ylabel = "Percent Difference (%)",
     title = "Relative Difference: 100% × |Theory - GaussLib| / GaussLib",
@@ -345,12 +378,20 @@ ax3 = Axis(fig[2, :],
     titlesize = 16
 )
 
-lines!(ax3, z_range, crlb_diff_percent, color=:darkred, linewidth=2.5)
-hlines!(ax3, [0.0], color=:green, linestyle=:dash, linewidth=2, label="Perfect match")
-hlines!(ax3, [0.1, -0.1], color=:orange, linestyle=:dot, linewidth=1.5, label="±0.1% tolerance")
-hlines!(ax3, [1.0, -1.0], color=:red, linestyle=:dot, linewidth=1.5, label="±1% tolerance")
-vlines!(ax3, [0.0], color=:gray, linestyle=:dot, linewidth=1.5)
-axislegend(ax3, position=:rt)
+lines!(ax3, z_range, crlb_diff_percent, color = :darkred, linewidth = 2.5)
+hlines!(
+    ax3, [0.0], color = :green, linestyle = :dash, linewidth = 2, label = "Perfect match"
+)
+hlines!(
+    ax3, [0.1, -0.1], color = :orange, linestyle = :dot, linewidth = 1.5,
+    label = "±0.1% tolerance"
+)
+hlines!(
+    ax3, [1.0, -1.0], color = :red, linestyle = :dot, linewidth = 1.5,
+    label = "±1% tolerance"
+)
+vlines!(ax3, [0.0], color = :gray, linestyle = :dot, linewidth = 1.5)
+axislegend(ax3, position = :rt)
 
 # Save
 output_file = joinpath(output_dir, "theory_vs_gausslib_comparison.png")

@@ -61,7 +61,7 @@ function find_best_gpu()
 end
 
 # Allow explicit device selection with fallback (legacy API)
-function select_device(device::Union{ComputeDevice, Nothing}=nothing)
+function select_device(device::Union{ComputeDevice, Nothing} = nothing)
     if isnothing(device)
         return auto_device()
     elseif device isa GPU && !CUDA.functional()
@@ -82,7 +82,7 @@ that deadlock other processes polling for free GPU memory.
 function _release_gpu_context(device_idx::Integer)
     # GC first to finalize Julia-side CUDA objects before releasing context
     GC.gc(false)
-    try
+    return try
         dev = CUDA.CuDevice(device_idx)
         CUDA.cuDevicePrimaryCtxRelease(dev)
     catch
@@ -103,12 +103,15 @@ false if timeout reached.
 - `required_bytes`: Minimum bytes needed (will wait for 1.5x this amount as safety margin)
 - `timeout`: Maximum seconds to wait (default 30.0)
 - `poll`: Polling interval in seconds (default 0.5)
-- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress feedback
+- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
+  feedback
 """
-function wait_for_gpu_memory(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_memory(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     !CUDA.functional() && return false
 
@@ -138,7 +141,8 @@ end
 """
     wait_for_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing)
 
-Wait for a GPU with sufficient free memory using NVML queries only (no CUDA context creation).
+Wait for a GPU with sufficient free memory using NVML queries only (no CUDA context
+creation).
 Scans ALL GPUs each iteration - first available wins.
 
 Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeout reached.
@@ -152,10 +156,12 @@ either free memory is insufficient or compute utilization exceeds 90%.
 - `poll`: Polling interval in seconds (default 0.5)
 - `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
 """
-function wait_for_gpu_nvml(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_nvml(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     n_devices = length(CUDA.devices())
     my_pid = getpid()
@@ -177,7 +183,7 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 CUDA.NVML.compute_processes(nvml_dev)
             catch
                 # NVML process query can fail on some drivers; skip contention check
-                Dict{UInt32,UInt64}()
+                Dict{UInt32, UInt64}()
             end
             other_procs = count(p -> p.first != my_pid, procs)
 
@@ -186,7 +192,7 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 util = try
                     CUDA.NVML.utilization_rates(nvml_dev)
                 catch
-                    (; compute=0, memory=0)
+                    (; compute = 0, memory = 0)
                 end
                 # Contended: other procs AND (low memory OR high compute)
                 if mem.free < required_with_margin || util.compute > 90
@@ -205,13 +211,16 @@ function wait_for_gpu_nvml(required_bytes::Integer;
 
         if on_wait !== nothing
             # Report best available memory across all GPUs
-            best_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n_devices-1))
+            best_free = maximum(
+                CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n_devices - 1)
+            )
             on_wait(time() - start, best_free, required_bytes)
         end
 
         # Jittered backoff to avoid thundering herd
         sleep(poll * (1.0 + 0.2 * rand()))
     end
+    return
 end
 
 """
@@ -240,10 +249,12 @@ a runtime try/catch in `_run_mle_kernel!` provides defense in depth.
 - `:gpu` - Explicit GPU, NVML poll up to gpu_timeout, error if unavailable
 - `:auto` - NVML poll up to auto_timeout, fall back to CPU with warning
 """
-function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Float64=300.0,
-        gpu_timeout::Float64=Inf,
-        on_wait=nothing)
+function select_backend(
+        backend::Symbol, required_bytes::Integer;
+        auto_timeout::Float64 = 300.0,
+        gpu_timeout::Float64 = Inf,
+        on_wait = nothing
+    )
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
@@ -261,8 +272,10 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # reservations that deadlock other processes polling for free memory.
         deadline = time() + gpu_timeout
         while true
-            device_idx, available = wait_for_gpu_nvml(required_bytes;
-                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            device_idx, available = wait_for_gpu_nvml(
+                required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
             if !available
                 error("No GPU with sufficient memory after $(gpu_timeout)s")
             end
@@ -275,7 +288,8 @@ function select_backend(backend::Symbol, required_bytes::Integer;
                 if time() >= deadline
                     rethrow()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
 
@@ -288,8 +302,10 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # with remaining timeout - GPU contention spikes are typically short.
         deadline = time() + auto_timeout
         while true
-            device_idx, available = wait_for_gpu_nvml(required_bytes;
-                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            device_idx, available = wait_for_gpu_nvml(
+                required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
             if !available
                 @warn "No GPU available after $(auto_timeout)s, using CPU"
                 return CPU()
@@ -300,10 +316,12 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             catch e
                 _release_gpu_context(device_idx)
                 if time() >= deadline
-                    @warn "GPU context creation failed and timeout reached, using CPU" exception=e
+                    @warn "GPU context creation failed and timeout reached, using \
+                        CPU" exception = e
                     return CPU()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
     end
@@ -311,4 +329,5 @@ end
 
 # Default on_wait callback for user feedback
 const DEFAULT_ON_WAIT = (elapsed, available, required) ->
-    @info "Waiting for GPU memory..." elapsed=round(elapsed, digits=1) available=Base.format_bytes(available) required=Base.format_bytes(required)
+@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available =
+    Base.format_bytes(available) required = Base.format_bytes(required)
