@@ -153,6 +153,21 @@ struct AstigmaticXYZNB{T} <: PSFModel{5,T}
     end
 end
 
+"""
+    GaussianXYNBAniso{T} <: PSFModel{4,T}
+
+Internal pixel-unit form of [`GaussianXYNB`](@ref) on a camera with non-square pixels.
+
+A fixed isotropic width σ in microns is `σ / pixel_size_x` pixels along x and
+`σ / pixel_size_y` pixels along y. `to_pixel_units` returns this type when the pixels
+are not square; users never construct it. Fits the same parameters as `GaussianXYNB`
+(x, y, N, bg).
+"""
+struct GaussianXYNBAniso{T} <: PSFModel{4,T}
+    σx::T  # Pixels
+    σy::T  # Pixels
+end
+
 # Parameter type aliases
 const Params{N} = SVector{N, Float32}
 
@@ -167,6 +182,14 @@ Base.length(::PSFModel{N,T}) where {N,T} = N
     x, y, N, bg = θ
     psf_x = integral_gaussian_1d(j, x, psf.σ)
     psf_y = integral_gaussian_1d(i, y, psf.σ)
+    return bg + N * psf_x * psf_y
+end
+
+# Fixed sigma model on non-square pixels (per-axis width in pixels)
+@inline function evaluate_psf(psf::GaussianXYNBAniso, i, j, θ::Params{4})
+    x, y, N, bg = θ
+    psf_x = integral_gaussian_1d(j, x, psf.σx)
+    psf_y = integral_gaussian_1d(i, y, psf.σy)
     return bg + N * psf_x * psf_y
 end
 
@@ -288,15 +311,27 @@ end
 
 """
     to_pixel_units(psf::PSFModel, pixel_size::Real)
+    to_pixel_units(psf::PSFModel, pixel_size_x::Real, pixel_size_y::Real)
 
 Convert PSF model from physical units (microns) to pixel units for kernel computation.
 
 User-facing PSF models store parameters in microns (camera-independent).
 Kernel requires pixels for computation. This function performs the conversion.
 
+`fit` and `generate_roi_batch` call the three-argument form with the camera's pixel size
+along x and y. On square pixels it gives the same model as the two-argument form. On
+non-square pixels:
+- `GaussianXYNB` becomes the internal `GaussianXYNBAniso` (σ/pixel_size_x, σ/pixel_size_y)
+- `AstigmaticXYZNB` converts σx₀ with pixel_size_x and σy₀ with pixel_size_y
+- `GaussianXYNBSXSY` needs no conversion (σx and σy are fitted per axis)
+- `GaussianXYNBS` throws an `ArgumentError`: one width in pixels is undefined when the
+  pixels are not square, so fit `GaussianXYNBSXSY` instead
+- any other model throws an `ArgumentError` unless it defines the three-argument method
+
 # Arguments
 - `psf`: PSF model with parameters in microns
-- `pixel_size`: Camera pixel size in microns
+- `pixel_size`: Camera pixel size in microns (square pixels)
+- `pixel_size_x`, `pixel_size_y`: Camera pixel size along x and y in microns
 
 # Returns
 PSF model with parameters converted to pixels
@@ -316,11 +351,51 @@ end
 to_pixel_units(psf::GaussianXYNBS{T}, pixel_size::Real) where T = psf
 to_pixel_units(psf::GaussianXYNBSXSY{T}, pixel_size::Real) where T = psf
 
-function to_pixel_units(psf::AstigmaticXYZNB{T}, pixel_size::Real) where T
-    px = T(pixel_size)
+function to_pixel_units(psf::AstigmaticXYZNB, pixel_size::Real)
+    return to_pixel_units(psf, pixel_size, pixel_size)
+end
+
+function _square_pixels(pixel_size_x, pixel_size_y)
+    return isapprox(pixel_size_x, pixel_size_y; rtol = 1.0e-5)
+end
+
+# Generic fallback: a model without a per-axis method works only on square pixels
+function to_pixel_units(psf::PSFModel, pixel_size_x::Real, pixel_size_y::Real)
+    _square_pixels(pixel_size_x, pixel_size_y) && return to_pixel_units(psf, pixel_size_x)
+    throw(
+        ArgumentError(
+            "$(nameof(typeof(psf))) needs square pixels; the camera's pixels are " *
+                "$(pixel_size_x) x $(pixel_size_y) µm"
+        )
+    )
+end
+
+function to_pixel_units(
+        psf::GaussianXYNB{T}, pixel_size_x::Real, pixel_size_y::Real
+    ) where {T}
+    _square_pixels(pixel_size_x, pixel_size_y) && return to_pixel_units(psf, pixel_size_x)
+    return GaussianXYNBAniso{T}(psf.σ / T(pixel_size_x), psf.σ / T(pixel_size_y))
+end
+
+to_pixel_units(psf::GaussianXYNBSXSY, pixel_size_x::Real, pixel_size_y::Real) = psf
+
+function to_pixel_units(psf::GaussianXYNBS, pixel_size_x::Real, pixel_size_y::Real)
+    _square_pixels(pixel_size_x, pixel_size_y) && return psf
+    throw(
+        ArgumentError(
+            "GaussianXYNBS fits one width in pixels, which is undefined on non-square " *
+                "pixels ($(pixel_size_x) x $(pixel_size_y) µm); use GaussianXYNBSXSY, " *
+                "which fits σx and σy separately"
+        )
+    )
+end
+
+function to_pixel_units(
+        psf::AstigmaticXYZNB{T}, pixel_size_x::Real, pixel_size_y::Real
+    ) where {T}
     AstigmaticXYZNB{T}(
-        psf.σx₀ / px,  # Lateral width: microns → pixels
-        psf.σy₀ / px,  # Lateral width: microns → pixels
+        psf.σx₀ / T(pixel_size_x),  # Lateral width: microns → pixels along x
+        psf.σy₀ / T(pixel_size_y),  # Lateral width: microns → pixels along y
         psf.Ax,        # Dimensionless
         psf.Ay,        # Dimensionless
         psf.Bx,        # Dimensionless
