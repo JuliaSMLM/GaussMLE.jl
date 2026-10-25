@@ -4,12 +4,12 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 
 # GPU-compatible Cholesky decomposition for symmetric positive definite matrices
 # This is more robust than LU for Fisher Information matrices
-@inline function static_cholesky_decomposition!(A::MMatrix{N,N,T}) where {N,T}
+@inline function static_cholesky_decomposition!(A::MMatrix{N, N, T}) where {N, T}
     # Cholesky: A = L * L^T where L is lower triangular
-    @inbounds for j = 1:N
-        for i = j:N
+    @inbounds for j in 1:N
+        for i in j:N
             sum_val = A[i, j]
-            for k = 1:j-1
+            for k in 1:(j - 1)
                 sum_val -= A[i, k] * A[j, k]
             end
 
@@ -29,14 +29,16 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 end
 
 # Invert a Cholesky-decomposed matrix (A = L * L^T)
-@inline function static_cholesky_inverse!(A_inv::MMatrix{N,N,T}, L::MMatrix{N,N,T}) where {N,T}
+@inline function static_cholesky_inverse!(
+        A_inv::MMatrix{N, N, T}, L::MMatrix{N, N, T}
+    ) where {N, T}
     # First invert L (lower triangular)
-    L_inv = MMatrix{N,N,T}(undef)
-    @inbounds for j = 1:N
+    L_inv = MMatrix{N, N, T}(undef)
+    @inbounds for j in 1:N
         L_inv[j, j] = one(T) / L[j, j]
-        for i = j+1:N
+        for i in (j + 1):N
             sum_val = zero(T)
-            for k = j:i-1
+            for k in j:(i - 1)
                 sum_val += L[i, k] * L_inv[k, j]
             end
             L_inv[i, j] = -sum_val / L[i, i]
@@ -44,10 +46,10 @@ end
     end
 
     # A_inv = L_inv^T * L_inv
-    @inbounds for i = 1:N
-        for j = i:N  # Symmetric, only compute upper triangle
+    @inbounds for i in 1:N
+        for j in i:N  # Symmetric, only compute upper triangle
             sum_val = zero(T)
-            for k = j:N  # Sum from max(i,j) to N
+            for k in j:N  # Sum from max(i,j) to N
                 sum_val += L_inv[k, i] * L_inv[k, j]
             end
             A_inv[i, j] = sum_val
@@ -61,19 +63,19 @@ end
 
 # GPU-compatible LU decomposition for small static matrices (no pivoting)
 # This matches SMITE's approach with a relative tolerance
-@inline function static_lu_decomposition!(A::MMatrix{N,N,T}) where {N,T}
+@inline function static_lu_decomposition!(A::MMatrix{N, N, T}) where {N, T}
     # Use relative tolerance based on matrix scale (like SMITE)
-    tol = T(1e-10) * maximum(abs, A)
+    tol = T(1.0e-10) * maximum(abs, A)
 
-    @inbounds for k = 1:N
+    @inbounds for k in 1:N
         # Check for near-zero pivot
         if abs(A[k, k]) < tol
             return false
         end
 
-        for i = k+1:N
+        for i in (k + 1):N
             A[i, k] /= A[k, k]
-            for j = k+1:N
+            for j in (k + 1):N
                 A[i, j] -= A[i, k] * A[k, j]
             end
         end
@@ -82,18 +84,20 @@ end
 end
 
 # GPU-compatible back substitution for solving Ax = b with LU-decomposed A
-@inline function static_back_substitution!(x::MVector{N,T}, A::MMatrix{N,N,T}, b::MVector{N,T}) where {N,T}
+@inline function static_back_substitution!(
+        x::MVector{N, T}, A::MMatrix{N, N, T}, b::MVector{N, T}
+    ) where {N, T}
     # Forward substitution for Ly = b
-    @inbounds for i = 1:N
+    @inbounds for i in 1:N
         x[i] = b[i]
-        for j = 1:i-1
+        for j in 1:(i - 1)
             x[i] -= A[i, j] * x[j]
         end
     end
-    
+
     # Backward substitution for Ux = y (overwrites x with solution)
-    @inbounds for i = N:-1:1
-        for j = i+1:N
+    return @inbounds for i in N:-1:1
+        for j in (i + 1):N
             x[i] -= A[i, j] * x[j]
         end
         x[i] /= A[i, i]
@@ -101,67 +105,69 @@ end
 end
 
 # GPU-compatible matrix inverse using LU decomposition
-@inline function static_matrix_inverse!(A_inv::MMatrix{N,N,T}, A::MMatrix{N,N,T}) where {N,T}
+@inline function static_matrix_inverse!(
+        A_inv::MMatrix{N, N, T}, A::MMatrix{N, N, T}
+    ) where {N, T}
     # Make a copy for LU decomposition (don't modify original)
-    A_lu = MMatrix{N,N,T}(A)
-    
+    A_lu = MMatrix{N, N, T}(A)
+
     # Perform LU decomposition
     if !static_lu_decomposition!(A_lu)
         # Singular matrix - set to infinity
-        @inbounds for i = 1:N, j = 1:N
-            A_inv[i,j] = i == j ? T(Inf) : zero(T)
+        @inbounds for i in 1:N, j in 1:N
+            A_inv[i, j] = i == j ? T(Inf) : zero(T)
         end
         return false
     end
-    
+
     # Initialize A_inv as identity and solve for each column
-    e = MVector{N,T}(undef)
-    x = MVector{N,T}(undef)
-    
-    @inbounds for col = 1:N
+    e = MVector{N, T}(undef)
+    x = MVector{N, T}(undef)
+
+    @inbounds for col in 1:N
         # Set up unit vector
-        for i = 1:N
+        for i in 1:N
             e[i] = (i == col) ? one(T) : zero(T)
         end
-        
+
         # Solve for this column
         static_back_substitution!(x, A_lu, e)
-        
+
         # Store result
-        for i = 1:N
+        for i in 1:N
             A_inv[i, col] = x[i]
         end
     end
-    
+
     return true
 end
 
 # GPU-compatible determinant using LU decomposition
-@inline function static_det(A::MMatrix{N,N,T}) where {N,T}
-    A_lu = MMatrix{N,N,T}(A)
-    
+@inline function static_det(A::MMatrix{N, N, T}) where {N, T}
+    A_lu = MMatrix{N, N, T}(A)
+
     # Perform LU decomposition
     if !static_lu_decomposition!(A_lu)
         return zero(T)
     end
-    
+
     # Determinant is product of diagonal elements
     det_val = one(T)
-    @inbounds for i = 1:N
+    @inbounds for i in 1:N
         det_val *= A_lu[i, i]
     end
-    
+
     return det_val
 end
 
 # Simple GPU-compatible parameter initialization - generic version
-@inline function simple_initialize_common(roi, box_size::Int, ::Type{T}) where T
+@inline function simple_initialize_common(roi, box_size::Int, ::Type{T}) where {T}
     # Calculate background (use edges for robustness)
     edge_sum = zero(T)
     edge_count = 0
     @inbounds for j in 1:box_size, i in 1:box_size
         if i == 1 || i == box_size || j == 1 || j == box_size
-            edge_sum += roi[i,j]
+            edge_sum += roi[i, j]
             edge_count += 1
         end
     end
@@ -173,7 +179,7 @@ end
     y_weighted = zero(T)
 
     @inbounds for j in 1:box_size, i in 1:box_size
-        signal = max(zero(T), roi[i,j] - bg)
+        signal = max(zero(T), roi[i, j] - bg)
         total_signal += signal
         x_weighted += signal * T(j)
         y_weighted += signal * T(i)
@@ -192,22 +198,22 @@ end
 end
 
 # Model-specific initialization
-@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNB{T}) where T
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNB{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{4,T}(x, y, photons, bg)
+    return MVector{4, T}(x, y, photons, bg)
 end
 
-@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBS{T}) where T
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBS{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{5,T}(x, y, photons, bg, T(1.3))
+    return MVector{5, T}(x, y, photons, bg, T(1.3))
 end
 
-@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBSXSY{T}) where T
+@inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBSXSY{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{6,T}(x, y, photons, bg, T(1.3), T(1.3))
+    return MVector{6, T}(x, y, photons, bg, T(1.3), T(1.3))
 end
 
-@inline function simple_initialize(roi, box_size::Int, psf::AstigmaticXYZNB{T}) where T
+@inline function simple_initialize(roi, box_size::Int, psf::AstigmaticXYZNB{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
 
     # Estimate z from PSF width asymmetry
@@ -217,7 +223,7 @@ end
     Myy = zero(T)
 
     @inbounds for j in 1:box_size, i in 1:box_size
-        signal = max(zero(T), roi[i,j] - bg)
+        signal = max(zero(T), roi[i, j] - bg)
         total_signal += signal
         dx = T(j) - x
         dy = T(i) - y
@@ -251,30 +257,34 @@ end
         z_init = T(0)
     end
 
-    return MVector{5,T}(x, y, z_init, photons, bg)
+    return MVector{5, T}(x, y, z_init, photons, bg)
 end
 
 # Zero out a static array (more efficient than fill!)
-@inline function zero_array!(A::MVector{N,T}) where {N,T}
-    @inbounds for i = 1:N
+@inline function zero_array!(A::MVector{N, T}) where {N, T}
+    return @inbounds for i in 1:N
         A[i] = zero(T)
     end
 end
 
-@inline function zero_array!(A::MMatrix{N,M,T}) where {N,M,T}
-    @inbounds for j = 1:M, i = 1:N
-        A[i,j] = zero(T)
+@inline function zero_array!(A::MMatrix{N, M, T}) where {N, M, T}
+    return @inbounds for j in 1:M, i in 1:N
+        A[i, j] = zero(T)
     end
 end
 
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
 # Val{false} → IdealCamera (Poisson only)
-@inline function _dispatch_likelihood(::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where T
+@inline function _dispatch_likelihood(
+        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
     return compute_likelihood_terms(data, model, IdealCameraInternal())
 end
 
 # Val{true} → SCMOSCamera (Poisson + variance)
-@inline function _dispatch_likelihood(::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j) where T
+@inline function _dispatch_likelihood(
+        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
     # Convert ROI-local (i,j) to camera coordinates for variance lookup
     cam_i = corner_y + i - 1
     cam_j = corner_x + j - 1
@@ -283,19 +293,20 @@ end
 
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
-    results::AbstractArray{T,2},
-    uncertainties::AbstractArray{T,2},
-    covariances::AbstractArray{T,2},  # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
-    log_likelihoods::AbstractArray{T,1},
-    @Const(data::AbstractArray{T,3}),
-    @Const(psf_model::PSFModel{N,T}),
-    @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
-    @Const(variance_map),  # 2D variance map (camera-sized for sCMOS)
-    @Const(x_corners::AbstractVector{Int32}),  # X corners for variance indexing
-    @Const(y_corners::AbstractVector{Int32}),  # Y corners for variance indexing
-    @Const(constraints::ParameterConstraints{N}),
-    iterations::Int
-) where {T, N}
+        results::AbstractArray{T, 2},
+        uncertainties::AbstractArray{T, 2},
+        # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
+        covariances::AbstractArray{T, 2},
+        log_likelihoods::AbstractArray{T, 1},
+        @Const(data::AbstractArray{T, 3}),
+        @Const(psf_model::PSFModel{N, T}),
+        @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
+        @Const(variance_map),  # 2D variance map (camera-sized for sCMOS)
+        @Const(x_corners::AbstractVector{Int32}),  # X corners for variance indexing
+        @Const(y_corners::AbstractVector{Int32}),  # Y corners for variance indexing
+        @Const(constraints::ParameterConstraints{N}),
+        iterations::Int
+    ) where {T, N}
     idx = @index(Global)
 
     # Get the data for this fit
@@ -305,60 +316,63 @@ end
     # Get corner for variance map indexing (sCMOS only)
     corner_x = x_corners[idx]
     corner_y = y_corners[idx]
-    
+
     # Stack-allocated working arrays (known size at compile time)
     θ = simple_initialize(roi, box_size, psf_model)
-    ∇L = MVector{N,T}(undef)
-    H_diag = MVector{N,T}(undef)  # Only diagonal elements for Newton-Raphson
-    
+    ∇L = MVector{N, T}(undef)
+    H_diag = MVector{N, T}(undef)  # Only diagonal elements for Newton-Raphson
+
     # Newton-Raphson iterations with scalar updates
     for iter in 1:iterations
         # Zero out gradient and diagonal Hessian
         zero_array!(∇L)
         zero_array!(H_diag)
-        
+
         # Compute derivatives over all pixels
         @inbounds for j in 1:box_size, i in 1:box_size
             # Model and derivatives at this pixel
-            θ_static = SVector{N,T}(θ)
+            θ_static = SVector{N, T}(θ)
             model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ_static, psf_model)
-            
-            # Likelihood terms based on camera model (Val dispatch for compile-time optimization)
+
+            # Likelihood terms based on camera model (Val dispatch for compile-time
+            # optimization)
             data_ij = roi[i, j]
-            cf, df = _dispatch_likelihood(camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j)
-            
+            cf, df = _dispatch_likelihood(
+                camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
+            )
+
             # Accumulate gradient and diagonal Hessian
             for k in 1:N
                 ∇L[k] += dudt[k] * cf
                 H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
             end
         end
-        
+
         # Scalar Newton-Raphson updates with constraints
-        Δθ = MVector{N,T}(undef)
+        Δθ = MVector{N, T}(undef)
         @inbounds for k in 1:N
-            if abs(H_diag[k]) > T(1e-10)
+            if abs(H_diag[k]) > T(1.0e-10)
                 Δθ[k] = ∇L[k] / H_diag[k]
             else
                 Δθ[k] = zero(T)
             end
         end
-        
+
         # Apply constraints
-        θ_new = apply_constraints!(SVector{N,T}(θ), SVector{N,T}(Δθ), constraints)
-        @inbounds for i = 1:N
+        θ_new = apply_constraints!(SVector{N, T}(θ), SVector{N, T}(Δθ), constraints)
+        @inbounds for i in 1:N
             θ[i] = θ_new[i]
         end
     end
-    
+
     # Compute final log-likelihood and full Fisher Information Matrix for CRLB
     log_likelihood = zero(T)
-    H = MMatrix{N,N,T}(undef)  # Full Fisher Information matrix
-    H_inv = MMatrix{N,N,T}(undef)  # For inverse
+    H = MMatrix{N, N, T}(undef)  # Full Fisher Information matrix
+    H_inv = MMatrix{N, N, T}(undef)  # For inverse
     zero_array!(H)
-    
+
     @inbounds for j in 1:box_size, i in 1:box_size
-        θ_static = SVector{N,T}(θ)
+        θ_static = SVector{N, T}(θ)
         model, dudt, _ = compute_pixel_derivatives(i, j, θ_static, psf_model)
         data_ij = roi[i, j]
 
@@ -389,40 +403,40 @@ end
 
             for k in 1:N, l in k:N
                 F_kl = dudt[k] * dudt[l] / variance
-                H[k,l] += F_kl
+                H[k, l] += F_kl
                 if k != l
-                    H[l,k] += F_kl  # Symmetric
+                    H[l, k] += F_kl  # Symmetric
                 end
             end
         end
     end
-    
+
     # Invert Fisher matrix for uncertainties (CRLB)
     # Fisher matrices should be symmetric positive definite
     # Add minimal regularization to diagonal for numerical stability
     # Use very small value to not bias uncertainty estimates
-    reg = T(1e-10) * maximum(abs, H)
+    reg = T(1.0e-10) * maximum(abs, H)
     @inbounds for k in 1:N
-        H[k,k] += reg
+        H[k, k] += reg
     end
 
     # Make a copy for Cholesky decomposition
-    H_chol = MMatrix{N,N,T}(H)
+    H_chol = MMatrix{N, N, T}(H)
 
     # Try Cholesky decomposition (for symmetric positive definite matrices)
     if static_cholesky_decomposition!(H_chol) && static_cholesky_inverse!(H_inv, H_chol)
         @inbounds for k in 1:N
             results[k, idx] = θ[k]
-            uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
+            uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
         end
         # Extract spatial covariances from Fisher matrix inverse
         # covariances[1,idx] = σ_xy (all models)
         # covariances[2,idx] = σ_xz (3D only, zero otherwise)
         # covariances[3,idx] = σ_yz (3D only, zero otherwise)
-        @inbounds covariances[1, idx] = H_inv[1,2]
+        @inbounds covariances[1, idx] = H_inv[1, 2]
         if psf_model isa AstigmaticXYZNB
-            @inbounds covariances[2, idx] = H_inv[1,3]
-            @inbounds covariances[3, idx] = H_inv[2,3]
+            @inbounds covariances[2, idx] = H_inv[1, 3]
+            @inbounds covariances[3, idx] = H_inv[2, 3]
         else
             @inbounds covariances[2, idx] = zero(T)
             @inbounds covariances[3, idx] = zero(T)
@@ -432,12 +446,12 @@ end
         if static_matrix_inverse!(H_inv, H)
             @inbounds for k in 1:N
                 results[k, idx] = θ[k]
-                uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k,k]))
+                uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
             end
-            @inbounds covariances[1, idx] = H_inv[1,2]
+            @inbounds covariances[1, idx] = H_inv[1, 2]
             if psf_model isa AstigmaticXYZNB
-                @inbounds covariances[2, idx] = H_inv[1,3]
-                @inbounds covariances[3, idx] = H_inv[2,3]
+                @inbounds covariances[2, idx] = H_inv[1, 3]
+                @inbounds covariances[3, idx] = H_inv[2, 3]
             else
                 @inbounds covariances[2, idx] = zero(T)
                 @inbounds covariances[3, idx] = zero(T)

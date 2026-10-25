@@ -13,26 +13,26 @@ Analytical derivatives for PSF models using GaussLib functions
     # Get derivatives using GaussLib functions
     dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, psf.σ, N, psf_y)
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, psf.σ, N, psf_x)
-    
+
     # Model value
     model = bg + N * psf_x * psf_y
-    
+
     # First derivatives
     dudt = @SVector [
         dudt_x,               # ∂/∂x
         dudt_y,               # ∂/∂y
         psf_x * psf_y,        # ∂/∂N
-        one(Float32)          # ∂/∂bg
+        one(Float32),          # ∂/∂bg
     ]
-    
+
     # Second derivatives - diagonal only (for scalar Newton-Raphson)
     d2udt2_diag = @SVector [
         d2udt2_x,
         d2udt2_y,
         zero(Float32),  # ∂²/∂N²
-        zero(Float32)   # ∂²/∂bg²
+        zero(Float32),   # ∂²/∂bg²
     ]
-    
+
     return model, dudt, d2udt2_diag
 end
 
@@ -48,27 +48,27 @@ end
     dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, σ, N, psf_y)
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, σ, N, psf_x)
     dudt_s, d2udt2_s = derivative_integral_gaussian_2d_sigma(i, j, x, y, σ, N, psf_x, psf_y)
-    
+
     # Model value
     model = bg + N * psf_x * psf_y
-    
+
     dudt = @SVector [
         dudt_x,
         dudt_y,
         psf_x * psf_y,
         one(Float32),
-        dudt_s
+        dudt_s,
     ]
-    
+
     # Second derivatives - diagonal only
     d2udt2_diag = @SVector [
         d2udt2_x,
         d2udt2_y,
         zero(Float32),  # ∂²/∂N²
         zero(Float32),  # ∂²/∂bg²
-        d2udt2_s
+        d2udt2_s,
     ]
-    
+
     return model, dudt, d2udt2_diag
 end
 
@@ -85,19 +85,19 @@ end
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
     dudt_sx, d2udt2_sx = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
     dudt_sy, d2udt2_sy = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
-    
+
     # Model value
     model = bg + N * psf_x * psf_y
-    
+
     dudt = @SVector [
         dudt_x,
         dudt_y,
         psf_x * psf_y,
         one(Float32),
         dudt_sx,
-        dudt_sy
+        dudt_sy,
     ]
-    
+
     # Second derivatives - diagonal only
     d2udt2_diag = @SVector [
         d2udt2_x,
@@ -105,9 +105,9 @@ end
         zero(Float32),  # ∂²/∂N²
         zero(Float32),  # ∂²/∂bg²
         d2udt2_sx,
-        d2udt2_sy
+        d2udt2_sy,
     ]
-    
+
     return model, dudt, d2udt2_diag
 end
 
@@ -139,28 +139,31 @@ end
     dudt_x, d2udt2_x = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
     dudt_y, d2udt2_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
 
-    # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy * dσy/dz
+    # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy *
+    # dσy/dz
     dudt_sx, d2udt2_sx = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
     dudt_sy, d2udt2_sy = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
 
     # dσ/dα = σ₀/(2√α), dα/dz for astigmatic model
-    dαx_dz = (2*z_d_x + 3*psf.Ax*z_d_x^2 + 4*psf.Bx*z_d_x^3) / psf.d
-    dαy_dz = (2*z_d_y + 3*psf.Ay*z_d_y^2 + 4*psf.By*z_d_y^3) / psf.d
+    dαx_dz = (2 * z_d_x + 3 * psf.Ax * z_d_x^2 + 4 * psf.Bx * z_d_x^3) / psf.d
+    dαy_dz = (2 * z_d_y + 3 * psf.Ay * z_d_y^2 + 4 * psf.By * z_d_y^3) / psf.d
 
-    dσx_dz = (psf.σx₀ / (2*sqrt(αx))) * dαx_dz
-    dσy_dz = (psf.σy₀ / (2*sqrt(αy))) * dαy_dz
+    dσx_dz = (psf.σx₀ / (2 * sqrt(αx))) * dαx_dz
+    dσy_dz = (psf.σy₀ / (2 * sqrt(αy))) * dαy_dz
 
     dudt_z = dudt_sx * dσx_dz + dudt_sy * dσy_dz
 
     # Second derivative of z (diagonal only - simplified from full chain rule)
-    d2αx_dz2 = (2 + 6*psf.Ax*z_d_x + 12*psf.Bx*z_d_x^2) / (psf.d^2)
-    d2αy_dz2 = (2 + 6*psf.Ay*z_d_y + 12*psf.By*z_d_y^2) / (psf.d^2)
+    d2αx_dz2 = (2 + 6 * psf.Ax * z_d_x + 12 * psf.Bx * z_d_x^2) / (psf.d^2)
+    d2αy_dz2 = (2 + 6 * psf.Ay * z_d_y + 12 * psf.By * z_d_y^2) / (psf.d^2)
 
-    d2σx_dz2 = -(psf.σx₀/(4*αx^1.5f0)) * dαx_dz^2 + (psf.σx₀/(2*sqrt(αx))) * d2αx_dz2
-    d2σy_dz2 = -(psf.σy₀/(4*αy^1.5f0)) * dαy_dz^2 + (psf.σy₀/(2*sqrt(αy))) * d2αy_dz2
+    d2σx_dz2 = -(psf.σx₀ / (4 * αx^1.5f0)) * dαx_dz^2 +
+        (psf.σx₀ / (2 * sqrt(αx))) * d2αx_dz2
+    d2σy_dz2 = -(psf.σy₀ / (4 * αy^1.5f0)) * dαy_dz^2 +
+        (psf.σy₀ / (2 * sqrt(αy))) * d2αy_dz2
 
     d2udt2_z = d2udt2_sx * dσx_dz^2 + dudt_sx * d2σx_dz2 +
-               d2udt2_sy * dσy_dz^2 + dudt_sy * d2σy_dz2
+        d2udt2_sy * dσy_dz^2 + dudt_sy * d2σy_dz2
 
     # Model value
     model = bg + N * psf_x * psf_y
@@ -171,7 +174,7 @@ end
         dudt_y,          # ∂/∂y
         dudt_z,          # ∂/∂z
         psf_x * psf_y,   # ∂/∂N
-        one(Float32)     # ∂/∂bg
+        one(Float32),     # ∂/∂bg
     ]
 
     # Second derivatives - diagonal only
@@ -180,7 +183,7 @@ end
         d2udt2_y,        # ∂²/∂y²
         d2udt2_z,        # ∂²/∂z²
         zero(Float32),   # ∂²/∂N²
-        zero(Float32)    # ∂²/∂bg²
+        zero(Float32),    # ∂²/∂bg²
     ]
 
     return model, dudt, d2udt2_diag

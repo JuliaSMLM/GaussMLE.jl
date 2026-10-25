@@ -1,3 +1,6 @@
+# Regression tests for default parameter bounds derived from the actual ROI box size.
+using Test, GaussMLE, SMLMData
+
 # Exact, noise-free pixel-integrated PSF data with a single ROI at corner (1, 1).
 function box_bounds_batch(box_size, x)
     camera = SMLMData.IdealCamera(box_size, box_size, 0.1f0)

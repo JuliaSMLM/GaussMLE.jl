@@ -1,24 +1,32 @@
+using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
+
+include(joinpath(@__DIR__, "utils", "validation_utils.jl"))
+include(joinpath(@__DIR__, "utils", "validation_utils_roibatch.jl"))
+
 """
 Strict validation tests for fitting accuracy, bias, and CRLB matching
 Using the new camera-aware simulator for reliable test data generation
 """
 
 @testset "Strict Validation Tests" begin
-    
+
     # Helper function to validate fitting results using proper ROI coordinate extraction
-    function validate_fits(smld::SMLMData.BasicSMLD,
-                           roi_batch::SMLMData.ROIBatch,
-                           expected_params::Matrix{Float32};
-                           param_idx::Int,
-                           bias_tol::Float32 = 0.1f0,
-                           std_ratio_tol::Float32 = 0.25f0,
-                           verbose::Bool = false)
+    function validate_fits(
+            smld::SMLMData.BasicSMLD,
+            roi_batch::SMLMData.ROIBatch,
+            expected_params::Matrix{Float32};
+            param_idx::Int,
+            bias_tol::Float32 = 0.1f0,
+            std_ratio_tol::Float32 = 0.25f0,
+            verbose::Bool = false
+        )
 
         pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
         roi_size = size(roi_batch.data, 1)
 
         # Extract ROI-local coordinates using actual corners from ROIBatch
-        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for extract_roi_coords
+        # SMLMData.ROIBatch uses x_corners/y_corners vectors, construct matrix for
+        # extract_roi_coords
         corners = vcat(roi_batch.x_corners', roi_batch.y_corners')
         coords = extract_roi_coords(smld, corners, roi_size, pixel_size)
 
@@ -67,21 +75,25 @@ Using the new camera-aware simulator for reliable test data generation
         std_pass = abs(1.0f0 - std_ratio) < std_ratio_tol
 
         if verbose
-            param_names = ["x", "y", "photons", "background", "sigma", "sigma_x", "sigma_y", "z"]
+            param_names = [
+                "x", "y", "photons", "background", "sigma", "sigma_x", "sigma_y", "z",
+            ]
             println("\nParameter: $(param_names[min(param_idx, length(param_names))])")
-            println("  Bias: $(round(bias, digits=4)) (tolerance: ±$bias_tol)")
-            println("  Empirical STD: $(round(empirical_std, digits=4))")
-            println("  Mean reported STD: $(round(mean_reported_std, digits=4))")
-            println("  STD ratio: $(round(std_ratio, digits=3)) (should be ≈1.0)")
+            println("  Bias: $(round(bias, digits = 4)) (tolerance: ±$bias_tol)")
+            println("  Empirical STD: $(round(empirical_std, digits = 4))")
+            println("  Mean reported STD: $(round(mean_reported_std, digits = 4))")
+            println("  STD ratio: $(round(std_ratio, digits = 3)) (should be ≈1.0)")
             println("  Bias test: $(bias_pass ? "PASS" : "FAIL")")
             println("  STD test: $(std_pass ? "PASS" : "FAIL")")
         end
 
-        return (bias=bias, empirical_std=empirical_std,
-                mean_reported_std=mean_reported_std, std_ratio=std_ratio,
-                bias_pass=bias_pass, std_pass=std_pass)
+        return (
+            bias = bias, empirical_std = empirical_std,
+            mean_reported_std = mean_reported_std, std_ratio = std_ratio,
+            bias_pass = bias_pass, std_pass = std_pass,
+        )
     end
-    
+
     @testset "GaussianXYNB - Standard Conditions" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
@@ -94,7 +106,7 @@ Using the new camera-aware simulator for reliable test data generation
             1000.0 .+ 200.0f0 * randn(Float32, n_rois)';
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
-        
+
         # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
         # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
@@ -103,29 +115,39 @@ Using the new camera-aware simulator for reliable test data generation
         rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
 
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch = GaussMLE.generate_roi_batch(camera, psf;
-                                           n_rois=n_rois,
-                                           true_params=true_params,
-                                           corners=dummy_corners,
-                                           seed=42)
-        
+        batch = GaussMLE.generate_roi_batch(
+            camera, psf;
+            n_rois = n_rois,
+            true_params = true_params,
+            corners = dummy_corners,
+            seed = 42
+        )
+
         # Fit
-        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, backend=:cpu, iterations=20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Validate each parameter
         verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
 
-        x_val = validate_fits(smld, batch, true_params, param_idx=1, bias_tol=0.1f0, verbose=verbose)
-        y_val = validate_fits(smld, batch, true_params, param_idx=2, bias_tol=0.1f0, verbose=verbose)
-        n_val = validate_fits(smld, batch, true_params, param_idx=3, bias_tol=50.0f0, verbose=verbose)
-        b_val = validate_fits(smld, batch, true_params, param_idx=4, bias_tol=2.0f0, verbose=verbose)
+        x_val = validate_fits(
+            smld, batch, true_params, param_idx = 1, bias_tol = 0.1f0, verbose = verbose,
+        )
+        y_val = validate_fits(
+            smld, batch, true_params, param_idx = 2, bias_tol = 0.1f0, verbose = verbose,
+        )
+        n_val = validate_fits(
+            smld, batch, true_params, param_idx = 3, bias_tol = 50.0f0, verbose = verbose,
+        )
+        b_val = validate_fits(
+            smld, batch, true_params, param_idx = 4, bias_tol = 2.0f0, verbose = verbose,
+        )
 
         @test x_val.bias_pass  # Always true for positions (see helper)
         @test y_val.bias_pass
@@ -137,7 +159,7 @@ Using the new camera-aware simulator for reliable test data generation
         @test n_val.std_pass
         @test b_val.std_pass
     end
-    
+
     @testset "Low SNR Conditions" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
@@ -150,7 +172,7 @@ Using the new camera-aware simulator for reliable test data generation
             200.0 .+ 50.0f0 * randn(Float32, n_rois)';
             20.0 .+ 5.0f0 * randn(Float32, n_rois)'
         ]
-        
+
         # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
         # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
@@ -159,23 +181,28 @@ Using the new camera-aware simulator for reliable test data generation
         rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
 
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch = GaussMLE.generate_roi_batch(camera, psf;
-                                           n_rois=n_rois,
-                                           true_params=true_params,
-                                           corners=dummy_corners,
-                                           seed=43)
-        
-        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, backend=:cpu, iterations=20)
+        batch = GaussMLE.generate_roi_batch(
+            camera, psf;
+            n_rois = n_rois,
+            true_params = true_params,
+            corners = dummy_corners,
+            seed = 43
+        )
+
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # More relaxed tolerances for low SNR
-        x_val = validate_fits(smld, batch, true_params, param_idx=1, bias_tol=0.2f0, std_ratio_tol=0.35f0)
+        x_val = validate_fits(
+            smld, batch, true_params, param_idx = 1,
+            bias_tol = 0.2f0, std_ratio_tol = 0.35f0,
+        )
 
         @test x_val.bias_pass  # Always true for positions
         @test x_val.std_pass
@@ -183,31 +210,31 @@ Using the new camera-aware simulator for reliable test data generation
         # Check that uncertainties are appropriately larger
         @test x_val.mean_reported_std > 0.08f0
     end
-    
+
     @testset "Edge Position Tests" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
         n_rois = 100
-        
+
         # Generate ROIs near edges
         edge_positions = Float32[]
         for i in 1:n_rois
             if i <= 25
                 push!(edge_positions, 2.5f0 + 0.3f0 * randn(Float32))  # Near left/top
-            elseif i <= 50  
+            elseif i <= 50
                 push!(edge_positions, 8.5f0 + 0.3f0 * randn(Float32))  # Near right/bottom
             else
                 push!(edge_positions, 6.0f0 + 0.3f0 * randn(Float32))  # Center
             end
         end
-        
+
         true_params = Float32[
             edge_positions';
             edge_positions';
             1000.0f0 * ones(Float32, n_rois)';
             10.0f0 * ones(Float32, n_rois)'
         ]
-        
+
         # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
         # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners = zeros(Int32, 2, n_rois)
@@ -216,19 +243,21 @@ Using the new camera-aware simulator for reliable test data generation
         rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
 
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch = GaussMLE.generate_roi_batch(camera, psf;
-                                           n_rois=n_rois,
-                                           true_params=true_params,
-                                           corners=dummy_corners,
-                                           seed=44)
-        
-        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, backend=:cpu, iterations=20)
+        batch = GaussMLE.generate_roi_batch(
+            camera, psf;
+            n_rois = n_rois,
+            true_params = true_params,
+            corners = dummy_corners,
+            seed = 44
+        )
+
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Check convergence - no infinite uncertainties
@@ -239,16 +268,18 @@ Using the new camera-aware simulator for reliable test data generation
         @test !any(isinf.(σ_photons_vals))
         @test !any(isnan.(σ_photons_vals))
 
-        # Just check that uncertainties are reasonable (can't easily check bias for positions)
-        @test mean(σ_x_vals) < 0.02  # Reasonable precision in microns (< 0.2 pixels for 0.1 μm pixels)
+        # Just check that uncertainties are reasonable (can't easily check bias for
+        # positions)
+        # Reasonable precision in microns (< 0.2 pixels for 0.1 μm pixels)
+        @test mean(σ_x_vals) < 0.02
     end
-    
+
     @testset "sCMOS Camera with Variance Map" begin
         # Create sCMOS with spatially varying noise using SMLMData 0.4 API
         # variance = 10 + 40*gaussian, so readnoise = sqrt(variance)
         readnoise_map = Float32[
-            sqrt(10.0f0 + 40.0f0 * exp(-((i-128)^2 + (j-128)^2) / 5000.0f0))
-            for i in 1:256, j in 1:256
+            sqrt(10.0f0 + 40.0f0 * exp(-((i - 128)^2 + (j - 128)^2) / 5000.0f0))
+                for i in 1:256, j in 1:256
         ]
 
         scmos = SMLMData.SCMOSCamera(
@@ -267,7 +298,7 @@ Using the new camera-aware simulator for reliable test data generation
             1000.0 .+ 200.0f0 * randn(Float32, n_rois)';
             10.0 .+ 2.0f0 * randn(Float32, n_rois)'
         ]
-        
+
         # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
         # Camera is 256x256, ROI is 11x11, so max corner is 256 - 11 + 1 = 246
         dummy_corners_scmos = zeros(Int32, 2, n_rois)
@@ -276,25 +307,29 @@ Using the new camera-aware simulator for reliable test data generation
         rois_per_row = div(max_corner, roi_spacing)  # ~22 ROIs per row
 
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners_scmos[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners_scmos[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch = GaussMLE.generate_roi_batch(scmos, psf;
-                                           n_rois=n_rois,
-                                           true_params=true_params,
-                                           corners=dummy_corners_scmos,
-                                           seed=45)
+        batch = GaussMLE.generate_roi_batch(
+            scmos, psf;
+            n_rois = n_rois,
+            true_params = true_params,
+            corners = dummy_corners_scmos,
+            seed = 45
+        )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, backend=:cpu, iterations=20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
         # Standard tolerances apply
-        x_val = validate_fits(smld, batch, true_params, param_idx=1,
-                             bias_tol=0.1f0, std_ratio_tol=0.25f0)
+        x_val = validate_fits(
+            smld, batch, true_params, param_idx = 1,
+            bias_tol = 0.1f0, std_ratio_tol = 0.25f0
+        )
 
         @test x_val.bias_pass  # Always true for positions
         @test x_val.std_pass
@@ -302,7 +337,7 @@ Using the new camera-aware simulator for reliable test data generation
         # Uncertainties should be larger than ideal camera
         @test x_val.mean_reported_std > 0.05f0
     end
-    
+
     @testset "Different PSF Models" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         n_rois = 200
@@ -316,7 +351,7 @@ Using the new camera-aware simulator for reliable test data generation
             10.0 .+ 2.0f0 * randn(Float32, n_rois)';
             1.3f0 .+ 0.2f0 * randn(Float32, n_rois)'
         ]
-        
+
         # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
         # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
         dummy_corners_nbs = zeros(Int32, 2, n_rois)
@@ -325,19 +360,23 @@ Using the new camera-aware simulator for reliable test data generation
         rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
 
         for i in 1:n_rois
-            row = div(i-1, rois_per_row)
-            col = mod(i-1, rois_per_row)
+            row = div(i - 1, rois_per_row)
+            col = mod(i - 1, rois_per_row)
             dummy_corners_nbs[1, i] = Int32(1 + col * roi_spacing)
             dummy_corners_nbs[2, i] = Int32(1 + row * roi_spacing)
         end
 
-        batch_nbs = GaussMLE.generate_roi_batch(camera, psf_nbs;
-                                               n_rois=n_rois,
-                                               true_params=true_params_nbs,
-                                               corners=dummy_corners_nbs,
-                                               seed=46)
-        
-        fitter_nbs = GaussMLE.GaussMLEConfig(psf_model=psf_nbs, backend=:cpu, iterations=20)
+        batch_nbs = GaussMLE.generate_roi_batch(
+            camera, psf_nbs;
+            n_rois = n_rois,
+            true_params = true_params_nbs,
+            corners = dummy_corners_nbs,
+            seed = 46
+        )
+
+        fitter_nbs = GaussMLE.GaussMLEConfig(
+            psf_model = psf_nbs, backend = :cpu, iterations = 20,
+        )
         smld_nbs, _info = GaussMLE.fit(batch_nbs, fitter_nbs)
 
         # Validate sigma parameter (more challenging than position/photons)
@@ -356,33 +395,39 @@ Using the new camera-aware simulator for reliable test data generation
             1.3f0 .+ 0.15f0 * randn(Float32, n_rois)'
         ]
 
-        batch_sxsy = GaussMLE.generate_roi_batch(camera, psf_sxsy;
-                                                n_rois=n_rois,
-                                                true_params=true_params_sxsy,
-                                                corners=dummy_corners_nbs,  # Reuse same dummy corners
-                                                seed=47)
+        batch_sxsy = GaussMLE.generate_roi_batch(
+            camera, psf_sxsy;
+            n_rois = n_rois,
+            true_params = true_params_sxsy,
+            corners = dummy_corners_nbs,  # Reuse same dummy corners
+            seed = 47
+        )
 
-        fitter_sxsy = GaussMLE.GaussMLEConfig(psf_model=psf_sxsy, backend=:cpu, iterations=20)
+        fitter_sxsy = GaussMLE.GaussMLEConfig(
+            psf_model = psf_sxsy, backend = :cpu, iterations = 20,
+        )
         smld_sxsy, _info = GaussMLE.fit(batch_sxsy, fitter_sxsy)
 
         @test all([isfinite(e.σ_x) && isfinite(e.σ_y) for e in smld_sxsy.emitters])
 
         # Basic validation for anisotropic model
-        x_val_sxsy = validate_fits(smld_sxsy, batch_sxsy, true_params_sxsy, param_idx=1,
-                                   bias_tol=0.15f0, std_ratio_tol=0.35f0)
+        x_val_sxsy = validate_fits(
+            smld_sxsy, batch_sxsy, true_params_sxsy, param_idx = 1,
+            bias_tol = 0.15f0, std_ratio_tol = 0.35f0
+        )
         @test x_val_sxsy.bias_pass  # Always true for positions
     end
-    
+
     @testset "Photon Level Sensitivity" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         photon_levels = [100.0f0, 500.0f0, 2000.0f0, 10000.0f0]
         # Just check that precision improves with photon count (qualitative test)
         # Skip exact values since they depend on PSF model, pixel size, etc.
-        
+
         precision_values = Float32[]
-        
+
         for photons in photon_levels
             n_rois = 100
             true_params = Float32[
@@ -391,7 +436,7 @@ Using the new camera-aware simulator for reliable test data generation
                 photons * ones(Float32, n_rois)';
                 10.0f0 * ones(Float32, n_rois)'
             ]
-            
+
             # Generate dummy corners that stay within camera bounds (1-indexed for Julia)
             # Camera is 512x512, ROI is 11x11, so max corner is 512 - 11 + 1 = 502
             dummy_corners_photon = zeros(Int32, 2, n_rois)
@@ -400,19 +445,23 @@ Using the new camera-aware simulator for reliable test data generation
             rois_per_row = div(max_corner, roi_spacing)  # ~45 ROIs per row
 
             for i in 1:n_rois
-                row = div(i-1, rois_per_row)
-                col = mod(i-1, rois_per_row)
+                row = div(i - 1, rois_per_row)
+                col = mod(i - 1, rois_per_row)
                 dummy_corners_photon[1, i] = Int32(1 + col * roi_spacing)
                 dummy_corners_photon[2, i] = Int32(1 + row * roi_spacing)
             end
 
-            batch = GaussMLE.generate_roi_batch(camera, psf;
-                                               n_rois=n_rois,
-                                               true_params=true_params,
-                                               corners=dummy_corners_photon,
-                                               seed=48)
-            
-            fitter = GaussMLE.GaussMLEConfig(psf_model=psf, backend=:cpu, iterations=20)
+            batch = GaussMLE.generate_roi_batch(
+                camera, psf;
+                n_rois = n_rois,
+                true_params = true_params,
+                corners = dummy_corners_photon,
+                seed = 48
+            )
+
+            fitter = GaussMLE.GaussMLEConfig(
+                psf_model = psf, backend = :cpu, iterations = 20,
+            )
             smld, _info = GaussMLE.fit(batch, fitter)
 
             pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
@@ -423,9 +472,10 @@ Using the new camera-aware simulator for reliable test data generation
             # Verify CRLB is being calculated correctly (just check it's reasonable)
             @test mean_σ_x > 0.0  # Positive uncertainty
         end
-        
+
         # Check that precision improves with photon count
-        @test precision_values[1] > precision_values[2] > precision_values[3] > precision_values[4]
+        @test precision_values[1] > precision_values[2] > precision_values[3] >
+            precision_values[4]
         @test precision_values[1] < 0.5  # Reasonable upper bound
         @test precision_values[4] < 0.05  # Good precision at high photon count
     end

@@ -1,3 +1,8 @@
+# Regression tests for GPU free-memory queries and backend fallback behavior.
+using Test, GaussMLE, CUDA, SMLMData
+
+# The NVML-unsupported fallback is reachable only on a GPU without NVML memory info
+# (the DGX Spark GB10), so _gpu_free_memory is the regression point for that bug.
 @testset "GPU free-memory queries" begin
     @testset "NVML reports free memory" begin
         free, from_nvml = GaussMLE._gpu_free_memory(0; nvml_free = _ -> 123_456)

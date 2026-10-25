@@ -5,10 +5,10 @@ Perform LU decomposition on a square matrix `A` in-place.
 """
 function lu_decomposition!(A)
     n = size(A, 1)
-    for k = 1:n
-        for i = k+1:n
+    for k in 1:n
+        for i in (k + 1):n
             A[i, k] /= A[k, k]
-            for j = k+1:n
+            for j in (k + 1):n
                 A[i, j] -= A[i, k] * A[k, j]
             end
         end
@@ -28,17 +28,17 @@ function back_substitution(A, b)
     y = similar(b)
 
     # Forward substitution for Ly = b
-    for i = 1:n
+    for i in 1:n
         y[i] = b[i]
-        for j = 1:i-1
+        for j in 1:(i - 1)
             y[i] -= A[i, j] * y[j]
         end
     end
 
     # Backward substitution for Ux = y
-    for i = n:-1:1
+    for i in n:-1:1
         x[i] = y[i]
-        for j = i+1:n
+        for j in (i + 1):n
             x[i] -= A[i, j] * x[j]
         end
         x[i] /= A[i, i]
@@ -60,7 +60,7 @@ function matrix_inverse(A)
     lu_decomposition!(A)
 
     # Solve for each column
-    for i = 1:n
+    for i in 1:n
         b = A_inv[:, i]
         A_inv[:, i] = back_substitution(A, b)
     end
@@ -78,26 +78,24 @@ function matrix_inverse!(A, A_inv, n)
     try
         # Initialize A_inv as identity matrix
         fill!(A_inv, zero(eltype(A_inv)))
-        for i = 1:n
+        for i in 1:n
             A_inv[i, i] = one(eltype(A_inv))
         end
-        
+
         # Make a copy of A for decomposition (don't modify original)
         A_copy = copy(A)
-        
+
         # Perform LU decomposition
         lu_decomposition!(A_copy)
-        
+
         # Solve for each column
-        for i = 1:n
+        for i in 1:n
             b = A_inv[:, i]
             A_inv[:, i] = back_substitution(A_copy, b)
         end
-        
+
         return true
     catch
         return false
     end
 end
-
-

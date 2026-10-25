@@ -86,7 +86,7 @@ Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 11x11 ROIs,
 | GaussianXYNBS (ideal) | 1,633 | 215,745 |
 | AstigmaticXYZNB (ideal) | 1,341 | 265,083 |
 
-GPU throughput scales with batch size; these numbers use the default batch size of 10K. Run `Pkg.test("GaussMLE")` locally to benchmark your hardware.
+GPU throughput scales with batch size; these numbers use the default batch size of 10K. Run the GPU test group (`GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'`) to benchmark your hardware.
 
 ## Algorithm Reference
 

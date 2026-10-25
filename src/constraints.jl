@@ -60,8 +60,10 @@ function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)
     return default_constraints(psf_model, box_size)
 end
 
-@inline function apply_constraints!(θ::Params{N}, Δθ::Params{N}, 
-                                   constraints::ParameterConstraints{N}) where N
+@inline function apply_constraints!(
+        θ::Params{N}, Δθ::Params{N},
+        constraints::ParameterConstraints{N}
+    ) where {N}
     # Apply step size limits and bounds
     θ_new = θ - clamp.(Δθ, -constraints.max_step, constraints.max_step)
     return clamp.(θ_new, constraints.lower, constraints.upper)

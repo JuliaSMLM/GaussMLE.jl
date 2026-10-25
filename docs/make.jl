@@ -1,9 +1,6 @@
 using Documenter
 using GaussMLE
 
-# Set up doctests
-DocMeta.setdocmeta!(GaussMLE, :DocTestSetup, :(using GaussMLE); recursive=true)
-
 makedocs(
     sitename = "GaussMLE.jl",
     format = Documenter.HTML(
@@ -14,8 +11,15 @@ makedocs(
     ),
     modules = [GaussMLE],
     authors = "klidke@unm.edu",
-    repo = "https://github.com/JuliaSMLM/GaussMLE.jl/blob/{commit}{path}#{line}",
-    warnonly = [:missing_docs, :cross_references],  # Don't fail on internal docstrings
+    repo = Remotes.GitHub("JuliaSMLM", "GaussMLE.jl"),
+    # QA runs every docstring jldoctest (admiral decision 0018); pages use @example
+    doctest = false,
+    # every exported docstring is in the manual (admiral decision 0018)
+    checkdocs = :exports,
+    # Opt-out: GaussLib is the internal legacy reference implementation. It exports its
+    # helpers to GaussMLE only, and GaussMLE does not re-export them, so they are not public
+    # API.
+    checkdocs_ignored_modules = [GaussMLE.GaussLib],
     pages = [
         "Home" => "index.md",
         "User Guide" => [
@@ -34,6 +38,6 @@ makedocs(
 )
 
 deploydocs(;
-    repo="github.com/JuliaSMLM/GaussMLE.jl",
-    devbranch="main",
+    repo = "github.com/JuliaSMLM/GaussMLE.jl",
+    devbranch = "main",
 )

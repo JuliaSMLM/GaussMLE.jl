@@ -1,5 +1,9 @@
 # API Reference
 
+```@docs
+GaussMLE
+```
+
 ```@index
 ```
 
@@ -10,6 +14,7 @@
 ```@docs
 GaussMLEConfig
 fit
+GaussMLEFitInfo
 ```
 
 ### PSF Models

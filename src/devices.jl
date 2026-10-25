@@ -31,9 +31,9 @@ DGX Spark GB10 driver lacks `nvmlDeviceGetMemoryInfo`), query `CUDA.free_memory(
 that device instead. All other errors propagate.
 """
 function _gpu_free_memory(
-    device_idx::Integer;
-    nvml_free = idx -> CUDA.NVML.memory_info(CUDA.NVML.Device(idx)).free,
-)
+        device_idx::Integer;
+        nvml_free = idx -> CUDA.NVML.memory_info(CUDA.NVML.Device(idx)).free,
+    )
     try
         return Int(nvml_free(device_idx)), true
     catch e
@@ -82,7 +82,7 @@ function find_best_gpu()
 end
 
 # Allow explicit device selection with fallback (legacy API)
-function select_device(device::Union{ComputeDevice, Nothing}=nothing)
+function select_device(device::Union{ComputeDevice, Nothing} = nothing)
     if isnothing(device)
         return auto_device()
     elseif device isa GPU && !CUDA.functional()
@@ -103,7 +103,7 @@ that deadlock other processes polling for free GPU memory.
 function _release_gpu_context(device_idx::Integer)
     # GC first to finalize Julia-side CUDA objects before releasing context
     GC.gc(false)
-    try
+    return try
         dev = CUDA.CuDevice(device_idx)
         CUDA.cuDevicePrimaryCtxRelease(dev)
     catch
@@ -124,12 +124,15 @@ false if timeout reached.
 - `required_bytes`: Minimum bytes needed (will wait for 1.5x this amount as safety margin)
 - `timeout`: Maximum seconds to wait (default 30.0)
 - `poll`: Polling interval in seconds (default 0.5)
-- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress feedback
+- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
+  feedback
 """
-function wait_for_gpu_memory(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_memory(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     !CUDA.functional() && return false
 
@@ -175,10 +178,12 @@ utilization exceeds 90%. Other NVML errors propagate.
 - `poll`: Polling interval in seconds (default 0.5)
 - `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
 """
-function wait_for_gpu_nvml(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_nvml(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     n_devices = length(CUDA.devices())
     my_pid = getpid()
@@ -203,7 +208,7 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 CUDA.NVML.compute_processes(nvml_dev)
             catch
                 # NVML process query can fail on some drivers; skip contention check
-                Dict{UInt32,UInt64}()
+                Dict{UInt32, UInt64}()
             end
             other_procs = count(p -> p.first != my_pid, procs)
 
@@ -212,7 +217,7 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 util = try
                     CUDA.NVML.utilization_rates(nvml_dev)
                 catch
-                    (; compute=0, memory=0)
+                    (; compute = 0, memory = 0)
                 end
                 # Contended: other procs AND (low memory OR high compute)
                 if free < required_with_margin || util.compute > 90
@@ -238,6 +243,7 @@ function wait_for_gpu_nvml(required_bytes::Integer;
         # Jittered backoff to avoid thundering herd
         sleep(poll * (1.0 + 0.2 * rand()))
     end
+    return
 end
 
 """
@@ -286,10 +292,12 @@ NVML memory queries are unsupported. In `:auto` mode, polling errors warn and re
 - `:gpu` - Explicit GPU, NVML poll up to gpu_timeout, error if unavailable
 - `:auto` - NVML poll up to auto_timeout, fall back to CPU with warning
 """
-function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Float64=300.0,
-        gpu_timeout::Float64=Inf,
-        on_wait=nothing)
+function select_backend(
+        backend::Symbol, required_bytes::Integer;
+        auto_timeout::Float64 = 300.0,
+        gpu_timeout::Float64 = Inf,
+        on_wait = nothing
+    )
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
@@ -323,7 +331,8 @@ function select_backend(backend::Symbol, required_bytes::Integer;
                 if time() >= deadline
                     rethrow()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
 
@@ -351,10 +360,12 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             catch e
                 _release_gpu_context(device_idx)
                 if time() >= deadline
-                    @warn "GPU context creation failed and timeout reached, using CPU" exception=e
+                    @warn "GPU context creation failed and timeout reached, using \
+                        CPU" exception = e
                     return CPU()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
     end
@@ -362,4 +373,5 @@ end
 
 # Default on_wait callback for user feedback
 const DEFAULT_ON_WAIT = (elapsed, available, required) ->
-    @info "Waiting for GPU memory..." elapsed=round(elapsed, digits=1) available=Base.format_bytes(available) required=Base.format_bytes(required)
+@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available =
+    Base.format_bytes(available) required = Base.format_bytes(required)
