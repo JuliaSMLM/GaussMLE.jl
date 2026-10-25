@@ -92,13 +92,15 @@ end
     end
 
     @testset "Default fits clamp to the actual box bounds" begin
-        # Truncated tails converge slowly; leave constraints at their default value.
+        # Emitters 0.5 px past the bound; truncated tails converge slowly, hence the
+        # iterations. Farther out (1 px at n = 7) the fit stalls inside the box, with any
+        # bounds, so it would not test them.
         config = GaussMLEConfig(
             psf_model = GaussianXYNB(0.13f0), backend = :cpu, iterations = 500
         )
         @testset "n = $n" for n in (7, 9, 11, 15)
             @testset "High edge" begin
-                batch = box_bounds_batch(n, Float32(n + 3))
+                batch = box_bounds_batch(n, Float32(n + 2.5))
                 smld, info = fit(batch, config)
                 x, _ = box_bounds_roi_position(
                     smld, batch.x_corners[1], batch.y_corners[1]
@@ -108,7 +110,7 @@ end
             end
 
             @testset "Low edge" begin
-                batch = box_bounds_batch(n, -2.0f0)
+                batch = box_bounds_batch(n, -1.5f0)
                 smld, info = fit(batch, config)
                 x, _ = box_bounds_roi_position(
                     smld, batch.x_corners[1], batch.y_corners[1]

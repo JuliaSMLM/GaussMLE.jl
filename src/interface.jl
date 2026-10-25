@@ -55,7 +55,7 @@ function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where T
 end
 
 """
-    GaussMLEConfig{P,PC}
+    GaussMLEConfig{P,PC,W}
 
 Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob parameters.
 
@@ -63,7 +63,8 @@ Main type for configuring and performing Maximum Likelihood Estimation of Gaussi
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
 - `iterations::Int`: Number of Newton-Raphson iterations
-- `constraints::PC<:ParameterConstraints`: Parameter bounds and step limits
+- `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
+  `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
 - `auto_timeout::Float64`: Seconds to wait for GPU in auto mode
 - `gpu_timeout::Float64`: Seconds to wait for GPU in explicit gpu mode
@@ -72,7 +73,9 @@ Main type for configuring and performing Maximum Likelihood Estimation of Gaussi
 # See also
 [`fit`](@ref), [`GaussMLEResults`](@ref), [`PSFModel`](@ref), [`CameraModel`](@ref)
 """
-struct GaussMLEConfig{P<:PSFModel, PC<:ParameterConstraints, W} <: AbstractSMLMConfig
+struct GaussMLEConfig{
+    P<:PSFModel, PC<:Union{Nothing, ParameterConstraints}, W,
+} <: AbstractSMLMConfig
     backend::Symbol
     psf_model::P
     iterations::Int
@@ -96,7 +99,8 @@ Camera noise model is determined by the ROIBatch type:
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `iterations = 20`: Number of Newton-Raphson iterations
-- `constraints = nothing`: Parameter constraints (uses defaults if nothing)
+- `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
+  ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
 - `auto_timeout = 300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
 - `gpu_timeout = Inf`: Seconds to wait for GPU in explicit gpu mode
@@ -158,11 +162,6 @@ function GaussMLEConfig(;
     end
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
-
-    # Default constraints based on typical box size
-    if isnothing(constraints)
-        constraints = default_constraints(psf_model, 11)  # typical 11x11 box
-    end
 
     return GaussMLEConfig(backend, psf_model, iterations, constraints, batch_size,
                           Float64(auto_timeout), Float64(gpu_timeout), on_wait)
@@ -244,6 +243,7 @@ function _run_mle_kernel!(
     n_fits = size(data, 3)
     n_params = size(results, 1)
     box_size = size(data, 1)
+    constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
 
     # Track for GaussMLEFitInfo
     actual_backend = :cpu
@@ -271,8 +271,19 @@ function _run_mle_kernel!(
 
         while !gpu_succeeded && time() < deadline
             # Poll NVML for available GPU
-            dev_idx, available = wait_for_gpu_nvml(required_memory;
-                timeout=max(0.0, deadline - time()), on_wait=fitter.on_wait)
+            dev_idx, available = try
+                wait_for_gpu_nvml(
+                    required_memory;
+                    timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
+                )
+            catch e
+                fitter.backend == :gpu && rethrow()
+                @warn "GPU availability check failed, using CPU" exception = (
+                    e, catch_backtrace(),
+                )
+                use_cpu = true
+                break
+            end
             if !available
                 break  # Timeout reached
             end
@@ -311,7 +322,7 @@ function _run_mle_kernel!(
                     kernel = unified_gaussian_mle_kernel!(gpu_backend)
                     kernel(d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                            d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners, d_y_corners,
-                           fitter.constraints, fitter.iterations,
+                           constraints, fitter.iterations,
                            ndrange=batch_size_actual)
 
                     KernelAbstractions.synchronize(gpu_backend)
@@ -343,7 +354,9 @@ function _run_mle_kernel!(
                 error("GPU failed after $(timeout)s timeout")
             end
             # :auto falls through to CPU below
-            @warn "GPU unavailable after $(timeout)s, using CPU"
+            if !use_cpu
+                @warn "GPU unavailable after $(timeout)s, using CPU"
+            end
             use_cpu = true
         end
     end
@@ -362,7 +375,7 @@ function _run_mle_kernel!(
             kernel = unified_gaussian_mle_kernel!(ka_backend)
             kernel(results, uncertainties, covariances, log_likelihoods,
                    data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
-                   fitter.constraints, fitter.iterations,
+                   constraints, fitter.iterations,
                    ndrange=n_fits)
             KernelAbstractions.synchronize(ka_backend)
         else
@@ -384,7 +397,7 @@ function _run_mle_kernel!(
                 kernel = unified_gaussian_mle_kernel!(ka_backend)
                 kernel(batch_results, batch_uncertainties, batch_covariances, batch_llr,
                        batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners, batch_y_corners,
-                       fitter.constraints, fitter.iterations,
+                       constraints, fitter.iterations,
                        ndrange=batch_size_actual)
                 KernelAbstractions.synchronize(ka_backend)
 
@@ -637,7 +650,8 @@ Kwargs match GaussMLEConfig fields exactly.
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
 - `iterations=20`: Number of Newton-Raphson iterations
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `constraints=nothing`: Parameter constraints (uses defaults if nothing)
+- `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
+  at fit time
 - `batch_size=10_000`: Batch size for GPU processing
 - `auto_timeout=300.0`: Seconds to wait for GPU in auto mode
 - `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
