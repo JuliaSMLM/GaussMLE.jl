@@ -271,16 +271,11 @@ function _run_mle_kernel!(
 
         while !gpu_succeeded && time() < deadline
             # Poll NVML for available GPU
-            dev_idx, available = try
-                wait_for_gpu_nvml(
-                    required_memory;
-                    timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
-                )
-            catch e
-                fitter.backend == :gpu && rethrow()
-                @warn "GPU availability check failed, using CPU" exception = (
-                    e, catch_backtrace(),
-                )
+            dev_idx, available, failed = _poll_gpu(
+                fitter.backend, required_memory;
+                timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
+            )
+            if failed
                 use_cpu = true
                 break
             end

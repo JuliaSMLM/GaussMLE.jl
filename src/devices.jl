@@ -241,6 +241,25 @@ function wait_for_gpu_nvml(required_bytes::Integer;
 end
 
 """
+    _poll_gpu(backend, required_bytes; timeout, on_wait = nothing)
+
+Poll GPU availability, returning `(device_idx, available, failed)`. Interrupts and
+explicit `:gpu` errors propagate; other failures warn once and request CPU fallback.
+"""
+function _poll_gpu(backend::Symbol, required_bytes::Integer; timeout, on_wait = nothing)
+    try
+        device_idx, available = wait_for_gpu_nvml(
+            required_bytes; timeout = timeout, on_wait = on_wait
+        )
+        return device_idx, available, false
+    catch e
+        (backend == :gpu || e isa InterruptException) && rethrow()
+        @warn "GPU availability check failed, using CPU" exception = (e, catch_backtrace())
+        return -1, false, true
+    end
+end
+
+"""
     select_backend(backend::Symbol, required_bytes; kwargs...)
 
 Select compute backend with NVML-based contention detection and GPU memory wait.
@@ -288,8 +307,10 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # reservations that deadlock other processes polling for free memory.
         deadline = time() + gpu_timeout
         while true
-            device_idx, available = wait_for_gpu_nvml(required_bytes;
-                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            device_idx, available, _ = _poll_gpu(
+                backend, required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
             if !available
                 error("No GPU with sufficient memory after $(gpu_timeout)s")
             end
@@ -315,17 +336,11 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # with remaining timeout - GPU contention spikes are typically short.
         deadline = time() + auto_timeout
         while true
-            device_idx, available = try
-                wait_for_gpu_nvml(
-                    required_bytes;
-                    timeout = max(0.0, deadline - time()), on_wait = on_wait
-                )
-            catch e
-                @warn "GPU availability check failed, using CPU" exception = (
-                    e, catch_backtrace(),
-                )
-                return CPU()
-            end
+            device_idx, available, failed = _poll_gpu(
+                backend, required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
+            failed && return CPU()
             if !available
                 @warn "No GPU available after $(auto_timeout)s, using CPU"
                 return CPU()
