@@ -42,12 +42,14 @@ try
             # Comprehensive validation tests
             include("model_validation_tests.jl")
             include("comprehensive_cpu_tests.jl")
+            include("box_bounds_tests.jl")
         end
 
         # GPU tests (auto-detected)
         if GPU_AVAILABLE
             @testset "GPU Tests" begin
                 include("gpu_tests.jl")
+                include("gpu_memory_query_tests.jl")
             end
         end
     end
