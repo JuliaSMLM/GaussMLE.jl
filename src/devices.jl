@@ -22,6 +22,28 @@ end
 backend(::CPU) = KernelAbstractions.CPU()
 backend(::GPU) = CUDABackend()
 
+"""
+    _gpu_free_memory(device_idx::Integer; nvml_free = ...) -> (free::Int, from_nvml::Bool)
+
+Query free bytes through NVML first, without creating a CUDA context. `nvml_free` takes
+a 0-based device index. If NVML reports `NVML_ERROR_NOT_SUPPORTED` (for example, the
+DGX Spark GB10 driver lacks `nvmlDeviceGetMemoryInfo`), query `CUDA.free_memory()` on
+that device instead. All other errors propagate.
+"""
+function _gpu_free_memory(
+        device_idx::Integer;
+        nvml_free = idx -> CUDA.NVML.memory_info(CUDA.NVML.Device(idx)).free,
+    )
+    try
+        return Int(nvml_free(device_idx)), true
+    catch e
+        if e isa CUDA.NVML.NVMLError && e.code == CUDA.NVML.NVML_ERROR_NOT_SUPPORTED
+            return Int(CUDA.device!(CUDA.free_memory, device_idx)), false
+        end
+        rethrow()
+    end
+end
+
 # Multi-GPU support
 """
     find_best_gpu()
@@ -37,20 +59,19 @@ function find_best_gpu()
     n_devices = length(CUDA.devices())
     n_devices == 1 && return 0
 
-    # Query memory via NVML (no CUDA context needed, safe under contention)
-    # Avoids cuDevicePrimaryCtxRetain OOM when multiple processes compete
+    # Prefer NVML to avoid creating CUDA contexts under contention.
     best_device = 0
     max_free = 0
 
     for i in 0:(n_devices - 1)
-        info = CUDA.NVML.memory_info(CUDA.NVML.Device(i))
-        if info.free > max_free
-            max_free = info.free
+        free, _ = _gpu_free_memory(i)
+        if free > max_free
+            max_free = free
             best_device = i
         end
     end
 
-    # Only create context on the winner
+    # Activate the winning device after querying free memory.
     CUDA.device!(best_device)
 
     if n_devices > 1
@@ -61,7 +82,7 @@ function find_best_gpu()
 end
 
 # Allow explicit device selection with fallback (legacy API)
-function select_device(device::Union{ComputeDevice, Nothing}=nothing)
+function select_device(device::Union{ComputeDevice, Nothing} = nothing)
     if isnothing(device)
         return auto_device()
     elseif device isa GPU && !CUDA.functional()
@@ -82,7 +103,7 @@ that deadlock other processes polling for free GPU memory.
 function _release_gpu_context(device_idx::Integer)
     # GC first to finalize Julia-side CUDA objects before releasing context
     GC.gc(false)
-    try
+    return try
         dev = CUDA.CuDevice(device_idx)
         CUDA.cuDevicePrimaryCtxRelease(dev)
     catch
@@ -103,12 +124,15 @@ false if timeout reached.
 - `required_bytes`: Minimum bytes needed (will wait for 1.5x this amount as safety margin)
 - `timeout`: Maximum seconds to wait (default 30.0)
 - `poll`: Polling interval in seconds (default 0.5)
-- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress feedback
+- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
+  feedback
 """
-function wait_for_gpu_memory(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_memory(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     !CUDA.functional() && return false
 
@@ -138,13 +162,15 @@ end
 """
     wait_for_gpu_nvml(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing)
 
-Wait for a GPU with sufficient free memory using NVML queries only (no CUDA context creation).
+Wait for a GPU with sufficient free memory, preferring NVML without CUDA context creation.
+When NVML memory queries are unsupported, query CUDA memory on that device instead.
 Scans ALL GPUs each iteration - first available wins.
 
 Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeout reached.
 
-Contention detection: a GPU is considered contended when other processes are present AND
-either free memory is insufficient or compute utilization exceeds 90%.
+Contention detection runs only when memory came from NVML: a GPU is considered contended
+when other processes are present AND either free memory is insufficient or compute
+utilization exceeds 90%. Other NVML errors propagate.
 
 # Arguments
 - `required_bytes`: Minimum bytes needed (checks for 1.5x as safety margin)
@@ -152,10 +178,12 @@ either free memory is insufficient or compute utilization exceeds 90%.
 - `poll`: Polling interval in seconds (default 0.5)
 - `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
 """
-function wait_for_gpu_nvml(required_bytes::Integer;
-        timeout::Float64=30.0,
-        poll::Float64=0.5,
-        on_wait=nothing)
+function wait_for_gpu_nvml(
+        required_bytes::Integer;
+        timeout::Float64 = 30.0,
+        poll::Float64 = 0.5,
+        on_wait = nothing
+    )
 
     n_devices = length(CUDA.devices())
     my_pid = getpid()
@@ -166,18 +194,21 @@ function wait_for_gpu_nvml(required_bytes::Integer;
     while true
         # Scan all GPUs - first available wins
         for i in 0:(n_devices - 1)
-            nvml_dev = CUDA.NVML.Device(i)
-            mem = CUDA.NVML.memory_info(nvml_dev)
+            free, from_nvml = _gpu_free_memory(i)
 
             # Check if sufficient memory (with fragmentation margin)
-            mem.free < required_with_margin && continue
+            free < required_with_margin && continue
+
+            # The CUDA fallback cannot rely on NVML contention queries.
+            from_nvml || return (i, true)
 
             # Check contention: other processes on this GPU
+            nvml_dev = CUDA.NVML.Device(i)
             procs = try
                 CUDA.NVML.compute_processes(nvml_dev)
             catch
                 # NVML process query can fail on some drivers; skip contention check
-                Dict{UInt32,UInt64}()
+                Dict{UInt32, UInt64}()
             end
             other_procs = count(p -> p.first != my_pid, procs)
 
@@ -186,10 +217,10 @@ function wait_for_gpu_nvml(required_bytes::Integer;
                 util = try
                     CUDA.NVML.utilization_rates(nvml_dev)
                 catch
-                    (; compute=0, memory=0)
+                    (; compute = 0, memory = 0)
                 end
                 # Contended: other procs AND (low memory OR high compute)
-                if mem.free < required_with_margin || util.compute > 90
+                if free < required_with_margin || util.compute > 90
                     continue
                 end
             end
@@ -205,12 +236,32 @@ function wait_for_gpu_nvml(required_bytes::Integer;
 
         if on_wait !== nothing
             # Report best available memory across all GPUs
-            best_free = maximum(CUDA.NVML.memory_info(CUDA.NVML.Device(i)).free for i in 0:(n_devices-1))
+            best_free = maximum(first(_gpu_free_memory(i)) for i in 0:(n_devices - 1))
             on_wait(time() - start, best_free, required_bytes)
         end
 
         # Jittered backoff to avoid thundering herd
         sleep(poll * (1.0 + 0.2 * rand()))
+    end
+    return
+end
+
+"""
+    _poll_gpu(backend, required_bytes; timeout, on_wait = nothing)
+
+Poll GPU availability, returning `(device_idx, available, failed)`. Interrupts and
+explicit `:gpu` errors propagate; other failures warn once and request CPU fallback.
+"""
+function _poll_gpu(backend::Symbol, required_bytes::Integer; timeout, on_wait = nothing)
+    try
+        device_idx, available = wait_for_gpu_nvml(
+            required_bytes; timeout = timeout, on_wait = on_wait
+        )
+        return device_idx, available, false
+    catch e
+        (backend == :gpu || e isa InterruptException) && rethrow()
+        @warn "GPU availability check failed, using CPU" exception = (e, catch_backtrace())
+        return -1, false, true
     end
 end
 
@@ -219,9 +270,10 @@ end
 
 Select compute backend with NVML-based contention detection and GPU memory wait.
 
-All pre-flight GPU checks use NVML queries (no CUDA context creation). A CUDA context
-is only created on the selected GPU after confirming availability. For `:auto` mode,
-a runtime try/catch in `_run_mle_kernel!` provides defense in depth.
+Memory checks prefer NVML without CUDA context creation, falling back to CUDA when
+NVML memory queries are unsupported. In `:auto` mode, polling errors warn and return
+`CPU()`; explicit `:gpu` requests propagate them. A runtime try/catch in
+`_run_mle_kernel!` provides defense in depth.
 
 # Arguments
 - `backend`: `:cpu`, `:gpu`, or `:auto`
@@ -240,10 +292,12 @@ a runtime try/catch in `_run_mle_kernel!` provides defense in depth.
 - `:gpu` - Explicit GPU, NVML poll up to gpu_timeout, error if unavailable
 - `:auto` - NVML poll up to auto_timeout, fall back to CPU with warning
 """
-function select_backend(backend::Symbol, required_bytes::Integer;
-        auto_timeout::Float64=300.0,
-        gpu_timeout::Float64=Inf,
-        on_wait=nothing)
+function select_backend(
+        backend::Symbol, required_bytes::Integer;
+        auto_timeout::Float64 = 300.0,
+        gpu_timeout::Float64 = Inf,
+        on_wait = nothing
+    )
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
@@ -261,8 +315,10 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # reservations that deadlock other processes polling for free memory.
         deadline = time() + gpu_timeout
         while true
-            device_idx, available = wait_for_gpu_nvml(required_bytes;
-                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            device_idx, available, _ = _poll_gpu(
+                backend, required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
             if !available
                 error("No GPU with sufficient memory after $(gpu_timeout)s")
             end
@@ -275,7 +331,8 @@ function select_backend(backend::Symbol, required_bytes::Integer;
                 if time() >= deadline
                     rethrow()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
 
@@ -288,8 +345,11 @@ function select_backend(backend::Symbol, required_bytes::Integer;
         # with remaining timeout - GPU contention spikes are typically short.
         deadline = time() + auto_timeout
         while true
-            device_idx, available = wait_for_gpu_nvml(required_bytes;
-                timeout=max(0.0, deadline - time()), on_wait=on_wait)
+            device_idx, available, failed = _poll_gpu(
+                backend, required_bytes;
+                timeout = max(0.0, deadline - time()), on_wait = on_wait
+            )
+            failed && return CPU()
             if !available
                 @warn "No GPU available after $(auto_timeout)s, using CPU"
                 return CPU()
@@ -300,10 +360,12 @@ function select_backend(backend::Symbol, required_bytes::Integer;
             catch e
                 _release_gpu_context(device_idx)
                 if time() >= deadline
-                    @warn "GPU context creation failed and timeout reached, using CPU" exception=e
+                    @warn "GPU context creation failed and timeout reached, using \
+                        CPU" exception = e
                     return CPU()
                 end
-                @warn "GPU $device_idx context creation failed (contention race), retrying" exception=e
+                @warn "GPU $device_idx context creation failed (contention race), \
+                    retrying" exception = e
             end
         end
     end
@@ -311,4 +373,5 @@ end
 
 # Default on_wait callback for user feedback
 const DEFAULT_ON_WAIT = (elapsed, available, required) ->
-    @info "Waiting for GPU memory..." elapsed=round(elapsed, digits=1) available=Base.format_bytes(available) required=Base.format_bytes(required)
+@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available =
+    Base.format_bytes(available) required = Base.format_bytes(required)

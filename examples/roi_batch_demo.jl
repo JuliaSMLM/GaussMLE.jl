@@ -28,7 +28,7 @@ println("Configuration:")
 println("  ROI size: $roi_size × $roi_size pixels")
 println("  Number of ROIs: $n_rois")
 println("  Camera: $camera_size × $camera_size pixels")
-println("  Pixel size: $(pixel_size_um*1000) nm\n")
+println("  Pixel size: $(pixel_size_um * 1000) nm\n")
 
 # 1. Generate synthetic ROI data using new simulator
 println("1. Generating synthetic ROI data...")
@@ -41,7 +41,7 @@ psf_model = GaussMLE.GaussianXYNB(0.13f0)
 
 # Generate ROI batch with simulator
 roi_batch = generate_roi_batch(
-    ideal_camera, 
+    ideal_camera,
     psf_model;
     n_rois = n_rois,
     roi_size = roi_size,
@@ -49,7 +49,10 @@ roi_batch = generate_roi_batch(
     seed = 42
 )
 println("  Created ROIBatch with $(length(roi_batch)) ROIs")
-println("  Frames covered: $(minimum(roi_batch.frame_indices)) to $(maximum(roi_batch.frame_indices))")
+println(
+    "  Frames covered: $(minimum(roi_batch.frame_indices)) to \
+        $(maximum(roi_batch.frame_indices))",
+)
 
 # 2. Fit with ideal camera model
 println("\n2. Fitting with ideal camera model...")
@@ -68,9 +71,11 @@ println("\n  First 3 ROI results (ideal camera):")
 println("  ROI | X (cam) | Y (cam) | Photons | Background")
 println("  ----|---------|---------|---------|------------")
 for i in 1:min(3, n_rois)
-    @printf("   %2d | %7.2f | %7.2f | %7.0f | %10.1f\n",
-            i, results_ideal.x_camera[i], results_ideal.y_camera[i],
-            results_ideal.parameters[3, i], results_ideal.parameters[4, i])
+    @printf(
+        "   %2d | %7.2f | %7.2f | %7.0f | %10.1f\n",
+        i, results_ideal.x_camera[i], results_ideal.y_camera[i],
+        results_ideal.parameters[3, i], results_ideal.parameters[4, i]
+    )
 end
 
 # 3. Create sCMOS variance map and fit
@@ -95,7 +100,9 @@ scmos_camera = SMLMData.SCMOSCamera(
 
 println("  sCMOS camera created with spatial variation")
 println("  Base readnoise: $(sqrt(10.0f0)) e⁻ rms (variance: 10 e⁻²)")
-println("  High-noise region: $(sqrt(50.0f0)) e⁻ rms (variance: 50 e⁻²) at (200:300, 200:300)")
+println(
+    "  High-noise region: $(sqrt(50.0f0)) e⁻ rms (variance: 50 e⁻²) at (200:300, 200:300)",
+)
 
 # Generate new data with sCMOS noise
 roi_batch_scmos = generate_roi_batch(
@@ -117,21 +124,25 @@ println("\n  Uncertainty comparison (first 3 ROIs):")
 println("  ROI | σ_x (ideal) | σ_x (sCMOS) | σ_y (ideal) | σ_y (sCMOS)")
 println("  ----|-------------|-------------|-------------|-------------")
 for i in 1:min(3, n_rois)
-    @printf("   %2d |    %.4f   |    %.4f   |    %.4f   |    %.4f\n",
-            i, 
-            results_ideal.uncertainties[1, i],
-            results_scmos.uncertainties[1, i],
-            results_ideal.uncertainties[2, i],
-            results_scmos.uncertainties[2, i])
+    @printf(
+        "   %2d |    %.4f   |    %.4f   |    %.4f   |    %.4f\n",
+        i,
+        results_ideal.uncertainties[1, i],
+        results_scmos.uncertainties[1, i],
+        results_ideal.uncertainties[2, i],
+        results_scmos.uncertainties[2, i]
+    )
 end
 
 # 4. Convert to SMLMData format
 println("\n4. Converting to SMLMData format...")
 
 # Convert results to SMLD using the camera from roi_batch
-smld = to_smld(results_ideal, roi_batch; 
-               dataset = 1,
-               metadata = Dict{String,Any}("experiment" => "ROIBatch Demo"))
+smld = to_smld(
+    results_ideal, roi_batch;
+    dataset = 1,
+    metadata = Dict{String, Any}("experiment" => "ROIBatch Demo")
+)
 
 println("  Converted to BasicSMLD:")
 println("    - $(length(smld)) emitters")
@@ -146,12 +157,21 @@ for i in 1:min(3, n_rois)
     roi_y = results_ideal.parameters[2, i]
     cam_x = results_ideal.x_camera[i]
     cam_y = results_ideal.y_camera[i]
-    
+
     println("\n  ROI $i:")
-    println("    Corner (pixels): ($(roi_batch.corners[1,i]), $(roi_batch.corners[2,i]))")
-    println("    ROI coords: ($(round(roi_x, digits=2)), $(round(roi_y, digits=2))) pixels")
-    println("    Camera coords: ($(round(cam_x, digits=2)), $(round(cam_y, digits=2))) pixels")
-    println("    Physical coords: ($(round(emitter.x, digits=3)), $(round(emitter.y, digits=3))) μm")
+    println("    Corner (pixels): ($(roi_batch.corners[1, i]), $(roi_batch.corners[2, i]))")
+    println(
+        "    ROI coords: ($(round(roi_x, digits = 2)), \
+            $(round(roi_y, digits = 2))) pixels",
+    )
+    println(
+        "    Camera coords: ($(round(cam_x, digits = 2)), \
+            $(round(cam_y, digits = 2))) pixels",
+    )
+    println(
+        "    Physical coords: ($(round(emitter.x, digits = 3)), \
+            $(round(emitter.y, digits = 3))) μm",
+    )
 end
 
 # 6. Filter using SMLMData capabilities
@@ -171,13 +191,19 @@ x_positions = [e.x for e in smld.emitters]
 y_positions = [e.y for e in smld.emitters]
 
 println("\n=== Summary Statistics ===")
-println("Photons: mean=$(round(mean(photon_counts), digits=1)), " *
-        "std=$(round(std(photon_counts), digits=1))")
-println("X position (μm): mean=$(round(mean(x_positions), digits=2)), " *
-        "range=[$(round(minimum(x_positions), digits=2)), " *
-        "$(round(maximum(x_positions), digits=2))]")
-println("Y position (μm): mean=$(round(mean(y_positions), digits=2)), " *
-        "range=[$(round(minimum(y_positions), digits=2)), " *
-        "$(round(maximum(y_positions), digits=2))]")
+println(
+    "Photons: mean=$(round(mean(photon_counts), digits = 1)), " *
+        "std=$(round(std(photon_counts), digits = 1))"
+)
+println(
+    "X position (μm): mean=$(round(mean(x_positions), digits = 2)), " *
+        "range=[$(round(minimum(x_positions), digits = 2)), " *
+        "$(round(maximum(x_positions), digits = 2))]"
+)
+println(
+    "Y position (μm): mean=$(round(mean(y_positions), digits = 2)), " *
+        "range=[$(round(minimum(y_positions), digits = 2)), " *
+        "$(round(maximum(y_positions), digits = 2))]"
+)
 
 println("\n✓ Demo complete!")

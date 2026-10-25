@@ -19,7 +19,7 @@ psf_3d = AstigmaticXYZNB{Float32}(
     0.05f0, 0.05f0,  # Ax, Ay
     0.3f0, 0.3f0,    # Bx, By
     0.05f0,          # γ (focal offset, microns)
-    0.10f0           # d (z-range, microns)
+    0.1f0           # d (z-range, microns)
 )
 println("  PSF: Astigmatic 3D")
 
@@ -29,7 +29,7 @@ data = rand(Float32, 11, 11, 50)
 
 # Create fitter
 println("\nCreating 3D fitter...")
-fitter = GaussMLEConfig(psf_model=psf_3d, iterations=30)
+fitter = GaussMLEConfig(psf_model = psf_3d, iterations = 30)
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
@@ -45,12 +45,14 @@ photons = [e.photons for e in smld.emitters]
 σ_x = [e.σ_x for e in smld.emitters]
 
 println("\nPositions:")
-println("  Mean x: $(round(mean(x_pos), digits=2)) ± $(round(mean(σ_x)*1000, digits=1)) nm")
-println("  Mean y: $(round(mean(y_pos), digits=2)) ± $(round(mean(σ_x)*1000, digits=1)) nm")
+println("  Mean x: $(round(mean(x_pos), digits = 2)) ± \
+    $(round(mean(σ_x) * 1000, digits = 1)) nm")
+println("  Mean y: $(round(mean(y_pos), digits = 2)) ± \
+    $(round(mean(σ_x) * 1000, digits = 1)) nm")
 
 println("\nPhotometry:")
-println("  Mean photons: $(round(mean(photons), digits=1))")
-println("  Mean precision: $(round(mean(σ_x)*1000, digits=1)) nm")
+println("  Mean photons: $(round(mean(photons), digits = 1))")
+println("  Mean precision: $(round(mean(σ_x) * 1000, digits = 1)) nm")
 
 println("\n✓ 3D astigmatic fitting complete!")
 println("Output: BasicSMLD ready for ecosystem")

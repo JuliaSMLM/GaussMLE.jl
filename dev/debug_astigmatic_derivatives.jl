@@ -34,8 +34,8 @@ println("  N=$N, bg=$bg")
 σy = σy₀ * sqrt(αy)
 
 println("\nComputed Widths:")
-println("  αx = $αx (from z-γ=$(z-γ))")
-println("  αy = $αy (from z+γ=$(z+γ))")
+println("  αx = $αx (from z-γ=$(z - γ))")
+println("  αy = $αy (from z+γ=$(z + γ))")
 println("  σx = $σx")
 println("  σy = $σy")
 
@@ -50,10 +50,10 @@ println("  psf_y (at i=$i, y=$y, σy=$σy) = $psf_y")
 println("  model = $model")
 
 # Compute analytical z-derivative
-dαx_dz = (2*(z-γ)/d^2 + 3*Ax*(z-γ)^2/d^3 + 4*Bx*(z-γ)^3/d^4)
-dαy_dz = (2*(z+γ)/d^2 + 3*Ay*(z+γ)^2/d^3 + 4*By*(z+γ)^3/d^4)
-dσx_dz = (σx₀ / (2*sqrt(αx))) * dαx_dz
-dσy_dz = (σy₀ / (2*sqrt(αy))) * dαy_dz
+dαx_dz = (2 * (z - γ) / d^2 + 3 * Ax * (z - γ)^2 / d^3 + 4 * Bx * (z - γ)^3 / d^4)
+dαy_dz = (2 * (z + γ) / d^2 + 3 * Ay * (z + γ)^2 / d^3 + 4 * By * (z + γ)^3 / d^4)
+dσx_dz = (σx₀ / (2 * sqrt(αx))) * dαx_dz
+dσy_dz = (σy₀ / (2 * sqrt(αy))) * dαy_dz
 
 println("\nAnalytical Derivatives:")
 println("  dαx/dz = $dαx_dz")
@@ -63,13 +63,13 @@ println("  dσy/dz = $dσy_dz")
 
 # Numerical check of dσx/dz
 ε = 1.0f0
-αx_plus = compute_alpha((z+ε) - γ, Ax, Bx, d)
+αx_plus = compute_alpha((z + ε) - γ, Ax, Bx, d)
 σx_plus = σx₀ * sqrt(αx_plus)
 dσx_dz_num = (σx_plus - σx) / ε
 
 println("\nNumerical Validation (dσx/dz):")
 println("  Analytical: $dσx_dz")
 println("  Numerical:  $dσx_dz_num")
-println("  Match: $(isapprox(dσx_dz, dσx_dz_num, rtol=0.01))")
+println("  Match: $(isapprox(dσx_dz, dσx_dz_num, rtol = 0.01))")
 
 println("\n" * "="^70)

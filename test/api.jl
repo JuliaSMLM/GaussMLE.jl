@@ -1,22 +1,24 @@
+using Test, GaussMLE, SMLMData, Statistics
+
 """
 Consolidated test of new simulator and ROIBatch features
 """
 
 @testset "New Features Tests" begin
-    
+
     @testset "Basic Simulator with IdealCamera" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
-        
-        batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=10, seed=42)
-        
+
+        batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 10, seed = 42)
+
         @test batch isa GaussMLE.ROIBatch
         @test length(batch) == 10
         @test batch.roi_size == 11
         @test batch.camera === camera
         @test size(batch.data) == (11, 11, 10)
     end
-    
+
     @testset "SCMOSCamera Support" begin
         # Create sCMOS camera using SMLMData 0.4 API
         # Uniform readnoise of 5.0 e⁻ (variance = 25.0 e⁻²)
@@ -34,16 +36,16 @@ Consolidated test of new simulator and ROIBatch features
 
         # Generate data with sCMOS
         psf = GaussMLE.GaussianXYNB(0.13f0)
-        batch = GaussMLE.generate_roi_batch(scmos, psf; n_rois=5, seed=42)
+        batch = GaussMLE.generate_roi_batch(scmos, psf; n_rois = 5, seed = 42)
 
         @test batch.camera === scmos
     end
-    
+
     @testset "Fitting with ROIBatch" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
 
-        batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=20, seed=42)
+        batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 20, seed = 42)
 
         fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf,
@@ -61,24 +63,28 @@ Consolidated test of new simulator and ROIBatch features
         σ_x_vals = [e.σ_x for e in smld.emitters]  # In microns
 
         # Check reasonable results
-        @test mean(photons_vals) ≈ 1000.0 rtol=0.5
+        @test mean(photons_vals) ≈ 1000.0 rtol = 0.5
         # σ_x is in microns, expect 0.002-0.02 μm (0.02-0.2 pixels for 0.1 μm pixels)
         @test all(0.002 .< σ_x_vals .< 0.02)
     end
-    
+
     @testset "SMLMData Conversion" begin
         camera = SMLMData.IdealCamera(256, 256, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
 
         # Known corners for testing
         corners = Matrix{Int32}(Int32[10 20; 30 40]')
-        batch = GaussMLE.generate_roi_batch(camera, psf;
-                                           n_rois=2,
-                                           corners=corners,
-                                           xy_variation=0.0f0,
-                                           seed=42)
+        batch = GaussMLE.generate_roi_batch(
+            camera, psf;
+            n_rois = 2,
+            corners = corners,
+            xy_variation = 0.0f0,
+            seed = 42
+        )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
+        fitter = GaussMLE.GaussMLEConfig(
+            psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
+        )
         smld, _info = GaussMLE.fit(batch, fitter)
 
         @test smld isa SMLMData.BasicSMLD
@@ -92,19 +98,21 @@ Consolidated test of new simulator and ROIBatch features
         @test all([isfinite(e.x) && e.x >= 0 for e in smld.emitters])
         @test all([isfinite(e.y) && e.y >= 0 for e in smld.emitters])
     end
-    
+
     @testset "Different PSF Models" begin
         camera = SMLMData.IdealCamera(256, 256, 0.1)
 
         psf_models = [
             GaussMLE.GaussianXYNB(0.13f0),
             GaussMLE.GaussianXYNBS(),
-            GaussMLE.GaussianXYNBSXSY()
+            GaussMLE.GaussianXYNBSXSY(),
         ]
 
         for psf in psf_models
-            batch = GaussMLE.generate_roi_batch(camera, psf; n_rois=5, seed=42)
-            fitter = GaussMLE.GaussMLEConfig(psf_model=psf, device=GaussMLE.CPU(), iterations=20)
+            batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 5, seed = 42)
+            fitter = GaussMLE.GaussMLEConfig(
+                psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
+            )
             smld, _info = GaussMLE.fit(batch, fitter)
 
             @test length(smld.emitters) == 5

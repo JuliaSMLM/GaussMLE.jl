@@ -6,14 +6,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ### Testing
 ```bash
-# Run all tests (GPU auto-detected)
+# Core group (what GitHub CI runs)
 julia --project -e 'using Pkg; Pkg.test()'
 
-# Run specific test file
-julia --project -e 'using Test; include("test/model_validation_tests.jl")'
+# One or more groups: Core, QA, GPU, Long
+GROUP=QA julia --project -e 'using Pkg; Pkg.test()'
+GROUP=GPU,Long julia --project -e 'using Pkg; Pkg.test()'
+
+# Every group this machine can run (GPU is skipped without a functional CUDA GPU)
+GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'
 ```
 
-GPU tests run automatically when a CUDA GPU is detected.
+Groups are declared in `test/test_groups.toml` (lab standard, admiral decision 0008).
 
 ### Documentation
 ```bash
@@ -281,10 +285,11 @@ All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility
 ### Testing Philosophy
 
 See `test/CLAUDE.md` for detailed testing guidelines. Key points:
-- **No test gating**: All tests run on every invocation (except GPU hardware detection)
+- Lab test layout: `test/runtests.jl` is the lab template (never edit it); groups are
+  Core (`test/*.jl`), QA (`test/qa/`), GPU (`test/gpu/`), Long (`test/long/`)
 - **No @test_skip**: Failing tests indicate real problems
-- Local performance benchmarks run automatically (skipped in CI via `ENV["CI"]` check)
-- All `using` statements must be in `test/runtests.jl`
+- Each test file runs in its own module and carries its own `using` statements
+- The performance benchmark is part of the GPU group; GitHub CI runs only Core and QA
 
 ### Reference Implementation
 

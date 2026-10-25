@@ -1,3 +1,10 @@
+# Monte Carlo validation on 11x11 ROIs (restored from comprehensive_cpu_tests.jl): the
+# run_model_validation checks of model_validation.jl at a smaller box and other sample
+# counts, plus four precision bounds nothing else keeps (low/high photons, narrow/wide PSF).
+using Test, GaussMLE, SMLMData, Random, Statistics, Distributions
+
+include(joinpath(@__DIR__, "utils", "validation_utils.jl"))
+
 """
 Comprehensive CPU model tests for all PSF models with both ideal and sCMOS cameras
 """
@@ -8,10 +15,10 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
     n_test_blobs = 500  # Reduced for faster testing
     box_size = 11
     verbose = get(ENV, "VERBOSE_TESTS", "false") == "true"
-    
+
     @testset "Fixed Sigma Model (xynb)" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
                 :xynb, psf_model, n_test_blobs;
@@ -20,7 +27,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
@@ -32,10 +39,10 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             @test results[:background].std_pass
         end
     end
-    
+
     @testset "Variable Sigma Model (xynbs)" begin
         psf_model = GaussMLE.GaussianXYNBS()
-        
+
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
                 :xynbs, psf_model, n_test_blobs;
@@ -44,7 +51,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
@@ -61,7 +68,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
 
     @testset "Anisotropic Model (xynbsxsy)" begin
         psf_model = GaussMLE.GaussianXYNBSXSY()
-        
+
         @testset "Ideal Camera" begin
             passed, results = run_model_validation(
                 :xynbsxsy, psf_model, n_test_blobs;
@@ -70,7 +77,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].bias_pass
             @test results[:y].bias_pass
@@ -89,7 +96,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
 
     @testset "Photon Level Sensitivity" begin
         psf_model = GaussMLE.GaussianXYNB(0.13f0)
-        
+
         @testset "Low photons (N=200) - Ideal" begin
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
@@ -100,14 +107,14 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.3f0,
                 verbose = verbose
             )
-            
+
             @test passed
             # Lower photons = worse precision
             @test results[:x].empirical_std > 0.08f0  # Should have worse precision
             @test results[:x].std_pass
             @test results[:y].std_pass
         end
-        
+
         @testset "High photons (N=5000) - Ideal" begin
             # Use more samples for better statistics at high SNR
             passed, results = run_model_validation(
@@ -127,10 +134,10 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             @test results[:y].std_pass
         end
     end
-    
+
     @testset "PSF Width Variations" begin
         @testset "Narrow PSF (σ=1.0) - Ideal" begin
-            psf_model = GaussMLE.GaussianXYNB(0.10f0)
+            psf_model = GaussMLE.GaussianXYNB(0.1f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
@@ -138,16 +145,16 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 1.0f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].std_pass
             @test results[:y].std_pass
             # Narrower PSF should give better localization
             @test results[:x].empirical_std < 0.06f0
         end
-        
+
         @testset "Wide PSF (σ=2.0) - Ideal" begin
-            psf_model = GaussMLE.GaussianXYNB(0.20f0)
+            psf_model = GaussMLE.GaussianXYNB(0.2f0)
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
@@ -155,7 +162,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
                 sigma = 2.0f0,
                 verbose = verbose
             )
-            
+
             @test passed
             @test results[:x].std_pass
             @test results[:y].std_pass

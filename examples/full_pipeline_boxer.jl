@@ -24,14 +24,14 @@ println("=== Full Pipeline: Boxer → GaussMLE ===\n")
 
 # Step 1: Generate synthetic SMLM image stack
 println("Step 1: Generating synthetic SMLM data")
-println("-" ^ 50)
+println("-"^50)
 
 # Create camera (SMLMData 0.5 API)
 camera = SMLMData.IdealCamera(0:255, 0:255, 0.1)  # pixel_edges, 0.1μm/pixel
 width = length(camera.pixel_edges_x) - 1
 height = length(camera.pixel_edges_y) - 1
 pixelsize = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-println("  Camera: $(width)×$(height) pixels, $(pixelsize*1000)nm/pixel")
+println("  Camera: $(width)×$(height) pixels, $(pixelsize * 1000)nm/pixel")
 
 # Generate image stack with sparse spots
 n_frames = 10
@@ -49,10 +49,11 @@ for frame in 1:n_frames
         photons = 1000.0f0 + 500.0f0 * randn(Float32)
 
         # Add Gaussian spot
-        for i in max(1, y-10):min(256, y+10)
-            for j in max(1, x-10):min(256, x+10)
+        for i in max(1, y - 10):min(256, y + 10)
+            for j in max(1, x - 10):min(256, x + 10)
                 r2 = (j - x)^2 + (i - y)^2
-                imagestack[i, j, frame] += photons * exp(-r2 / (2 * σ_psf^2)) / (2π * σ_psf^2)
+                imagestack[i, j, frame] +=
+                    photons * exp(-r2 / (2 * σ_psf^2)) / (2π * σ_psf^2)
             end
         end
     end
@@ -63,11 +64,11 @@ for frame in 1:n_frames
 end
 
 println("  ✓ Generated image stack: $(size(imagestack))")
-println("  Mean intensity: $(round(mean(imagestack), digits=2))")
+println("  Mean intensity: $(round(mean(imagestack), digits = 2))")
 
 # Step 2: Detect spots with SMLMBoxer
 println("\nStep 2: Detecting spots with SMLMBoxer")
-println("-" ^ 50)
+println("-"^50)
 
 boxer_result = getboxes(
     imagestack,
@@ -90,14 +91,16 @@ if boxer_result isa NamedTuple
 
     # Step 3: Create ROIBatch for GaussMLE
     println("\nStep 3: Creating ROIBatch for GaussMLE")
-    println("-" ^ 50)
+    println("-"^50)
 
     # Convert Boxer output to ROIBatch
     # CRITICAL: boxcoords is [row, col, frame] but ROIBatch needs [x, y] = [col, row]!
     batch = SMLMData.ROIBatch(
         boxer_result.boxes,
-        Int32.(permutedims(boxer_result.boxcoords[:, [2,1]])),  # [row,col] → [col,row] → (2×N)
-        Int32.(boxer_result.boxcoords[:, 3]),                   # Frame indices
+        # [row,col] → [col,row] → (2×N)
+        Int32.(permutedims(boxer_result.boxcoords[:, [2, 1]])),
+        # Frame indices
+        Int32.(boxer_result.boxcoords[:, 3]),
         camera
     )
 
@@ -114,7 +117,7 @@ end
 
 # Step 4: Fit with GaussMLE
 println("\nStep 4: Fitting with GaussMLE")
-println("-" ^ 50)
+println("-"^50)
 
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),
@@ -131,7 +134,7 @@ println("  Result type: $(typeof(results).name.name)")
 
 # Step 5: Convert to SMLD (ecosystem standard)
 println("\nStep 5: Convert to BasicSMLD (ecosystem standard)")
-println("-" ^ 50)
+println("-"^50)
 
 smld = GaussMLE.to_smld(results, batch)
 println("  ✓ Created BasicSMLD")
@@ -142,7 +145,7 @@ println("  Camera: $(typeof(smld.camera).name.name)")
 
 # Step 6: Results analysis from SMLD
 println("\nStep 6: Analyze SMLD Results")
-println("-" ^ 50)
+println("-"^50)
 
 # Extract positions and photons
 x_positions = [e.x for e in smld.emitters]
@@ -151,18 +154,27 @@ photons = [e.photons for e in smld.emitters]
 x_errors = [e.σ_x for e in smld.emitters]
 
 println("  Mean position (microns):")
-println("    x: $(round(mean(x_positions), digits=3)) ± $(round(mean(x_errors)*1000, digits=1)) nm")
-println("    y: $(round(mean(y_positions), digits=3)) ± $(round(mean(x_errors)*1000, digits=1)) nm")
-println("  Mean photons: $(round(mean(photons), digits=1))")
-println("  Localization precision: $(round(mean(x_errors)*1000, digits=1)) nm")
+println(
+    "    x: $(round(mean(x_positions), digits = 3)) ± \
+        $(round(mean(x_errors) * 1000, digits = 1)) nm",
+)
+println(
+    "    y: $(round(mean(y_positions), digits = 3)) ± \
+        $(round(mean(x_errors) * 1000, digits = 1)) nm",
+)
+println("  Mean photons: $(round(mean(photons), digits = 1))")
+println("  Localization precision: $(round(mean(x_errors) * 1000, digits = 1)) nm")
 
 # First emitter details
 if !isempty(smld.emitters)
     e1 = smld.emitters[1]
     println("\n  First emitter:")
-    println("    Position: ($(round(e1.x, digits=3)), $(round(e1.y, digits=3))) μm")
-    println("    Photons: $(round(e1.photons, digits=1))")
-    println("    σ: ($(round(e1.σ_x*1000, digits=1)), $(round(e1.σ_y*1000, digits=1))) nm")
+    println("    Position: ($(round(e1.x, digits = 3)), $(round(e1.y, digits = 3))) μm")
+    println("    Photons: $(round(e1.photons, digits = 1))")
+    println(
+        "    σ: ($(round(e1.σ_x * 1000, digits = 1)), \
+            $(round(e1.σ_y * 1000, digits = 1))) nm",
+    )
     println("    Frame: $(e1.frame)")
 end
 

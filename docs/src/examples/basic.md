@@ -125,11 +125,12 @@ Each emitter in `smld.emitters` is an `Emitter2DFitGaussMLE` containing:
 | Field | Description | Units |
 |-------|-------------|-------|
 | `x`, `y` | Fitted position | microns |
-| `photons` | Total photon count | photons |
-| `bg` | Background level | photons/pixel |
+| `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
+| `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
-| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
+| `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
@@ -241,9 +242,11 @@ The ROI should be large enough to capture the full PSF:
 ### Handling Edge Cases
 
 ```julia
-# Filter out failed fits using @filter
-good = @filter(smld, photons > 0)
-println("Valid fits: $(length(good.emitters)) / $(length(smld.emitters))")
+# Filter by finite position uncertainties and goodness-of-fit (not convergence)
+good_emitters = filter(
+    e -> isfinite(e.σ_x) && isfinite(e.σ_y) && e.pvalue > 0.01, smld.emitters
+)
+println("Quality fits: $(length(good_emitters)) / $(length(smld.emitters))")
 ```
 
 ## Next Steps
