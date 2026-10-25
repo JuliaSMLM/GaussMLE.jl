@@ -1,8 +1,10 @@
 # Regression tests for GPU free-memory queries and backend fallback behavior.
 using Test, GaussMLE, CUDA, SMLMData
 
-# The NVML-unsupported fallback is reachable only on a GPU without NVML memory info
-# (the DGX Spark GB10), so _gpu_free_memory is the regression point for that bug.
+# These private helpers are tested directly because fit cannot reach their failure
+# paths on a lab machine: missing NVML memory info needs a GPU such as the DGX Spark
+# GB10, and a failed poll needs more GPU memory than exists. _poll_gpu is the helper
+# that fit actually calls.
 @testset "GPU free-memory queries" begin
     @testset "NVML reports free memory" begin
         free, from_nvml = GaussMLE._gpu_free_memory(0; nvml_free = _ -> 123_456)
@@ -45,24 +47,24 @@ using Test, GaussMLE, CUDA, SMLMData
 
         @testset "Automatic backend falls back with a warning" begin
             warning = r"GPU availability check failed, using CPU"
-            device = @test_logs (:warn, warning) match_mode = :any begin
-                GaussMLE.select_backend(
-                    :auto, required_bytes; auto_timeout = 2.0, on_wait = on_wait
+            result = @test_logs (:warn, warning) match_mode = :any begin
+                GaussMLE._poll_gpu(
+                    :auto, required_bytes; timeout = 2.0, on_wait = on_wait
                 )
             end
-            @test device isa GaussMLE.CPU
+            @test result == (-1, false, true)
         end
 
         @testset "Explicit GPU propagates polling failure" begin
-            @test_throws failure GaussMLE.select_backend(
-                :gpu, required_bytes; gpu_timeout = 2.0, on_wait = on_wait
+            @test_throws failure GaussMLE._poll_gpu(
+                :gpu, required_bytes; timeout = 2.0, on_wait = on_wait
             )
         end
 
         @testset "Automatic backend propagates interrupts" begin
             on_interrupt = (_, _, _) -> throw(InterruptException())
-            @test_throws InterruptException GaussMLE.select_backend(
-                :auto, required_bytes; auto_timeout = 2.0, on_wait = on_interrupt
+            @test_throws InterruptException GaussMLE._poll_gpu(
+                :auto, required_bytes; timeout = 2.0, on_wait = on_interrupt
             )
         end
     end

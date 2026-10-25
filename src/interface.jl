@@ -450,7 +450,11 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 - `fitter::GaussMLEConfig`: Configured fitter object
 
 # Keyword Arguments
-- `variance_map=nothing`: Optional sCMOS variance map (will override fitter's camera model)
+- `variance_map=nothing`: Poisson noise when `nothing`; a supplied readnoise-variance map
+  (electrons²) selects the sCMOS path for data already calibrated in electrons
+
+Array input assumes 0.1 μm pixels and synthetic horizontally tiled ROI corners.
+Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
@@ -703,8 +707,8 @@ function fit(
 end
 
 """
-    fit(batch::ROIBatch; psf_model=GaussianXYNB(), iterations=20, backend=:auto, ...) ->
-        (BasicSMLD, GaussMLEFitInfo)
+    fit(batch::ROIBatch; psf_model=GaussianXYNB(0.13f0), iterations=20,
+        backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
 
 Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
 Kwargs match GaussMLEConfig fields exactly.

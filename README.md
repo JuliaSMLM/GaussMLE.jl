@@ -36,11 +36,11 @@ smld.emitters[1].x, smld.emitters[1].σ_x
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
-GPU scheduling uses NVML polling to avoid OOM during device discovery in multi-process environments. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
+GPU scheduling prefers context-free NVML memory polling. Unsupported NVML memory queries fall back to CUDA queries, which may create a context; NVML contention checks apply only when memory came from NVML. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
 
 ## PSF Models
 
-All PSF parameters are specified in microns for camera-independence.
+Spatial PSF calibration parameters are specified in microns for camera-independence; Ax, Ay, Bx and By are dimensionless. Internally, x, y and lateral widths use pixels, while astigmatic z, γ and d remain in microns.
 
 | Model | Constructor | Fitted Parameters | Use Case |
 |-------|-------------|-------------------|----------|
@@ -61,6 +61,8 @@ All PSF parameters are specified in microns for camera-independence.
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
 
 All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `pvalue`, `frame`.
+
+For IdealCamera fits, `photons` and `σ_photons` use photons, and `bg` and `σ_bg` use photons/pixel. For sCMOS fits, these fields use electrons and electrons/pixel respectively, without quantum-efficiency correction.
 
 `GaussMLEFitInfo` fields:
 

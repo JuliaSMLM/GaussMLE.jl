@@ -35,5 +35,9 @@ GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'  # every group this 
   it over moves to Long (CPU) or GPU.
 - New or changed public behaviour gets tests of its documented contract; a bug fix gets one
   regression test. No tests of private helpers, no duplicates of behaviour tested elsewhere.
+- Exception: GaussMLE's GPU memory and poll helpers (`_gpu_free_memory`, `_poll_gpu`)
+  are tested directly because their failure paths cannot be reached through `fit` on
+  a lab machine: NVML memory info is missing only on GPUs such as the DGX Spark GB10,
+  and a failed poll needs more GPU memory than exists.
 - Report the test count per group before and after every change.
 - Statistical tests seed their RNG or compare on a tolerance that holds for any draw.

@@ -9,7 +9,7 @@ GaussMLE.jl provides four PSF model types to accommodate different experimental 
 The most commonly used model with 4 fitted parameters:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 
 The PSF width (sigma) is **fixed** and specified at construction time.
@@ -36,7 +36,7 @@ smld, info = fit(data, fitter)
 Extended model with 5 fitted parameters:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 - **sigma**: PSF width (fitted)
 
@@ -66,7 +66,7 @@ sigma_uncertainties = [e.σ_σ for e in smld.emitters]
 Model with 6 fitted parameters for elliptical PSFs:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 - **sigma_x**: PSF width in x (fitted)
 - **sigma_y**: PSF width in y (fitted)
@@ -97,7 +97,7 @@ Model for 3D localization using engineered astigmatism (5 fitted parameters):
 
 - **x, y**: Lateral position
 - **z**: Axial position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 
 The z-position is encoded in the PSF shape through astigmatism calibration parameters.
@@ -148,12 +148,13 @@ The PSF width varies with z according to:
 
 ## Unit Convention
 
-**All PSF model parameters use physical units (microns):**
+**Spatial PSF calibration parameters use physical units (microns):**
 
 - `GaussianXYNB(sigma)`: sigma in microns (e.g., `0.13f0` = 130nm)
 - `AstigmaticXYZNB`: sigma_x0, sigma_y0, gamma, d all in microns
+- `AstigmaticXYZNB`: Ax, Ay, Bx and By are dimensionless
 
-The package internally converts to pixel units based on the camera pixel size during fitting.
+Internally, x, y and lateral widths use pixels based on the camera pixel size; astigmatic z, gamma and d remain in microns.
 
 ## Choosing the Right Model
 

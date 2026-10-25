@@ -10,6 +10,9 @@ All emitter types include:
 - CRLB uncertainties (standard)
 - Goodness-of-fit p-value (from χ² test)
 - PSF-specific parameters (σ, σx, σy, z)
+
+IdealCamera photometry uses photons and photons/pixel; sCMOS photometry uses electrons
+and electrons/pixel without quantum-efficiency correction.
 """
 
 """
@@ -17,20 +20,22 @@ All emitter types include:
 
 2D emitter for fixed-σ Gaussian PSF (GaussianXYNB) with goodness-of-fit.
 
-Identical to SMLMData.Emitter2DFit but adds p-value and covariance fields.
+Equivalent localization fields to SMLMData.Emitter2DFit, with an additional `pvalue` field.
 
 # Fields
 ## Spatial (microns)
 - `x::T`, `y::T`: Position in microns
 
 ## Photometry
-- `photons::T`: Total photon count
-- `bg::T`: Background level
+- `photons::T`: Total signal (photons for IdealCamera, electrons for sCMOS)
+- `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
-- `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
+- `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
+- `σ_bg::T`: Background uncertainty (photons/pixel for IdealCamera,
+  electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
 - `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
@@ -77,8 +82,8 @@ end
 - `x::T`, `y::T`: Position in microns
 
 ## Photometry
-- `photons::T`: Total photon count
-- `bg::T`: Background level
+- `photons::T`: Total signal (photons for IdealCamera, electrons for sCMOS)
+- `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## PSF Parameter
 - `σ::T`: Fitted PSF width (microns)
@@ -86,8 +91,13 @@ end
 ## Uncertainties (CRLB)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
-- `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
+- `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
+- `σ_bg::T`: Background uncertainty (photons/pixel for IdealCamera,
+  electrons/pixel for sCMOS)
 - `σ_σ::T`: PSF width uncertainty (microns)
+
+## Goodness-of-Fit
+- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -135,8 +145,8 @@ end
 - `x::T`, `y::T`: Position in microns
 
 ## Photometry
-- `photons::T`: Total photon count
-- `bg::T`: Background level
+- `photons::T`: Total signal (photons for IdealCamera, electrons for sCMOS)
+- `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## PSF Parameters
 - `σx::T`, `σy::T`: Fitted PSF widths in x and y (microns)
@@ -144,8 +154,13 @@ end
 ## Uncertainties (CRLB)
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
-- `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
+- `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
+- `σ_bg::T`: Background uncertainty (photons/pixel for IdealCamera,
+  electrons/pixel for sCMOS)
 - `σ_σx::T`, `σ_σy::T`: PSF width uncertainties (microns)
+
+## Goodness-of-Fit
+- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -190,21 +205,23 @@ end
 
 3D emitter for astigmatic PSF (AstigmaticXYZNB) with goodness-of-fit.
 
-Identical to SMLMData.Emitter3DFit but adds p-value and covariance fields.
+Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pvalue` field.
 
 # Fields
 ## Spatial (microns)
 - `x::T`, `y::T`, `z::T`: Position in microns
 
 ## Photometry
-- `photons::T`: Total photon count
-- `bg::T`: Background level
+- `photons::T`: Total signal (photons for IdealCamera, electrons for sCMOS)
+- `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
 - `σ_x::T`, `σ_y::T`, `σ_z::T`: Position uncertainties (microns)
 - `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of
   Fisher matrix inverse
-- `σ_photons::T`, `σ_bg::T`: Photometry uncertainties
+- `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
+- `σ_bg::T`: Background uncertainty (photons/pixel for IdealCamera,
+  electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
 - `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)

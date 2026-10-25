@@ -26,7 +26,9 @@ Generate synthetic ROI data with camera-appropriate noise.
 - `frame_indices::Union{Nothing, Vector{Int32}} = nothing`: Frame indices or all frame 1
 - `xy_variation::Float32 = 1.0`: Position variation (±pixels) when using defaults
 - `corner_mode::Symbol = :random`: Corner generation mode (:random, :grid, :clustered)
-- `min_spacing::Int = 20`: Minimum pixel spacing between ROIs
+- `min_spacing::Int = 20`: Requested pixel spacing for grid and best-effort random
+  placement; random fallback may violate it. In clustered mode it controls offsets
+  around cluster centers.
 - `seed::Union{Nothing, Int} = nothing`: Random seed for reproducibility
 
 # Returns
