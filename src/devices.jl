@@ -31,6 +31,7 @@ Map a 0-based CUDA device ordinal to its NVML device by UUID. CUDA ordinals hono
 physical GPU, mapping a MIG instance to its parent as `CUDA.versioninfo` does.
 `CUDA.uuid` would return the MIG UUID, which `NVML.Device(::UUID)` looks up as a GPU
 UUID and fails. The UUID query needs no CUDA context.
+On a MIG instance, memory and process figures are the parent GPU's.
 """
 _nvml_device(device_idx::Integer) =
     CUDA.NVML.Device(CUDA.parent_uuid(CUDA.CuDevice(device_idx)))
@@ -55,6 +56,40 @@ function _gpu_free_memory(
         end
         rethrow()
     end
+end
+
+"""
+    _gpu_contended(device_idx::Integer; my_pid = getpid(),
+        processes = CUDA.NVML.compute_processes,
+        utilization = CUDA.NVML.utilization_rates) -> Bool
+
+Return true when another process is present and GPU compute utilization exceeds 90%.
+`device_idx` is a 0-based CUDA device ordinal. Both queries use its NVML device,
+and `utilization` returns compute utilization as a fraction in [0, 1].
+A failed process query means not contended; a failed utilization query uses zero.
+NVML device lookup errors propagate.
+"""
+function _gpu_contended(
+        device_idx::Integer; my_pid = getpid(),
+        processes = CUDA.NVML.compute_processes,
+        utilization = CUDA.NVML.utilization_rates
+    )
+    nvml_dev = _nvml_device(device_idx)
+    procs = try
+        processes(nvml_dev)
+    catch
+        # NVML process query can fail on some drivers; skip contention check
+        return false
+    end
+    any(p -> p.first != my_pid, procs) || return false
+
+    # Other processes present - check if they're actually threatening
+    util = try
+        utilization(nvml_dev)
+    catch
+        (; compute = 0.0, memory = 0.0)
+    end
+    return util.compute > 0.9
 end
 
 # Multi-GPU support
@@ -183,8 +218,10 @@ Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeo
 The index is a 0-based CUDA device ordinal, which honors `CUDA_VISIBLE_DEVICES`.
 
 Contention detection runs only when memory came from NVML: a GPU is considered contended
-when other processes are present AND either free memory is insufficient or compute
-utilization exceeds 90%. Other NVML errors propagate.
+when another process is present and compute utilization exceeds 90%. GPUs with too little
+free memory are skipped before this check. NVML device lookup and memory-query errors
+propagate, except for the documented `NVML_ERROR_NOT_SUPPORTED` fallback. A failed process
+or utilization query disables that part of the contention check.
 
 # Arguments
 - `required_bytes`: Minimum bytes needed (checks for 1.5x as safety margin)
@@ -216,28 +253,7 @@ function wait_for_gpu_nvml(
             # The CUDA fallback cannot rely on NVML contention queries.
             from_nvml || return (i, true)
 
-            # Check contention: other processes on this GPU
-            nvml_dev = _nvml_device(i)
-            procs = try
-                CUDA.NVML.compute_processes(nvml_dev)
-            catch
-                # NVML process query can fail on some drivers; skip contention check
-                Dict{UInt32, UInt64}()
-            end
-            other_procs = count(p -> p.first != my_pid, procs)
-
-            if other_procs > 0
-                # Other processes present - check if they're actually threatening
-                util = try
-                    CUDA.NVML.utilization_rates(nvml_dev)
-                catch
-                    (; compute = 0, memory = 0)
-                end
-                # Contended: other procs AND (low memory OR high compute)
-                if free < required_with_margin || util.compute > 90
-                    continue
-                end
-            end
+            _gpu_contended(i; my_pid) && continue
 
             # GPU i is available: sufficient memory, not contended (or sole user)
             return (i, true)

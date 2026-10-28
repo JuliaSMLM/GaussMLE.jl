@@ -98,15 +98,16 @@ The loop handles three distinct GPU failure scenarios:
 
 Pre-flight memory polling prefers NVIDIA Management Library (NVML) queries without creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses `CUDA.free_memory()` on that device, which may create a context. Other NVML memory-query errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
 
-Contention checks apply only when memory came from NVML. A GPU is considered **contended** when:
-- Other processes are present (`compute_processes > 0` excluding own PID), AND
-- Resources are threatened: free memory < 1.5x required OR compute utilization > 90%
+Contention checks apply only when memory came from NVML. A GPU with free memory below 1.5x required is skipped before the contention check. A GPU is considered **contended** when:
 
-If other processes are present but memory is ample and utilization is low, the GPU is still selected (the other processes are likely idle).
+- Other processes are present (`compute_processes > 0` excluding own PID), AND
+- Compute utilization > 90%
+
+If other processes are present but memory is sufficient and compute utilization is at most 90%, the GPU is still selected.
 
 ### Context Lifecycle
 
-**On failure:** `_release_gpu_context()` calls `cuDevicePrimaryCtxRelease` to destroy the CUDA context and free reserved memory. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
+**On failure:** `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`. The context and its reserved memory are freed when the last reference is released. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
 
 **On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
 

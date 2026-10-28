@@ -5,10 +5,25 @@ using Test, GaussMLE, CUDA
 
 # One outer testset, so the memory checks still run and report when the first set fails.
 @testset "NVML device index" begin
-    @testset "NVML device matches the CUDA device" begin
+    @testset "Contention queries go to the GPU the ordinal names" begin
         for i in 0:(length(CUDA.devices()) - 1)
-            @test CUDA.NVML.uuid(GaussMLE._nvml_device(i)) ==
-                CUDA.parent_uuid(CUDA.CuDevice(i))
+            expected_uuid = CUDA.parent_uuid(CUDA.CuDevice(i))
+            process_devices = typeof(expected_uuid)[]
+            utilization_devices = typeof(expected_uuid)[]
+            processes = dev -> begin
+                push!(process_devices, CUDA.NVML.uuid(dev))
+                Dict((Int(getpid()) + 1) => (used_gpu_memory = 0,))
+            end
+            utilization = dev -> begin
+                push!(utilization_devices, CUDA.NVML.uuid(dev))
+                (compute = 0.0, memory = 0.0)
+            end
+            contended = GaussMLE._gpu_contended(
+                i; processes = processes, utilization = utilization
+            )
+            @test process_devices == [expected_uuid]
+            @test utilization_devices == [expected_uuid]
+            @test !contended
         end
     end
 
@@ -30,9 +45,10 @@ using Test, GaussMLE, CUDA
                 @test from_nvml
                 @test free < cuda_free + chunk ÷ 2
 
-                device_idx, available = GaussMLE.wait_for_gpu_nvml(
-                    cuda_free; timeout = 1.0, poll = 0.1
+                device_idx, available, failed = GaussMLE._poll_gpu(
+                    :gpu, cuda_free; timeout = 1.0
                 )
+                @test !failed
                 @test !(available && device_idx == 0)
             finally
                 CUDA.unsafe_free!(filler)

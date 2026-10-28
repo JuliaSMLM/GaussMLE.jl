@@ -3,8 +3,8 @@ using Test, GaussMLE, CUDA, SMLMData
 
 # These private helpers are tested directly because fit cannot reach their failure
 # paths on a lab machine: missing NVML memory info needs a GPU such as the DGX Spark
-# GB10, and a failed poll needs more GPU memory than exists. _poll_gpu is the helper
-# that fit actually calls.
+# GB10, a contended GPU needs another process at high compute on the same GPU, and a
+# failed poll needs more GPU memory than exists. _poll_gpu is the helper fit calls.
 @testset "GPU free-memory queries" begin
     @testset "NVML reports free memory" begin
         free, from_nvml = GaussMLE._gpu_free_memory(0; nvml_free = _ -> 123_456)
@@ -38,6 +38,30 @@ using Test, GaussMLE, CUDA, SMLMData
         failure = CUDA.NVML.NVMLError(CUDA.NVML.NVML_ERROR_UNKNOWN)
         nvml_free = _ -> throw(failure)
         @test_throws failure GaussMLE._gpu_free_memory(0; nvml_free = nvml_free)
+    end
+
+    @testset "Contention needs another process above 90% compute" begin
+        other_processes = _ -> Dict((Int(getpid()) + 1) => (used_gpu_memory = 0,))
+        own_processes = _ -> Dict(Int(getpid()) => (used_gpu_memory = 0,))
+        high_utilization = _ -> (compute = 0.95, memory = 0.0)
+        low_utilization = _ -> (compute = 0.5, memory = 0.0)
+        failed_query = _ -> error("NVML query failed")
+
+        @test GaussMLE._gpu_contended(
+            0; processes = other_processes, utilization = high_utilization
+        )
+        @test !GaussMLE._gpu_contended(
+            0; processes = other_processes, utilization = low_utilization
+        )
+        @test !GaussMLE._gpu_contended(
+            0; processes = own_processes, utilization = high_utilization
+        )
+        @test !GaussMLE._gpu_contended(
+            0; processes = failed_query, utilization = high_utilization
+        )
+        @test !GaussMLE._gpu_contended(
+            0; processes = other_processes, utilization = failed_query
+        )
     end
 
     @testset "Polling errors respect backend and interrupts" begin
