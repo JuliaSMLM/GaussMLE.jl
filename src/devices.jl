@@ -23,16 +23,29 @@ backend(::CPU) = KernelAbstractions.CPU()
 backend(::GPU) = CUDABackend()
 
 """
+    _nvml_device(device_idx::Integer)
+
+Map a 0-based CUDA device ordinal to its NVML device by UUID. CUDA ordinals honor
+`CUDA_VISIBLE_DEVICES`; NVML indices enumerate every GPU and do not, so
+`NVML.Device(ordinal)` can read the wrong GPU when it is set. `parent_uuid` names the
+physical GPU, mapping a MIG instance to its parent as `CUDA.versioninfo` does.
+`CUDA.uuid` would return the MIG UUID, which `NVML.Device(::UUID)` looks up as a GPU
+UUID and fails. The UUID query needs no CUDA context.
+"""
+_nvml_device(device_idx::Integer) =
+    CUDA.NVML.Device(CUDA.parent_uuid(CUDA.CuDevice(device_idx)))
+
+"""
     _gpu_free_memory(device_idx::Integer; nvml_free = ...) -> (free::Int, from_nvml::Bool)
 
 Query free bytes through NVML first, without creating a CUDA context. `nvml_free` takes
-a 0-based device index. If NVML reports `NVML_ERROR_NOT_SUPPORTED` (for example, the
+a 0-based CUDA device ordinal. If NVML reports `NVML_ERROR_NOT_SUPPORTED` (for example, the
 DGX Spark GB10 driver lacks `nvmlDeviceGetMemoryInfo`), query `CUDA.free_memory()` on
 that device instead. All other errors propagate.
 """
 function _gpu_free_memory(
         device_idx::Integer;
-        nvml_free = idx -> CUDA.NVML.memory_info(CUDA.NVML.Device(idx)).free,
+        nvml_free = idx -> CUDA.NVML.memory_info(_nvml_device(idx)).free,
     )
     try
         return Int(nvml_free(device_idx)), true
@@ -49,7 +62,7 @@ end
     find_best_gpu()
 
 Find the GPU with most free memory and switch to it.
-Returns the device index (0-based) of the selected GPU.
+Returns the 0-based CUDA device ordinal, which honors `CUDA_VISIBLE_DEVICES`.
 
 For single-GPU systems, simply returns 0.
 """
@@ -164,9 +177,10 @@ end
 
 Wait for a GPU with sufficient free memory, preferring NVML without CUDA context creation.
 When NVML memory queries are unsupported, query CUDA memory on that device instead.
-Scans ALL GPUs each iteration - first available wins.
+Scans all visible GPUs each iteration - first available wins.
 
 Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeout reached.
+The index is a 0-based CUDA device ordinal, which honors `CUDA_VISIBLE_DEVICES`.
 
 Contention detection runs only when memory came from NVML: a GPU is considered contended
 when other processes are present AND either free memory is insufficient or compute
@@ -203,7 +217,7 @@ function wait_for_gpu_nvml(
             from_nvml || return (i, true)
 
             # Check contention: other processes on this GPU
-            nvml_dev = CUDA.NVML.Device(i)
+            nvml_dev = _nvml_device(i)
             procs = try
                 CUDA.NVML.compute_processes(nvml_dev)
             catch

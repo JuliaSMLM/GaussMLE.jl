@@ -114,6 +114,8 @@ If other processes are present but memory is ample and utilization is low, the G
 
 On systems with multiple GPUs, memory polling scans all devices each iteration. The first GPU with sufficient free memory and, when NVML is used, low contention is selected. This naturally load-balances across GPUs.
 
+Polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's NVML data by UUID, so a restricted process reads the right GPU.
+
 ## Batch Processing
 
 For datasets larger than GPU memory, GaussMLE automatically batches the data:
