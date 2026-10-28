@@ -70,8 +70,9 @@ GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU fai
 
 ```
 while !gpu_succeeded && before deadline:
-    1. Poll GPU memory (prefer context-free NVML; fall back to CUDA if unsupported)
-    2. If memory came from NVML, skip if other_procs > 0 AND (low memory OR compute > 90%)
+    1. Poll GPU memory (prefer context-free NVML; fall back to CUDA if unsupported);
+       skip a GPU with free memory < 1.5x required
+    2. If memory came from NVML, skip if other_procs > 0 AND compute > 90%
     3. Try:
          CUDA.device!(dev)         # Create context on selected GPU
          <process all batches>     # Run fitting kernel
