@@ -1,6 +1,8 @@
 # GPU Support
 
-GaussMLE.jl includes GPU acceleration through CUDA.jl and KernelAbstractions.jl. A contention-aware scheduling system enables reliable GPU usage in multi-process environments such as shared GPU servers running parallel analysis scripts.
+GaussMLE.jl accelerates fitting on CUDA or AMD GPUs through KernelAbstractions.jl.
+AMD support requires loading AMDGPU. Memory polling and retries support shared GPU use;
+CUDA also checks contention through NVML when available.
 
 ## Quick Start
 
@@ -30,6 +32,9 @@ The `backend` parameter controls compute device selection:
 | `:cpu` | Always CPU, no GPU interaction | N/A |
 | `:gpu` | Require GPU | Error |
 
+GPU modes prefer CUDA whenever `CUDA.functional()`. Otherwise they use a functional
+AMD GPU when AMDGPU is loaded.
+
 ### Timeout Configuration
 
 | Field | Default | Description |
@@ -54,11 +59,32 @@ fitter = GaussMLEConfig(
 )
 ```
 
+## AMD GPUs (ROCm)
+
+Load AMDGPU before `fit` to enable the AMD extension:
+
+```julia
+using GaussMLE
+using AMDGPU
+
+smld, info = fit(batch, GaussMLEConfig(backend = :gpu))
+```
+
+Both `:gpu` and `:auto` support AMD. CUDA wins when both vendors are functional.
+`info.backend` is `:gpu` on either vendor, and `info.device_id` is a 0-based index.
+Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10.
+
+Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
+contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,
+the HIP pool's cached memory is reclaimed; failure cleanup runs garbage collection
+without releasing a CUDA-style primary context.
+
 ## GPU Scheduling System
 
 ### The Problem
 
-When multiple Julia processes share a GPU server, naive GPU device selection causes failures:
+When multiple Julia processes share a GPU server, device selection can cause failures.
+CUDA examples include:
 
 - **Context creation OOM**: `CUDA.device!(i)` creates a CUDA context (~300 MB - 6 GB), which can OOM if another process is using the GPU
 - **Memory pool retention**: CUDA.jl's memory pool holds freed arrays, making NVML report memory as "used" even when no GPU arrays exist
@@ -70,16 +96,16 @@ GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU fai
 
 ```
 while !gpu_succeeded && before deadline:
-    1. Poll GPU memory (prefer context-free NVML; fall back to CUDA if unsupported);
+    1. Poll vendor memory (CUDA: NVML with CUDA fallback; AMD: HIP free memory);
        skip a GPU with free memory < 1.5x required
     2. If memory came from NVML, skip if other_procs > 0 AND compute > 90%
     3. Try:
-         CUDA.device!(dev)         # Create context on selected GPU
+         activate selected GPU     # Use the selected vendor
          <process all batches>     # Run fitting kernel
-         CUDA.reclaim()            # Return pooled memory to OS
+         reclaim vendor pool       # Return cached memory
          gpu_succeeded = true
     4. Catch:
-         release CUDA context      # Free reserved memory
+         clean up GPU resources    # Release CUDA context or collect HIP arrays
          loop back to step 1       # Re-poll memory for next available GPU
 ```
 
@@ -91,13 +117,19 @@ The loop handles three distinct GPU failure scenarios:
 
 1. **No free memory** - Memory polling waits with jittered backoff (0.5s intervals). All GPUs are scanned each tick; whichever frees up first is used.
 
-2. **TOCTOU context creation race** - The memory query shows sufficient free memory, but `CUDA.device!()` fails because another process grabbed the GPU between the check and context creation. The context is released and memory is re-polled.
+2. **TOCTOU context creation race** - Memory looks sufficient, but activating the GPU
+   fails because another process acquired it. Resources are cleaned up and memory is
+   re-polled.
 
-3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. The context is released and all batches are restarted on a re-acquired GPU (partial results from a failed CUDA context are unreliable).
+3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. Resources are
+   cleaned up and all batches restart on an available GPU.
 
 ### NVML Contention Detection
 
-Pre-flight memory polling prefers NVIDIA Management Library (NVML) queries without creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses `CUDA.free_memory()` on that device, which may create a context. Other NVML memory-query errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
+On CUDA, memory polling prefers NVIDIA Management Library (NVML) queries without
+creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses
+`CUDA.free_memory()` on that device, which may create a context. Other NVML query
+errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
 
 Contention checks apply only when memory came from NVML. A GPU with free memory below 1.5x required is skipped before the contention check. A GPU is considered **contended** when:
 
@@ -106,7 +138,7 @@ Contention checks apply only when memory came from NVML. A GPU with free memory 
 
 If other processes are present but memory is sufficient and compute utilization is at most 90%, the GPU is still selected.
 
-### Context Lifecycle
+### CUDA Context Lifecycle
 
 **On failure:** `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`. The context and its reserved memory are freed when the last reference is released. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
 
@@ -114,9 +146,11 @@ If other processes are present but memory is sufficient and compute utilization 
 
 ### Multi-GPU Support
 
-On systems with multiple GPUs, memory polling scans all devices each iteration. The first GPU with sufficient free memory and, when NVML is used, low contention is selected. This naturally load-balances across GPUs.
+Memory polling scans all visible devices of the selected vendor each iteration. The first
+GPU with sufficient free memory and, when NVML is used, low contention is selected.
 
-Polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's NVML data by UUID, so a restricted process reads the right GPU.
+CUDA polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's
+NVML data by UUID, so a restricted process reads the right GPU.
 
 ## Batch Processing
 
@@ -181,6 +215,15 @@ CUDA.functional()  # Should return true
 
 If false: check NVIDIA driver installation, GPU hardware, CUDA.jl configuration.
 
+### AMD Not Available
+
+```julia
+using AMDGPU
+AMDGPU.functional()  # Should return true
+```
+
+Load AMDGPU before `fit` and check the ROCm installation if this returns false.
+
 ### Out of Memory
 
 ```julia
@@ -196,7 +239,7 @@ fitter = GaussMLEConfig(backend = :auto, auto_timeout = 5.0)
 If parallel scripts deadlock waiting for GPU:
 - Ensure all scripts use `backend = :auto` (not `:gpu`) for graceful fallback
 - Set reasonable `auto_timeout` values (default 5 min is usually sufficient)
-- Check `nvidia-smi` for zombie processes holding GPU memory
+- On CUDA, check `nvidia-smi` for zombie processes holding GPU memory
 
 ## Architecture
 
@@ -209,6 +252,10 @@ GaussMLE uses KernelAbstractions.jl for portable GPU/CPU code:
     # Same code runs on CPU and GPU
 end
 ```
+
+Since KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
+runtime. The first CPU fit of each PSF model in a session takes a few seconds longer
+for compilation; subsequent fits reuse the compiled kernel.
 
 ### Data Flow
 

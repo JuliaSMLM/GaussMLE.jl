@@ -7,6 +7,38 @@ abstract type ComputeDevice end
 struct CPU <: ComputeDevice end
 struct GPU <: ComputeDevice end
 
+# GPU vendor interface; ROCm methods live in GaussMLEAMDGPUExt.
+abstract type GPUVendor end
+struct CUDAGPU <: GPUVendor end
+struct ROCmGPU <: GPUVendor end
+
+_functional(::CUDAGPU) = CUDA.functional()
+_activate_gpu!(::CUDAGPU, device_idx) = CUDA.device!(device_idx)
+_ka_gpu_backend(::CUDAGPU) = CUDABackend()
+_reclaim_gpu(::CUDAGPU) = CUDA.reclaim()
+_active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
+_release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
+
+function _poll_gpu(
+        ::CUDAGPU, backend::Symbol, required_bytes::Integer; timeout, on_wait = nothing,
+    )
+    return _poll_gpu(backend, required_bytes; timeout = timeout, on_wait = on_wait)
+end
+
+"""
+    _gpu_vendor()
+
+Return the functional GPU vendor, preferring CUDA, or `nothing`. AMD requires AMDGPU loaded.
+"""
+function _gpu_vendor()
+    _functional(CUDAGPU()) && return CUDAGPU()
+    if Base.get_extension(@__MODULE__, :GaussMLEAMDGPUExt) !== nothing &&
+            _functional(ROCmGPU())
+        return ROCmGPU()
+    end
+    return nothing
+end
+
 # Smart device selection
 function auto_device()
     if CUDA.functional()
@@ -153,9 +185,10 @@ function _release_gpu_context(device_idx::Integer)
     GC.gc(false)
     return try
         dev = CUDA.CuDevice(device_idx)
-        CUDA.cuDevicePrimaryCtxRelease(dev)
-    catch
+        CUDA.CUDACore.cuDevicePrimaryCtxRelease(dev)
+    catch e
         # Best-effort: context may not exist if creation failed early
+        e isa CUDA.CuError || rethrow()
     end
     # NOTE: Do NOT call CUDA.reclaim() here - it requires an active context
     # and will either hang or re-create the context we just released.

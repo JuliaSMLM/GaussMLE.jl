@@ -2,16 +2,16 @@
 # group needs at least one .jl file, and every folder under test/ must be a declared group.
 #   Core      test/*.jl         fast curated tests; plain Pkg.test(); at most 2 min on CI
 #   QA        test/qa/          Aqua and ExplicitImports; its own CI job
-#   GPU       test/gpu/         needs CUDA; lab machine
+#   GPU       test/gpu/         needs a GPU (CUDA or AMDGPU); lab machine
 #   Long      test/long/        slow correctness (convergence, Monte Carlo, pipelines); lab machine
 # GaussMLE has no Data or Hardware tests: every test fits simulated data.
-# CUDA is a hard dependency of GaussMLE, so the GPU group needs no Project.toml of its own.
+# The GPU group has its own Project.toml with CUDA and AMDGPU so the extension loads.
 
 [Core]
 
 [QA]
 
 [GPU]
-requires = ["cuda"]
+requires = ["gpu"]
 
 [Long]

@@ -1,9 +1,9 @@
 """
     GaussMLE
 
-Maximum-likelihood fitting of Gaussian PSF models to single-molecule ROIs, on the CPU or a
-CUDA GPU, with Cramér-Rao lower bound uncertainties. Noise models: Poisson (`IdealCamera`)
-and sCMOS (`SCMOSCamera`, per-pixel readout noise).
+Maximum-likelihood fitting of Gaussian PSF models to single-molecule ROIs, on the CPU,
+a CUDA GPU, or an AMD GPU with AMDGPU loaded, with Cramér-Rao lower bound uncertainties.
+Noise models: Poisson (`IdealCamera`) and sCMOS (`SCMOSCamera`, per-pixel readout noise).
 
 Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
 `GaussianXYNBS`, `GaussianXYNBSXSY` and `AstigmaticXYZNB`; `generate_roi_batch` for

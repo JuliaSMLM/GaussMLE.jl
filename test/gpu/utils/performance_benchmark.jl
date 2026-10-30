@@ -512,11 +512,11 @@ function run_comprehensive_benchmark()
     println()
 
     # Check GPU availability
-    gpu_available = CUDA.functional()
+    gpu_available = gpu_backend() !== nothing
     if !gpu_available
         @warn "GPU not available - will only test CPU configurations"
     else
-        println("GPU detected: ", CUDA.name(CUDA.device()))
+        println("GPU detected: ", gpu_name())
     end
     println()
 

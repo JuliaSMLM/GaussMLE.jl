@@ -46,7 +46,7 @@ end
 
 - **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic
 - **Physical Units**: Spatial PSF calibration parameters in microns (camera-independent); Ax, Ay, Bx and By are dimensionless
-- **Automatic GPU Acceleration**: CUDA support with automatic CPU fallback
+- **Automatic GPU Acceleration**: CUDA or AMD (with AMDGPU loaded), with CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramer-Rao lower bound for each parameter
 - **SMLMData Integration**: Returns `BasicSMLD` with ecosystem-compatible emitter types
@@ -95,6 +95,9 @@ println("Mean sigma: $(mean(sigmas)) microns")
 ```
 
 ### GPU Acceleration
+
+CUDA is preferred. To use an AMD GPU when CUDA is not functional, load `using AMDGPU`
+before `fit`; see [GPU Support](@ref).
 
 ```julia
 using GaussMLE

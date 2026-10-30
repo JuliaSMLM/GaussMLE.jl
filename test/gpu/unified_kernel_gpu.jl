@@ -1,16 +1,19 @@
 """
-GPU kernel tests: the unified kernel on CUDA, and CPU vs GPU agreement (GPU group; the CPU
-backend is in test/unified_kernel_cpu.jl)
+GPU kernel tests: the unified kernel on CUDA or AMD, and CPU vs GPU agreement
+(GPU group; the CPU backend is in test/unified_kernel_cpu.jl)
 """
 
 using GaussMLE
 using Test
-using CUDA
+using Random: Random
 using Statistics
 using KernelAbstractions
 using LinearAlgebra
 
+include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
+
 @testset "Unified Kernel Tests" begin
+    Random.seed!(42)
 
     # Test configuration
     n_test_blobs = 100
@@ -45,21 +48,21 @@ using LinearAlgebra
             constraints = GaussMLE.default_constraints(psf_model, box_size)
 
             # Move data to GPU
-            d_data = CuArray(data)
+            d_data = to_gpu(data)
 
             # Allocate GPU output arrays
-            d_results = CUDA.zeros(Float32, 4, n_test_blobs)
-            d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
-            d_covariances = CUDA.zeros(Float32, 3, n_test_blobs)
-            d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
+            d_results = to_gpu(zeros(Float32, 4, n_test_blobs))
+            d_uncertainties = to_gpu(zeros(Float32, 4, n_test_blobs))
+            d_covariances = to_gpu(zeros(Float32, 3, n_test_blobs))
+            d_log_likelihoods = to_gpu(zeros(Float32, n_test_blobs))
 
             # Create dummy corners and variance for new kernel signature
-            d_x_corners = CuArray(Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs])
-            d_y_corners = CuArray(fill(Int32(1), n_test_blobs))
-            d_variance_map = CUDA.zeros(Float32, 512, 512)
+            d_x_corners = to_gpu(Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs])
+            d_y_corners = to_gpu(fill(Int32(1), n_test_blobs))
+            d_variance_map = to_gpu(zeros(Float32, 512, 512))
 
             # Run unified kernel on GPU
-            backend = CUDABackend()
+            backend = gpu_backend()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
             kernel(
@@ -70,7 +73,7 @@ using LinearAlgebra
             )
 
             # Wait for completion
-            CUDA.synchronize()
+            KernelAbstractions.synchronize(backend)
 
             # Copy results back
             results = Array(d_results)
@@ -116,16 +119,16 @@ using LinearAlgebra
             )
 
             # Run on GPU
-            d_data = CuArray(data)
-            d_results = CUDA.zeros(Float32, 4, n_test_blobs)
-            d_uncertainties = CUDA.zeros(Float32, 4, n_test_blobs)
-            d_covariances = CUDA.zeros(Float32, 3, n_test_blobs)
-            d_log_likelihoods = CUDA.zeros(Float32, n_test_blobs)
-            d_x_corners = CuArray(x_corners)
-            d_y_corners = CuArray(y_corners)
-            d_variance_map = CuArray(variance_map)
+            d_data = to_gpu(data)
+            d_results = to_gpu(zeros(Float32, 4, n_test_blobs))
+            d_uncertainties = to_gpu(zeros(Float32, 4, n_test_blobs))
+            d_covariances = to_gpu(zeros(Float32, 3, n_test_blobs))
+            d_log_likelihoods = to_gpu(zeros(Float32, n_test_blobs))
+            d_x_corners = to_gpu(x_corners)
+            d_y_corners = to_gpu(y_corners)
+            d_variance_map = to_gpu(variance_map)
 
-            backend_gpu = CUDABackend()
+            backend_gpu = gpu_backend()
             kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
             kernel_gpu(
                 d_results, d_uncertainties, d_covariances, d_log_likelihoods,
@@ -134,7 +137,7 @@ using LinearAlgebra
                 ndrange = n_test_blobs
             )
 
-            CUDA.synchronize()
+            KernelAbstractions.synchronize(backend_gpu)
 
             results_gpu = Array(d_results)
             uncertainties_gpu = Array(d_uncertainties)
@@ -202,7 +205,7 @@ using LinearAlgebra
             KernelAbstractions.synchronize(backend)
             return Array(out[3])[1, :]
         end
-        @test kernel_cov_xy(CUDABackend(), CuArray) ≈ cov_ref rtol = 1.0e-3
+        @test kernel_cov_xy(gpu_backend(), to_gpu) ≈ cov_ref rtol = 1.0e-3
     end
 
 end

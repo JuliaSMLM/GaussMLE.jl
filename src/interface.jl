@@ -60,6 +60,9 @@ end
 Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob
 parameters.
 
+`:gpu` and `:auto` use a CUDA GPU, or an AMD GPU when AMDGPU is loaded and CUDA is not
+functional.
+
 # Fields
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
@@ -112,6 +115,9 @@ Camera noise model is determined by the ROIBatch type:
 - `:cpu` - Always use CPU, no waiting
 - `:gpu` - Explicit GPU request, wait up to gpu_timeout, error if unavailable
 - `:auto` - Try GPU with auto_timeout, fall back to CPU with warning
+
+GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
+AMDGPU (`using AMDGPU`) before `fit`.
 
 # Examples
 ```julia
@@ -260,17 +266,19 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && !CUDA.functional())
+    vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
+    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && vendor === nothing)
 
-    if fitter.backend == :gpu && !CUDA.functional()
-        error("GPU requested but CUDA not functional")
+    if fitter.backend == :gpu && vendor === nothing
+        error("No functional GPU found: CUDA is not functional; AMD GPUs require \
+            using AMDGPU (ROCm) before fit")
     end
 
     if !use_cpu
         # --- Unified GPU retry loop ---
-        # Handles: (1) no free memory (NVML waits), (2) TOCTOU context creation
+        # Handles: (1) no free memory (vendor polls), (2) TOCTOU context creation
         # race, (3) runtime OOM - all in one loop. On any GPU failure, release
-        # context and re-poll NVML. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        # resources and re-poll. Falls to CPU (:auto) or errors (:gpu) on timeout.
         timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
         deadline = time() + timeout
         actual_batch = min(fitter.batch_size, n_fits)
@@ -278,9 +286,9 @@ function _run_mle_kernel!(
         gpu_succeeded = false
 
         while !gpu_succeeded && time() < deadline
-            # Poll NVML for available GPU
+            # Poll the vendor for an available GPU
             dev_idx, available, failed = _poll_gpu(
-                fitter.backend, required_memory;
+                vendor, fitter.backend, required_memory;
                 timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
             )
             if failed
@@ -293,8 +301,8 @@ function _run_mle_kernel!(
 
             try
                 # Acquire GPU context
-                CUDA.device!(dev_idx)
-                gpu_backend = CUDABackend()
+                _activate_gpu!(vendor, dev_idx)
+                gpu_backend = _ka_gpu_backend(vendor)
 
                 # Process all batches on GPU
                 actual_batch_size = min(fitter.batch_size, n_fits)
@@ -355,18 +363,18 @@ function _run_mle_kernel!(
                     log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
                 end
 
-                # All batches succeeded - reclaim pool memory so NVML shows it as free
+                # All batches succeeded - reclaim pool memory so queries show it as free
                 # for other processes competing for the same GPU
-                CUDA.reclaim()
+                _reclaim_gpu(vendor)
                 gpu_succeeded = true
                 actual_backend = :gpu
-                device_id = Int(CUDA.device().handle)
+                device_id = _active_device_id(vendor)
             catch e
-                # Release context to free memory, then loop back to poll NVML
-                @warn "GPU error on device $dev_idx, releasing context" exception = (
+                # Release GPU resources, then loop back to poll for free memory
+                @warn "GPU error on device $dev_idx, releasing resources" exception = (
                     e, catch_backtrace(),
                 )
-                _release_gpu_context(dev_idx)
+                _release_gpu_context(vendor, dev_idx)
                 if fitter.backend == :gpu && time() >= deadline
                     rethrow()
                 end
