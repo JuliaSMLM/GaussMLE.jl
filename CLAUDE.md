@@ -43,7 +43,7 @@ julia --project examples/astigmatic_3d.jl
 
 The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
-- StaticArrays (MVector/MMatrix) for stack allocation and GPU compatibility
+- StaticArrays (MVector/SMatrix) for stack allocation and GPU compatibility
 - Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
 - **Diagonal Newton-Raphson for optimization** (element-wise, not full matrix inverse)
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
@@ -227,12 +227,15 @@ Wrong signs cause convergence failure or incorrect CRLB.
 
 GPU kernels cannot use standard library matrix operations, so custom implementations are provided:
 
-- `static_cholesky_decomposition!` - In-place Cholesky (preferred for symmetric positive definite)
-- `static_cholesky_inverse!` - Invert via Cholesky factors
-- `static_lu_decomposition!` - In-place LU without pivoting (fallback)
-- `static_back_substitution!` - Solve linear systems
+- `static_cholesky_decomposition` - Cholesky (preferred for symmetric positive definite)
+- `static_cholesky_inverse` - Invert via Cholesky factors
+- `static_lu_decomposition` - LU without pivoting (fallback)
+- `static_back_substitution` - Solve linear systems with immutable vectors
+- `static_matrix_inverse` - Invert via LU factors
 
-All use relative tolerances (`1e-10 * maximum(abs, A)`) matching SMITE.
+All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
+LU uses a relative tolerance (`1e-10 * maximum(abs, A)`) matching SMITE; the Fisher
+matrix uses the same relative scale for diagonal regularization.
 
 #### Astigmatic Model Unit Convention
 

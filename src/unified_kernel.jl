@@ -4,7 +4,8 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 
 # GPU-compatible Cholesky decomposition for symmetric positive definite matrices
 # This is more robust than LU for Fisher Information matrices
-@inline function static_cholesky_decomposition!(A::MMatrix{N, N, T}) where {N, T}
+# Immutable matrices avoid heap allocation caused by bounds-check error paths.
+@inline function static_cholesky_decomposition(A::SMatrix{N, N, T}) where {N, T}
     # Cholesky: A = L * L^T where L is lower triangular
     @inbounds for j in 1:N
         for i in j:N
@@ -16,148 +17,123 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
             if i == j
                 # Diagonal element
                 if sum_val <= zero(T)
-                    return false  # Not positive definite
+                    return false, A  # Not positive definite
                 end
-                A[i, i] = sqrt(sum_val)
+                A = Base.setindex(A, sqrt(sum_val), i, i)
             else
                 # Off-diagonal element
-                A[i, j] = sum_val / A[j, j]
+                A = Base.setindex(A, sum_val / A[j, j], i, j)
             end
         end
     end
-    return true
+    return true, A
 end
 
 # Invert a Cholesky-decomposed matrix (A = L * L^T)
-@inline function static_cholesky_inverse!(
-        A_inv::MMatrix{N, N, T}, L::MMatrix{N, N, T}
-    ) where {N, T}
+@inline function static_cholesky_inverse(L::SMatrix{N, N, T}) where {N, T}
     # First invert L (lower triangular)
-    L_inv = MMatrix{N, N, T}(undef)
+    L_inv = zero(L)
     @inbounds for j in 1:N
-        L_inv[j, j] = one(T) / L[j, j]
+        L_inv = Base.setindex(L_inv, one(T) / L[j, j], j, j)
         for i in (j + 1):N
             sum_val = zero(T)
             for k in j:(i - 1)
                 sum_val += L[i, k] * L_inv[k, j]
             end
-            L_inv[i, j] = -sum_val / L[i, i]
+            L_inv = Base.setindex(L_inv, -sum_val / L[i, i], i, j)
         end
     end
 
     # A_inv = L_inv^T * L_inv
+    A_inv = zero(L)
     @inbounds for i in 1:N
         for j in i:N  # Symmetric, only compute upper triangle
             sum_val = zero(T)
             for k in j:N  # Sum from max(i,j) to N
                 sum_val += L_inv[k, i] * L_inv[k, j]
             end
-            A_inv[i, j] = sum_val
+            A_inv = Base.setindex(A_inv, sum_val, i, j)
             if i != j
-                A_inv[j, i] = sum_val  # Fill lower triangle by symmetry
+                A_inv = Base.setindex(A_inv, sum_val, j, i)  # Fill lower triangle
             end
         end
     end
-    return true
+    return true, A_inv
 end
 
 # GPU-compatible LU decomposition for small static matrices (no pivoting)
 # This matches SMITE's approach with a relative tolerance
-@inline function static_lu_decomposition!(A::MMatrix{N, N, T}) where {N, T}
+@inline function static_lu_decomposition(A::SMatrix{N, N, T}) where {N, T}
     # Use relative tolerance based on matrix scale (like SMITE)
     tol = T(1.0e-10) * maximum(abs, A)
 
     @inbounds for k in 1:N
         # Check for near-zero pivot
         if abs(A[k, k]) < tol
-            return false
+            return false, A
         end
 
         for i in (k + 1):N
-            A[i, k] /= A[k, k]
+            A = Base.setindex(A, A[i, k] / A[k, k], i, k)
             for j in (k + 1):N
-                A[i, j] -= A[i, k] * A[k, j]
+                A = Base.setindex(A, A[i, j] - A[i, k] * A[k, j], i, j)
             end
         end
     end
-    return true
+    return true, A
 end
 
 # GPU-compatible back substitution for solving Ax = b with LU-decomposed A
-@inline function static_back_substitution!(
-        x::MVector{N, T}, A::MMatrix{N, N, T}, b::MVector{N, T}
-    ) where {N, T}
+@inline function static_back_substitution(A::SMatrix{N, N, T}, b::SVector{N, T}) where {N, T}
     # Forward substitution for Ly = b
+    x = b
     @inbounds for i in 1:N
-        x[i] = b[i]
+        sum_val = b[i]
         for j in 1:(i - 1)
-            x[i] -= A[i, j] * x[j]
+            sum_val -= A[i, j] * x[j]
         end
+        x = Base.setindex(x, sum_val, i)
     end
 
-    # Backward substitution for Ux = y (overwrites x with solution)
-    return @inbounds for i in N:-1:1
+    # Backward substitution for Ux = y
+    @inbounds for i in N:-1:1
+        sum_val = x[i]
         for j in (i + 1):N
-            x[i] -= A[i, j] * x[j]
+            sum_val -= A[i, j] * x[j]
         end
-        x[i] /= A[i, i]
+        x = Base.setindex(x, sum_val / A[i, i], i)
     end
+    return true, x
 end
 
 # GPU-compatible matrix inverse using LU decomposition
-@inline function static_matrix_inverse!(
-        A_inv::MMatrix{N, N, T}, A::MMatrix{N, N, T}
-    ) where {N, T}
-    # Make a copy for LU decomposition (don't modify original)
-    A_lu = MMatrix{N, N, T}(A)
-
+@inline function static_matrix_inverse(A::SMatrix{N, N, T}) where {N, T}
     # Perform LU decomposition
-    if !static_lu_decomposition!(A_lu)
+    ok, A_lu = static_lu_decomposition(A)
+    A_inv = zero(A)
+    if !ok
         # Singular matrix - set to infinity
-        @inbounds for i in 1:N, j in 1:N
-            A_inv[i, j] = i == j ? T(Inf) : zero(T)
+        @inbounds for i in 1:N
+            A_inv = Base.setindex(A_inv, T(Inf), i, i)
         end
-        return false
+        return false, A_inv
     end
 
-    # Initialize A_inv as identity and solve for each column
-    e = MVector{N, T}(undef)
-    x = MVector{N, T}(undef)
-
+    # Solve for each column of the inverse
     @inbounds for col in 1:N
         # Set up unit vector
-        for i in 1:N
-            e[i] = (i == col) ? one(T) : zero(T)
-        end
+        e = SVector{N, T}(ntuple(i -> i == col ? one(T) : zero(T), Val(N)))
 
         # Solve for this column
-        static_back_substitution!(x, A_lu, e)
+        _, x = static_back_substitution(A_lu, e)
 
         # Store result
         for i in 1:N
-            A_inv[i, col] = x[i]
+            A_inv = Base.setindex(A_inv, x[i], i, col)
         end
     end
 
-    return true
-end
-
-# GPU-compatible determinant using LU decomposition
-@inline function static_det(A::MMatrix{N, N, T}) where {N, T}
-    A_lu = MMatrix{N, N, T}(A)
-
-    # Perform LU decomposition
-    if !static_lu_decomposition!(A_lu)
-        return zero(T)
-    end
-
-    # Determinant is product of diagonal elements
-    det_val = one(T)
-    @inbounds for i in 1:N
-        det_val *= A_lu[i, i]
-    end
-
-    return det_val
+    return true, A_inv
 end
 
 # Simple GPU-compatible parameter initialization - generic version
@@ -267,12 +243,6 @@ end
     end
 end
 
-@inline function zero_array!(A::MMatrix{N, M, T}) where {N, M, T}
-    return @inbounds for j in 1:M, i in 1:N
-        A[i, j] = zero(T)
-    end
-end
-
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
 # Val{false} → IdealCamera (Poisson only)
 @inline function _dispatch_likelihood(
@@ -367,9 +337,7 @@ end
 
     # Compute final log-likelihood and full Fisher Information Matrix for CRLB
     log_likelihood = zero(T)
-    H = MMatrix{N, N, T}(undef)  # Full Fisher Information matrix
-    H_inv = MMatrix{N, N, T}(undef)  # For inverse
-    zero_array!(H)
+    H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
 
     @inbounds for j in 1:box_size, i in 1:box_size
         θ_static = SVector{N, T}(θ)
@@ -401,13 +369,8 @@ end
                 model + variance_map[cam_i, cam_j]
             end
 
-            for k in 1:N, l in k:N
-                F_kl = dudt[k] * dudt[l] / variance
-                H[k, l] += F_kl
-                if k != l
-                    H[l, k] += F_kl  # Symmetric
-                end
-            end
+            # Whole-matrix operations preserve multiply/divide/add order per element.
+            H = H + (dudt * dudt') / variance
         end
     end
 
@@ -417,14 +380,16 @@ end
     # Use very small value to not bias uncertainty estimates
     reg = T(1.0e-10) * maximum(abs, H)
     @inbounds for k in 1:N
-        H[k, k] += reg
+        H = Base.setindex(H, H[k, k] + reg, k, k)
     end
 
-    # Make a copy for Cholesky decomposition
-    H_chol = MMatrix{N, N, T}(H)
-
     # Try Cholesky decomposition (for symmetric positive definite matrices)
-    if static_cholesky_decomposition!(H_chol) && static_cholesky_inverse!(H_inv, H_chol)
+    ok, H_chol = static_cholesky_decomposition(H)
+    H_inv = zero(H)
+    if ok
+        ok, H_inv = static_cholesky_inverse(H_chol)
+    end
+    if ok
         @inbounds for k in 1:N
             results[k, idx] = θ[k]
             uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
@@ -443,7 +408,8 @@ end
         end
     else
         # Fallback: use LU decomposition
-        if static_matrix_inverse!(H_inv, H)
+        ok, H_inv = static_matrix_inverse(H)
+        if ok
             @inbounds for k in 1:N
                 results[k, idx] = θ[k]
                 uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
