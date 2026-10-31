@@ -6,10 +6,10 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, dispatch, square pixels) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks | lab GPU machine |
-| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, SplinePSFModel `:auto` goes to the CPU | lab GPU machine |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera, SplinePSFModel | lab machine |
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
 - `test/test_groups.toml` declares the groups.
@@ -35,5 +35,11 @@ GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'  # every group this 
   it over moves to Long (CPU) or GPU.
 - New or changed public behaviour gets tests of its documented contract; a bug fix gets one
   regression test. No tests of private helpers, no duplicates of behaviour tested elsewhere.
+- Exception: GaussMLE's GPU memory, contention and poll helpers (`_gpu_free_memory`,
+  `_gpu_contended`, `_poll_gpu`) are tested directly because their failure paths cannot
+  be reached through `fit` on a lab machine: NVML memory info is missing only on GPUs
+  such as the DGX Spark GB10, and a failed poll needs more GPU memory than exists.
+  A contended GPU needs another process at high compute on the same GPU, which a test
+  cannot arrange, so `_gpu_contended` injects the process and utilization queries.
 - Report the test count per group before and after every change.
 - Statistical tests seed their RNG or compare on a tolerance that holds for any draw.

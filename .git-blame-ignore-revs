@@ -6,3 +6,6 @@ d63a9376e547538e8d99f6fc91322005c2eb4175
 
 # style: wrap Julia lines to 92 columns
 a9007a3c8622684d7951a857f9f9adf252c8acbd
+
+# style: wrap the SplinePSFModel lines to 92 columns
+190ffef49ea17b114432503a74316548825d0a8e

@@ -55,7 +55,7 @@ function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where {T}
 end
 
 """
-    GaussMLEConfig{P,PC}
+    GaussMLEConfig{P,PC,W}
 
 Main type for configuring and performing Maximum Likelihood Estimation of Gaussian blob
 parameters.
@@ -64,7 +64,8 @@ parameters.
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
 - `iterations::Int`: Number of Newton-Raphson iterations
-- `constraints::PC<:ParameterConstraints`: Parameter bounds and step limits
+- `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
+  `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
 - `auto_timeout::Float64`: Seconds to wait for GPU in auto mode
 - `gpu_timeout::Float64`: Seconds to wait for GPU in explicit gpu mode
@@ -73,7 +74,9 @@ parameters.
 # See also
 [`fit`](@ref), [`GaussMLEFitInfo`](@ref), [`PSFModel`](@ref GaussMLE.PSFModel)
 """
-struct GaussMLEConfig{P <: PSFModel, PC <: ParameterConstraints, W} <: AbstractSMLMConfig
+struct GaussMLEConfig{
+        P <: PSFModel, PC <: Union{Nothing, ParameterConstraints}, W,
+    } <: AbstractSMLMConfig
     backend::Symbol
     psf_model::P
     iterations::Int
@@ -97,7 +100,8 @@ Camera noise model is determined by the ROIBatch type:
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `iterations = 20`: Number of Newton-Raphson iterations
-- `constraints = nothing`: Parameter constraints (uses defaults if nothing)
+- `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
+  ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
 - `auto_timeout = 300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
 - `gpu_timeout = Inf`: Seconds to wait for GPU in explicit gpu mode
@@ -160,11 +164,6 @@ function GaussMLEConfig(;
     end
 
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
-
-    # Default constraints based on typical box size
-    if isnothing(constraints)
-        constraints = default_constraints(psf_model, 11)  # typical 11x11 box
-    end
 
     return GaussMLEConfig(
         backend, psf_model, iterations, constraints, batch_size,
@@ -252,6 +251,7 @@ function _run_mle_kernel!(
     n_fits = size(data, 3)
     n_params = size(results, 1)
     box_size = size(data, 1)
+    constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
 
     # Track for GaussMLEFitInfo
     actual_backend = :cpu
@@ -260,7 +260,13 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && !CUDA.functional())
+    # A model the kernel cannot run on a GPU skips GPU polling entirely under :auto
+    if !gpu_compatible(psf_pixels) && fitter.backend == :gpu
+        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use \
+            backend = :cpu or :auto"))
+    end
+    use_cpu = fitter.backend == :cpu || !gpu_compatible(psf_pixels) ||
+        (fitter.backend != :gpu && !CUDA.functional())
 
     if fitter.backend == :gpu && !CUDA.functional()
         error("GPU requested but CUDA not functional")
@@ -279,10 +285,14 @@ function _run_mle_kernel!(
 
         while !gpu_succeeded && time() < deadline
             # Poll NVML for available GPU
-            dev_idx, available = wait_for_gpu_nvml(
-                required_memory;
+            dev_idx, available, failed = _poll_gpu(
+                fitter.backend, required_memory;
                 timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
             )
+            if failed
+                use_cpu = true
+                break
+            end
             if !available
                 break  # Timeout reached
             end
@@ -339,7 +349,7 @@ function _run_mle_kernel!(
                         d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                         d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners,
                         d_y_corners,
-                        fitter.constraints, fitter.iterations,
+                        constraints, fitter.iterations,
                         ndrange = batch_size_actual
                     )
 
@@ -374,7 +384,9 @@ function _run_mle_kernel!(
                 error("GPU failed after $(timeout)s timeout")
             end
             # :auto falls through to CPU below
-            @warn "GPU unavailable after $(timeout)s, using CPU"
+            if !use_cpu
+                @warn "GPU unavailable after $(timeout)s, using CPU"
+            end
             use_cpu = true
         end
     end
@@ -394,7 +406,7 @@ function _run_mle_kernel!(
             kernel(
                 results, uncertainties, covariances, log_likelihoods,
                 data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
-                fitter.constraints, fitter.iterations,
+                constraints, fitter.iterations,
                 ndrange = n_fits
             )
             KernelAbstractions.synchronize(ka_backend)
@@ -419,7 +431,7 @@ function _run_mle_kernel!(
                     batch_results, batch_uncertainties, batch_covariances, batch_llr,
                     batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners,
                     batch_y_corners,
-                    fitter.constraints, fitter.iterations,
+                    constraints, fitter.iterations,
                     ndrange = batch_size_actual
                 )
                 KernelAbstractions.synchronize(ka_backend)
@@ -444,7 +456,11 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 - `fitter::GaussMLEConfig`: Configured fitter object
 
 # Keyword Arguments
-- `variance_map=nothing`: Optional sCMOS variance map (will override fitter's camera model)
+- `variance_map=nothing`: Poisson noise when `nothing`; a supplied readnoise-variance map
+  (electrons²) selects the sCMOS path for data already calibrated in electrons
+
+Array input assumes 0.1 μm pixels and synthetic horizontally tiled ROI corners.
+Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
@@ -573,6 +589,7 @@ function fit(
     box_size = size(roi_batch.data, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
@@ -644,6 +661,7 @@ function fit(
     box_size = size(data_electrons, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
@@ -697,8 +715,8 @@ function fit(
 end
 
 """
-    fit(batch::ROIBatch; psf_model=GaussianXYNB(), iterations=20, backend=:auto, ...) ->
-        (BasicSMLD, GaussMLEFitInfo)
+    fit(batch::ROIBatch; psf_model=GaussianXYNB(0.13f0), iterations=20,
+        backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
 
 Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
 Kwargs match GaussMLEConfig fields exactly.
@@ -710,7 +728,8 @@ Kwargs match GaussMLEConfig fields exactly.
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
 - `iterations=20`: Number of Newton-Raphson iterations
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `constraints=nothing`: Parameter constraints (uses defaults if nothing)
+- `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
+  at fit time
 - `batch_size=10_000`: Batch size for GPU processing
 - `auto_timeout=300.0`: Seconds to wait for GPU in auto mode
 - `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode

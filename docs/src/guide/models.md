@@ -9,7 +9,7 @@ GaussMLE.jl provides four PSF model types to accommodate different experimental 
 The most commonly used model with 4 fitted parameters:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 
 The PSF width (sigma) is **fixed** and specified at construction time.
@@ -36,7 +36,7 @@ smld, info = fit(data, fitter)
 Extended model with 5 fitted parameters:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 - **sigma**: PSF width (fitted)
 
@@ -66,7 +66,7 @@ sigma_uncertainties = [e.σ_σ for e in smld.emitters]
 Model with 6 fitted parameters for elliptical PSFs:
 
 - **x, y**: Blob center position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 - **sigma_x**: PSF width in x (fitted)
 - **sigma_y**: PSF width in y (fitted)
@@ -97,7 +97,7 @@ Model for 3D localization using engineered astigmatism (5 fitted parameters):
 
 - **x, y**: Lateral position
 - **z**: Axial position
-- **N**: Integrated photon count
+- **N**: Integrated signal (photons for IdealCamera, electrons for sCMOS)
 - **bg**: Background counts per pixel
 
 The z-position is encoded in the PSF shape through astigmatism calibration parameters.
@@ -136,6 +136,27 @@ The PSF width varies with z according to:
 - You need z-position information
 - You have calibrated the PSF-z relationship
 
+### SplinePSFModel - Tabulated 3D PSF
+
+A 3D model (x, y, z, N, bg) backed by a tabulated PSF: a measured or learned PSF, such as a
+MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The PSF is sampled at pixel centres,
+z is in microns throughout, and the model runs on the CPU only.
+
+```julia
+using GaussMLE, MicroscopePSFs
+
+psf = load_psf("psf.h5")                       # a 3D SplinePSF, in microns
+model = SplinePSFModel(psf; pixel_size = 0.1)  # z_range defaults to the spline's own range
+smld, info = fit(batch; psf_model = model)     # runs on the CPU
+```
+
+Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
+`SplinePSFModel(f; pixel_size, z_range)`. The camera's pixels must be square.
+
+**Use this model when:**
+- You have a calibrated PSF that a Gaussian does not describe well
+- You need z-position information from that PSF
+
 ## Model Comparison
 
 | Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB |
@@ -148,12 +169,13 @@ The PSF width varies with z according to:
 
 ## Unit Convention
 
-**All PSF model parameters use physical units (microns):**
+**Spatial PSF calibration parameters use physical units (microns):**
 
 - `GaussianXYNB(sigma)`: sigma in microns (e.g., `0.13f0` = 130nm)
 - `AstigmaticXYZNB`: sigma_x0, sigma_y0, gamma, d all in microns
+- `AstigmaticXYZNB`: Ax, Ay, Bx and By are dimensionless
 
-The package internally converts to pixel units based on the camera pixel size during fitting.
+Internally, x, y and lateral widths use pixels based on the camera pixel size; astigmatic z, gamma and d remain in microns.
 
 ## Choosing the Right Model
 
