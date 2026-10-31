@@ -7,21 +7,27 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
 include(joinpath(@__DIR__, "..", "long", "utils", "validation_utils.jl"))
 include(joinpath(@__DIR__, "utils", "performance_benchmark.jl"))
 
+model_names = ("GaussianXYNB", "GaussianXYNBS", "GaussianXYNBSXSY", "AstigmaticXYZNB")
+devices = gpu_backend() === nothing ? (:cpu,) : (:cpu, :gpu)
+expected_configs = Set(Iterators.product(model_names, (:ideal, :scmos), devices))
+
 results = run_comprehensive_benchmark()
-@test !isempty(results)
+actual_configs = Set(
+    (r.config.model_name, r.config.camera_symbol, r.config.device_symbol) for r in results
+)
+@test length(results) == length(expected_configs)
+@test actual_configs == expected_configs
 @test all(r -> r.fits_per_second > 0, results)
 
 # std/CRLB within 20% of optimal; allows for statistical variation
 for r in results
     for (param, stats) in r.param_stats
-        if isfinite(stats.std_crlb_ratio)
-            ratio_ok = 0.8 <= stats.std_crlb_ratio <= 1.2
-            if !ratio_ok
-                @warn "$(r.config.model_name)-$(r.config.camera_symbol)-\
-                    $(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio) \
-                    (outside [0.8, 1.2])"
-            end
-            @test ratio_ok
+        ratio_ok = isfinite(stats.std_crlb_ratio) && 0.8 <= stats.std_crlb_ratio <= 1.2
+        if !ratio_ok
+            @warn "$(r.config.model_name)-$(r.config.camera_symbol)-\
+                $(r.config.device_symbol): $param has std/CRLB=$(stats.std_crlb_ratio) \
+                (outside [0.8, 1.2])"
         end
+        @test ratio_ok
     end
 end

@@ -16,11 +16,16 @@ function GaussMLE._active_device_id(::ROCmGPU)
 end
 
 function GaussMLE._release_gpu_context(::ROCmGPU, i)
+    # Finalize the failed attempt's arrays and return pooled memory to HIP free memory.
+    GC.gc(true)
     try
-        # HIP needs no CUDA-style primary-context release; finalize unreachable arrays.
-        GC.gc(false)
-    catch
-        # Best effort, including when device activation failed.
+        AMDGPU.device!(AMDGPU.devices()[i + 1]) do
+            AMDGPU.synchronize()
+            AMDGPU.HIP.reclaim()
+        end
+    catch e
+        # Best effort: HIP device activation or cleanup may fail.
+        e isa AMDGPU.HIP.HIPError || rethrow()
     end
     return nothing
 end

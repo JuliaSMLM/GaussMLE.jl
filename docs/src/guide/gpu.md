@@ -128,8 +128,9 @@ The loop handles three distinct GPU failure scenarios:
 
 On CUDA, memory polling prefers NVIDIA Management Library (NVML) queries without
 creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses
-`CUDA.free_memory()` on that device, which may create a context. Other NVML query
-errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
+`CUDA.free_memory()` on that device, which may create a context. Other errors from
+NVML memory queries or NVML device lookups propagate for `:gpu`; `:auto` warns and
+falls back to CPU. A failed process or utilization query counts as not contended.
 
 Contention checks apply only when memory came from NVML. A GPU with free memory below 1.5x required is skipped before the contention check. A GPU is considered **contended** when:
 

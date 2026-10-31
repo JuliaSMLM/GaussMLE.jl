@@ -296,11 +296,12 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
     catch e
         @warn "Benchmark failed for \
             $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol): $e"
-        return nothing
+        rethrow()
     finally
         # Clean up GPU memory after each benchmark to prevent accumulation
-        if config.device_symbol == :gpu && CUDA.functional()
-            CUDA.reclaim()
+        if config.device_symbol == :gpu
+            vendor = GaussMLE._gpu_vendor()
+            vendor !== nothing && GaussMLE._reclaim_gpu(vendor)
         end
     end
 end
@@ -551,12 +552,8 @@ function run_comprehensive_benchmark()
 
         result = run_single_benchmark(config, WARMUP_ITERATIONS, BENCHMARK_ITERATIONS)
 
-        if result !== nothing
-            push!(results, result)
-            println("✓ ($(round(Int, result.fits_per_second)) fits/s)")
-        else
-            println("✗ FAILED")
-        end
+        push!(results, result)
+        println("✓ ($(round(Int, result.fits_per_second)) fits/s)")
     end
 
     # Print results table

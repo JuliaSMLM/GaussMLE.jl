@@ -12,7 +12,24 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         @test GaussMLE._poll_gpu(
             vendor, :auto, typemax(Int) >> 2; timeout = 0.0,
         ) == (-1, false, false)
-        @test GaussMLE._poll_gpu(vendor, :auto, 1; timeout = 0.0) == (0, true, false)
+        device_idx, available, failed = GaussMLE._poll_gpu(vendor, :auto, 1; timeout = 0.0)
+        n_devices = vendor isa GaussMLE.CUDAGPU ?
+            length(CUDA.devices()) : length(AMDGPU.devices())
+        @test available
+        @test !failed
+        @test device_idx in 0:(n_devices - 1)
+    end
+
+    if vendor isa GaussMLE.ROCmGPU
+        @testset "ROCm failure cleanup" begin
+            @test GaussMLE._release_gpu_context(vendor, 0) === nothing
+            device_idx, available, failed = GaussMLE._poll_gpu(
+                vendor, :auto, 1; timeout = 0.0,
+            )
+            @test available
+            @test !failed
+            @test device_idx in 0:(length(AMDGPU.devices()) - 1)
+        end
     end
 
     @testset "Public fit agrees with CPU" begin
