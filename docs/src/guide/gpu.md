@@ -256,6 +256,7 @@ end
 Since KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
 runtime. The first CPU fit of each PSF model in a session takes a few seconds longer
 for compilation; subsequent fits reuse the compiled kernel.
+The CPU path uses work-groups of 64 fits.
 
 ### Data Flow
 

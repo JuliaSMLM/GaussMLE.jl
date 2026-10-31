@@ -223,6 +223,11 @@ function compute_cpu_batch_size(
     end
 end
 
+# KA's default can overflow POCL's work-group stack with few Julia threads;
+# small groups keep every thread busy.
+# Measured on kitt: ~34-42% higher XYNB throughput with 16-32 Julia threads.
+const CPU_WORKGROUP_SIZE = 64
+
 """
     _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
@@ -404,7 +409,7 @@ function _run_mle_kernel!(
         if cpu_batch_size >= n_fits
             # Process all at once
             actual_n_batches = 1
-            kernel = unified_gaussian_mle_kernel!(ka_backend)
+            kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
             kernel(
                 results, uncertainties, covariances, log_likelihoods,
                 data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
@@ -428,7 +433,7 @@ function _run_mle_kernel!(
                 batch_covariances = @view covariances[:, batch_start:batch_end]
                 batch_llr = @view log_likelihoods[batch_start:batch_end]
 
-                kernel = unified_gaussian_mle_kernel!(ka_backend)
+                kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
                 kernel(
                     batch_results, batch_uncertainties, batch_covariances, batch_llr,
                     batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners,
