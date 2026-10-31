@@ -158,6 +158,9 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         @test constraints isa GaussMLE.ParameterConstraints{5}
         @test constraints.lower[3] ≈ -0.4f0
         @test constraints.upper[3] ≈ 0.4f0
+        # x, y bounds symmetric about the box, as for the Gaussian models
+        @test constraints.lower[1:2] == [-1.0f0, -1.0f0]
+        @test constraints.upper[1:2] == [13.0f0, 13.0f0]
     end
 
     @testset "lateral_range stored and used" begin

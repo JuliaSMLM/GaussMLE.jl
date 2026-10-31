@@ -278,9 +278,10 @@ function to_pixel_units(model::SplinePSFModel{T}, pixel_size::Real) where {T}
 end
 
 function default_constraints(model::SplinePSFModel, box_size)
+    lower, upper = _default_position_bounds(box_size)
     return ParameterConstraints{5}(
-        SVector{5, Float32}(-2.0f0, -2.0f0, model.z_range[1], 1.0f0, 0.01f0),
-        SVector{5, Float32}(box_size + 2, box_size + 2, model.z_range[2], Inf32, Inf32),
+        SVector{5, Float32}(lower, lower, model.z_range[1], 1.0f0, 0.01f0),
+        SVector{5, Float32}(upper, upper, model.z_range[2], Inf32, Inf32),
         SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, 100.0f0, 2.0f0)
     )
 end
