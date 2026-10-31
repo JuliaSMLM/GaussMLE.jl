@@ -98,7 +98,8 @@ println("Mean sigma: $(mean(sigmas)) microns")
 
 ### GPU Acceleration
 
-CUDA is preferred. To use an AMD GPU when CUDA is not functional, load `using AMDGPU`
+CUDA is preferred and comes with GaussMLE. To use an AMD GPU when CUDA is not functional,
+add AMDGPU to your environment and load `using AMDGPU`
 before `fit`; see [GPU Support](@ref).
 
 ```julia

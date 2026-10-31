@@ -65,9 +65,12 @@ fitter = GaussMLEConfig(
 
 ## AMD GPUs (ROCm)
 
-Load AMDGPU before `fit` to enable the AMD extension:
+CUDA support comes with GaussMLE. AMD support is a package extension: add AMDGPU to
+your environment once and load it before `fit`:
 
 ```julia
+using Pkg; Pkg.add("AMDGPU")  # once per environment
+
 using GaussMLE
 using AMDGPU
 
