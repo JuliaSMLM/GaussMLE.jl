@@ -203,7 +203,7 @@ end
 """
     Emitter3DFitGaussMLE{T} <: AbstractEmitter
 
-3D emitter for astigmatic PSF (AstigmaticXYZNB) with goodness-of-fit.
+3D emitter for `AstigmaticXYZNB` and `SplinePSFModel` with goodness-of-fit.
 
 Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pvalue` field.
 

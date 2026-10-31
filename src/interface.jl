@@ -110,8 +110,13 @@ Camera noise model is determined by the ROIBatch type:
 
 # Backend Semantics
 - `:cpu` - Always use CPU, no waiting
-- `:gpu` - Explicit GPU request, wait up to gpu_timeout, error if unavailable
-- `:auto` - Try GPU with auto_timeout, fall back to CPU with warning
+- `:gpu` - Error immediately if no functional GPU is found; otherwise wait for resources
+  and retry failures up to `gpu_timeout`, then error
+- `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
+  and retry failures up to `auto_timeout`, then warn and fall back to CPU
+
+GPU polling and timeouts apply to GPU-compatible models. For `SplinePSFModel`, `:auto`
+selects CPU directly without polling or warning, and `:gpu` throws `ArgumentError`.
 
 # Examples
 ```julia
@@ -460,6 +465,8 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
   (electrons²) selects the sCMOS path for data already calibrated in electrons
 
 Array input assumes 0.1 μm pixels and synthetic horizontally tiled ROI corners.
+For n ROIs of side b, `variance_map` must cover rows `1:b` and columns `1:b*n`;
+one b×b map is not reused across ROIs.
 Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
@@ -467,6 +474,8 @@ Use `ROIBatch` for real camera calibration and coordinates.
 
 # Examples
 ```julia
+using Statistics: mean
+
 # Fit 1000 ROIs
 data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))

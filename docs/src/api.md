@@ -59,7 +59,9 @@ Device selection is controlled via the `backend` keyword argument to `GaussMLECo
 
 - `:auto` - Automatically select the backend (default)
 - `:cpu` - Force CPU execution
-- `:gpu` - Require GPU, error if unavailable after timeout
+- `:gpu` - Error immediately without functional CUDA; otherwise wait up to `gpu_timeout`
+
+For CPU-only `SplinePSFModel`, `:auto` selects CPU directly and `:gpu` throws `ArgumentError`.
 
 Example:
 ```julia
@@ -70,6 +72,9 @@ fitter = GaussMLEConfig(backend = :cpu)  # Force CPU
 ### Constraints
 
 Parameter constraints can be configured via the `constraints` keyword argument to `GaussMLEConfig`. Default constraints are automatically generated based on the PSF model and ROI size.
+
+For `SplinePSFModel`, custom z bounds are intersected with `model.z_range`; an empty
+intersection throws `ArgumentError`.
 
 ## Camera Models
 

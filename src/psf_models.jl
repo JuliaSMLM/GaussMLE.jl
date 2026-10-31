@@ -172,6 +172,10 @@ Whether the fitting kernel can run `psf_model` on a GPU. For a model that return
 """
 gpu_compatible(::PSFModel) = true
 
+# Whether parameter 3 is axial position (x, y, z, N, bg ordering).
+_has_axial_position(::Type{<:PSFModel}) = false
+_has_axial_position(::Type{<:AstigmaticXYZNB}) = true
+
 # fit(::ROIBatch) checks the camera against the model; SplinePSFModel needs square pixels
 _check_pixel_geometry(::PSFModel, camera) = nothing
 

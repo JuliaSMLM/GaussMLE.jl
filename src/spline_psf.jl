@@ -15,14 +15,16 @@ to the emitter, such as a `MicroscopePSFs.SplinePSF`. It runs on the CPU only (s
 1. x: x-position (fitted in ROI pixels, output in microns)
 2. y: y-position (fitted in ROI pixels, output in microns)
 3. z: axial position (microns throughout)
-4. N: total photon count
-5. bg: background per pixel
+4. N: total signal (photons for IdealCamera, electrons for sCMOS)
+5. bg: background per pixel (photons for IdealCamera, electrons for sCMOS)
 
 # Constructors
     SplinePSFModel(spline; pixel_size, z_range, lateral_range = 1.5)
 
 `spline` is any callable `(x, y, z)` in microns. `z_range` is the valid axial range in
-microns; the fit clamps z into it.
+microns; it must be finite, increasing, and at least 0.01 µm wide after inward Float32
+rounding to support the axial derivative stencil. The fit clamps z into it. Custom z
+constraints are intersected with `z_range`; an empty intersection throws `ArgumentError`.
 
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
                    z_range = (psf.z_min, psf.z_max), lateral_range = 1.5)
@@ -32,8 +34,16 @@ must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it
 `ArgumentError`.
 
 `pixel_size` is the camera pixel size in microns; `fit` rescales the model to the camera's
-pixel size, which must be square. The PSF is sampled at pixel centres and normalized so that
-its sum over pixels at z = 0 is 1.
+pixel size, which must be square. The PSF is sampled at pixel centres. A single scale
+normalizes its positive-clipped pixel sum on the reference plane nearest z = 0 within the
+callable's valid range (the spline's own range for MicroscopePSFs). That scale is reused at
+every z; interpreting N as total signal requires consistent PSF normalization across z.
+A non-finite or non-positive reference sum throws `ArgumentError`.
+
+Spatial derivatives use 5 nm finite differences; the axial stencil shifts inside `z_range`
+near either bound. Initial z comes from a Poisson likelihood scan with spacing at most
+0.1 µm. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
+`z_range`, with a maximum z step of 0.05 µm.
 
 # Fields
 - `spline_psf::S`: the tabulated PSF, evaluated as `spline_psf(x, y, z)` in microns
@@ -41,6 +51,7 @@ its sum over pixels at z = 0 is 1.
 - `z_range::Tuple{T, T}`: valid axial range in microns
 - `lateral_range::T`: lateral extent in microns used for the normalization sum
 - `px_scale::T`: normalization factor so that the pixel-summed PSF ≈ 1
+- `z_ref::Float64`: reference plane for normalization (microns), preserved on rescaling
 
 # Example
 ```jldoctest
@@ -59,11 +70,10 @@ struct SplinePSFModel{T, S} <: PSFModel{5, T}
     z_range::Tuple{T, T}
     lateral_range::T
     px_scale::T
+    z_ref::Float64
 end
 
 function SplinePSFModel(spline; pixel_size::Real, z_range, lateral_range::Real = 1.5)
-    z_range[1] < z_range[2] ||
-        throw(ArgumentError("z_range $z_range must be increasing"))
     # A plain callable is valid on z_range itself
     limits = (z_min = Float64(z_range[1]), z_max = Float64(z_range[2]))
     return _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range)
@@ -72,22 +82,33 @@ end
 # Shared by the core constructor and the MicroscopePSFs extension. `limits` has the spline's
 # own `z_min`/`z_max`.
 function _spline_psf_model(spline, pixel_size::Real, z_range, limits, lateral_range::Real)
+    (isfinite(z_range[1]) && isfinite(z_range[2]) && z_range[1] < z_range[2]) ||
+        throw(ArgumentError("z_range $z_range must be finite and increasing"))
     T = Float32
     px = T(pixel_size)
-
-    # Compute normalization at z=0: sum of PSF at pixel centers should ≈ 1
-    px_scale = _compute_psf_scale(spline, px, T(lateral_range))
 
     # The model clamps z into z_range, so both Float32 bounds must lie inside the spline's
     # own range: clamp to it, then round inward (a bound rounded outward evaluates to 0).
     zlo, zhi = _inward_bounds(T, z_range, limits)
+    (isfinite(zlo) && isfinite(zhi) && zlo < zhi) || throw(
+        ArgumentError("z_range $z_range must increase after inward Float32 rounding")
+    )
+    h = T(0.005)
+    (zlo + h <= zhi - h && zlo + h > zlo && zhi - h < zhi) || throw(
+        ArgumentError("z_range $z_range is too narrow for a 0.01 µm axial stencil")
+    )
+
+    # Keep this reference plane when fit rescales the model to another camera pixel size.
+    z_ref = clamp(0.0, Float64(limits.z_min), Float64(limits.z_max))
+    px_scale = _compute_psf_scale(spline, px, T(lateral_range), z_ref)
     return SplinePSFModel{T, typeof(spline)}(
         spline, px, (zlo, zhi),
-        T(lateral_range), px_scale
+        T(lateral_range), px_scale, z_ref
     )
 end
 
 gpu_compatible(::SplinePSFModel) = false
+_has_axial_position(::Type{<:SplinePSFModel}) = true
 
 # fit passes one pixel size (from pixel_edges_x) to to_pixel_units, so a non-square camera
 # would scale y wrongly without an error
@@ -108,24 +129,28 @@ function _inward_bounds(::Type{T}, zr, spline) where {T}
     lo = max(Float64(zr[1]), Float64(spline.z_min))
     hi = min(Float64(zr[2]), Float64(spline.z_max))
     tlo, thi = T(lo), T(hi)
-    Float64(tlo) < spline.z_min && (tlo = nextfloat(tlo))
-    Float64(thi) > spline.z_max && (thi = prevfloat(thi))
+    Float64(tlo) < lo && (tlo = nextfloat(tlo))
+    Float64(thi) > hi && (thi = prevfloat(thi))
     return tlo, thi
 end
 
 """
-    _compute_psf_scale(spline, pixel_size, lateral_range) -> Float32
+    _compute_psf_scale(spline, pixel_size, lateral_range, z_ref) -> Float32
 
-Compute normalization factor so that summing the PSF over integer pixel positions ≈ 1.
+Normalize the positive-clipped pixel sum at the valid reference plane `z_ref`.
+Throw `ArgumentError` if the sum is non-finite or non-positive.
 """
-function _compute_psf_scale(spline, pixel_size::T, lateral_range::T) where {T}
+function _compute_psf_scale(spline, pixel_size::T, lateral_range::T, z_ref) where {T}
     n_px = ceil(Int, lateral_range / pixel_size)
     norm_sum = zero(T)
     for iy in (-n_px):n_px, ix in (-n_px):n_px
-        val = T(spline(ix * pixel_size, iy * pixel_size, zero(T)))
+        val = T(spline(ix * pixel_size, iy * pixel_size, z_ref))
         norm_sum += max(zero(T), val)
     end
-    return norm_sum > zero(T) ? one(T) / norm_sum : pixel_size^2
+    (isfinite(norm_sum) && norm_sum > zero(T)) || throw(
+        ArgumentError("PSF normalization sum at z = $z_ref must be finite and positive")
+    )
+    return one(T) / norm_sum
 end
 
 # --- PSFModel interface ---
@@ -165,21 +190,29 @@ end
     fyp = max(zero(T), T(model.spline_psf(dx, dy + h_lat, z_c))) * scale
     fym = max(zero(T), T(model.spline_psf(dx, dy - h_lat, z_c))) * scale
 
-    z_p = clamp(z_c + h_z, model.z_range[1], model.z_range[2])
-    z_m = clamp(z_c - h_z, model.z_range[1], model.z_range[2])
+    # Shift the whole stencil inward near a bound, including its centre value. Using f0
+    # with clamped endpoints invents curvature even for a PSF that is linear in z.
+    z_s = clamp(z_c, model.z_range[1] + h_z, model.z_range[2] - h_z)
+    z_p = min(z_s + h_z, model.z_range[2])
+    z_m = max(z_s - h_z, model.z_range[1])
+    fzs = z_s == z_c ? f0 : max(zero(T), T(model.spline_psf(dx, dy, z_s))) * scale
     fzp = max(zero(T), T(model.spline_psf(dx, dy, z_p))) * scale
     fzm = max(zero(T), T(model.spline_psf(dx, dy, z_m))) * scale
+
+    # Use the actual spacings to account for Float32 rounding. The quadratic through
+    # these samples gives its first derivative at z_c and its constant second derivative.
+    hp, hm = z_p - z_s, z_s - z_m
+    slope_p, slope_m = (fzp - fzs) / hp, (fzs - fzm) / hm
+    d2f_dz2 = 2 * (slope_p - slope_m) / (hp + hm)
+    df_dz = (hm * slope_p + hp * slope_m) / (hp + hm) + (z_c - z_s) * d2f_dz2
 
     # First derivatives of PSF w.r.t. spatial coords
     df_ddx = (fxp - fxm) / (2 * h_lat)
     df_ddy = (fyp - fym) / (2 * h_lat)
-    dz_denom = z_p - z_m
-    df_dz = dz_denom > zero(T) ? (fzp - fzm) / dz_denom : zero(T)
 
     # Second derivatives
     d2f_ddx2 = (fxp - 2 * f0 + fxm) / (h_lat^2)
     d2f_ddy2 = (fyp - 2 * f0 + fym) / (h_lat^2)
-    d2f_dz2 = dz_denom > zero(T) ? (fzp - 2 * f0 + fzm) / ((dz_denom / 2)^2) : zero(T)
 
     # Chain rule: model = bg + N * f0
     # dx = (j-x)*px → ∂dx/∂x = -px, ∂dy/∂y = -px
@@ -269,11 +302,13 @@ end
 
 function to_pixel_units(model::SplinePSFModel{T}, pixel_size::Real) where {T}
     new_px = T(pixel_size)
-    new_scale = _compute_psf_scale(model.spline_psf, new_px, model.lateral_range)
+    new_scale = _compute_psf_scale(
+        model.spline_psf, new_px, model.lateral_range, model.z_ref
+    )
     return SplinePSFModel{T, typeof(model.spline_psf)}(
         model.spline_psf, new_px,
         model.z_range, model.lateral_range,
-        new_scale
+        new_scale, model.z_ref
     )
 end
 
@@ -283,6 +318,18 @@ function default_constraints(model::SplinePSFModel, box_size)
         SVector{5, Float32}(lower, lower, model.z_range[1], 1.0f0, 0.01f0),
         SVector{5, Float32}(upper, upper, model.z_range[2], Inf32, Inf32),
         SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, 100.0f0, 2.0f0)
+    )
+end
+
+function _resolve_constraints(
+        constraints::ParameterConstraints{5}, model::SplinePSFModel, box_size
+    )
+    lo = max(constraints.lower[3], model.z_range[1])
+    hi = min(constraints.upper[3], model.z_range[2])
+    lo <= hi || throw(ArgumentError("custom z constraints do not intersect model.z_range"))
+    return ParameterConstraints{5}(
+        Base.setindex(constraints.lower, lo, 3), Base.setindex(constraints.upper, hi, 3),
+        constraints.max_step
     )
 end
 

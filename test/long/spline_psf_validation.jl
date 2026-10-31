@@ -39,12 +39,22 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Distributions, Ran
     dz = [(e[k].z - truth[k][3]) * 1000 for k in 1:n]
     crlb_x = sqrt(mean(abs2, [em.σ_x for em in e])) * 1000
     crlb_y = sqrt(mean(abs2, [em.σ_y for em in e])) * 1000
+    crlb_z = sqrt(mean(abs2, [em.σ_z for em in e])) * 1000
 
     @test abs(mean(dx)) <= 3
     @test abs(mean(dy)) <= 3
     @test abs(mean(dz)) <= 10
-    @test std(dx) <= 1.3 * crlb_x
-    @test std(dy) <= 1.3 * crlb_y
+    # With 200 fits, a 30% two-sided tolerance allows sampling variation; observed
+    # SD/CRLB ratios on kitt were 0.88–1.12. Inflated or infinite CRLBs must fail too.
+    for field in (:σ_x, :σ_y, :σ_z)
+        @test all(em -> isfinite(getproperty(em, field)) && getproperty(em, field) > 0, e)
+    end
+    for crlb in (crlb_x, crlb_y, crlb_z)
+        @test isfinite(crlb) && crlb > 0
+    end
+    @test abs(1 - std(dx) / crlb_x) < 0.3
+    @test abs(1 - std(dy) / crlb_y) < 0.3
+    @test abs(1 - std(dz) / crlb_z) < 0.3
 end
 
 # Every 0.1 µm band of z over ±0.5 µm meets the same thresholds. SMLMAnalysis S1 found fits
@@ -85,9 +95,18 @@ end
             @test abs(mean(dx)) <= 3
             @test abs(mean(dy)) <= 3
             @test abs(mean(dz)) <= 10
-            @test std(dx) <= 1.3 * crlb_x
-            @test std(dy) <= 1.3 * crlb_y
-            @test std(dz) <= 1.3 * crlb_z
+            # The same 30% tolerance accounts for 200-fit sampling variation per band.
+            for field in (:σ_x, :σ_y, :σ_z)
+                @test all(
+                    em -> isfinite(getproperty(em, field)) && getproperty(em, field) > 0, e
+                )
+            end
+            for crlb in (crlb_x, crlb_y, crlb_z)
+                @test isfinite(crlb) && crlb > 0
+            end
+            @test abs(1 - std(dx) / crlb_x) < 0.3
+            @test abs(1 - std(dy) / crlb_y) < 0.3
+            @test abs(1 - std(dz) / crlb_z) < 0.3
         end
         println(
             "z band ", round(zlo; digits = 1), ": bias x ", round(mean(dx); digits = 2),

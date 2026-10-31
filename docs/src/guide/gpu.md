@@ -147,7 +147,7 @@ Tune batch size based on:
 
 ### Benchmarking Your Hardware
 
-Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The GPU test group includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
+Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The performance benchmark covers the four Gaussian models with both cameras on CPU and GPU, reporting fits/second and MLE optimality (std/CRLB ratio). Separate spline Monte Carlo validation runs on CPU with IdealCamera in the Long group; the GPU group checks that spline `:auto` dispatch goes directly to CPU.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 

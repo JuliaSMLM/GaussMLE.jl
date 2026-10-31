@@ -70,7 +70,7 @@ GaussMLE.jl uses diagonal Newton-Raphson updates for each parameter $a$:
 
 Where:
 - $g_a$ is the gradient component (first derivative)
-- $H_{\mathrm{diag},a}$ is the corresponding diagonal Hessian element (second derivative)
+- $H_{\mathrm{diag},a}$ is the diagonal curvature used by the optimizer (with the approximations described below)
 
 The update is zero when $|H_{\mathrm{diag},a}| \leq 10^{-10}$. Each update is clamped to its step limit, then the new parameter is clamped to its bounds. The full Fisher matrix is accumulated and inverted once after optimization for uncertainties.
 
@@ -98,11 +98,26 @@ For the GaussianXYNB model ($\theta = [x, y, n, b]$):
 
 ### Hessian Components
 
-The Hessian elements are given below; the optimizer computes only the diagonal elements:
+The exact Poisson Hessian elements are:
 
 ```math
 \frac{\partial^2 \ell}{\partial \theta_i \partial \theta_j} = -\sum_{k,l} \left[ \frac{N_{k,l}}{\mu_{k,l}^2} \frac{\partial \mu_{k,l}}{\partial \theta_i} \frac{\partial \mu_{k,l}}{\partial \theta_j} - \left( \frac{N_{k,l}}{\mu_{k,l}} - 1 \right) \frac{\partial^2 \mu_{k,l}}{\partial \theta_i \partial \theta_j} \right]
 ```
+
+The optimizer accumulates only the diagonal, with two model-curvature approximations. For `GaussianXYNBS`, the shared-σ second derivative sums the two single-axis contributions and omits the mixed product term
+
+```math
+2\theta_n \frac{\partial G_x}{\partial \sigma} \frac{\partial G_y}{\partial \sigma}.
+```
+
+For `AstigmaticXYZNB`, the z second derivative includes the first and second derivatives of each width separately, but omits
+
+```math
+2\frac{\partial^2 \mu}{\partial \sigma_x \partial \sigma_y}
+\frac{d\sigma_x}{dz}\frac{d\sigma_y}{dz}.
+```
+
+The first derivatives include both width contributions. For Poisson updates, the implementation also sets the likelihood factors to zero when $\mu \leq 0.01$ and caps $cf = N/\mu - 1$ and $df = N/\mu^2$ above at $10^4$. The sCMOS path instead uses the fixed-variance approximation described below.
 
 ## Gaussian Integral Computation
 
@@ -151,6 +166,8 @@ For the Poisson model:
 I_{ij}(\theta) = \sum_{k,l} \frac{1}{\mu_{k,l}} \frac{\partial \mu_{k,l}}{\partial \theta_i} \frac{\partial \mu_{k,l}}{\partial \theta_j}
 ```
 
+The Fisher matrix is positive semidefinite; its off-diagonal entries may have either sign.
+
 ### Cramér-Rao Lower Bound
 
 The CRLB gives the minimum achievable standard deviation:
@@ -172,7 +189,7 @@ The off-diagonal elements of the inverse Fisher matrix provide covariance inform
 Let `C` be the internal inverse Fisher matrix and `pₓ`, `pᵧ` the camera pixel sizes in microns. GaussMLE.jl converts the spatial covariances to microns²:
 
 - **2D models**: `σ_xy = pₓ * pᵧ * C[1,2]`
-- **3D models**: additionally `σ_xz = pₓ * C[1,3]` and `σ_yz = pᵧ * C[2,3]`, since astigmatic z already uses microns
+- **3D models** (`AstigmaticXYZNB` and `SplinePSFModel`): additionally `σ_xz = pₓ * C[1,3]` and `σ_yz = pᵧ * C[2,3]`, since z already uses microns
 
 These covariances capture correlations between position estimates. For example, a non-zero `σ_xy` indicates that the x and y position estimates are correlated, which can arise from asymmetric pixel sampling or off-center emitter positions within the ROI.
 
@@ -234,8 +251,8 @@ GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson opt
 To ensure numerical stability:
 
 - **Parameter constraints**: Restrict parameter updates with step limits and enforce bounds (positive intensity, bounded position, etc.)
-- **Fisher matrix regularization**: Small diagonal regularization ($\epsilon \approx 10^{-10} \times \max|I|$) is applied to the Fisher Information Matrix before inversion for CRLB computation, ensuring positive definiteness
-- **Cholesky decomposition**: The Fisher matrix is inverted via Cholesky decomposition (preferred for symmetric positive definite matrices), with LU decomposition as a fallback
+- **Fisher matrix regularization**: The Fisher Information Matrix is positive semidefinite. Small diagonal regularization ($\epsilon = 10^{-10} \times \max|I|$) attempts to stabilize inversion for CRLB computation; it does not guarantee successful factorization in Float32
+- **Cholesky decomposition**: Cholesky inversion is tried first, with LU as a fallback. If both paths fail, the fitted parameters are retained with infinite uncertainties and zero covariances
 
 With `constraints=nothing`, defaults are built at fit time from ROI size n, and the config retains `nothing`. Default x and y bounds are `[-1,n+2]` in ROI pixels, extending 1.5 pixels beyond each ROI edge.
 

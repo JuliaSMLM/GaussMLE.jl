@@ -3,6 +3,42 @@
 # on a GPU host; the Long group checks bias and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
+# Share one callable type across the regression cases to limit Core kernel compilation.
+struct SplineTestPSF
+    linear::Bool
+    x_shift::Float64
+    y_shift::Float64
+    z_min::Float64
+    z_max::Float64
+end
+
+function (psf::SplineTestPSF)(x, y, z)
+    psf.z_min <= z <= psf.z_max || error("evaluated outside the callable's valid z range")
+    dx, dy = x - psf.x_shift * z, y - psf.y_shift * z
+    if psf.linear
+        # An identifiable change that is linear in z and positive over the full grid.
+        return exp(-(dx^2 + dy^2) / (2 * 0.13^2)) *
+            (1 + z * tanh((dx^2 - dy^2) / 0.02))
+    end
+    return exp(-dx^2 / (2 * (0.13 + 0.1z)^2) - dy^2 / (2 * (0.13 - 0.1z)^2))
+end
+
+const astig_shape = SplineTestPSF(false, 0.0, 0.0, -Inf, Inf)
+const linear_shape = SplineTestPSF(true, 0.0, 0.0, -Inf, Inf)
+
+function roi_at(m, z; x = 6, y = 6, box = 11)
+    return [
+        GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(x, y, z, 1000, 10))
+            for i in 1:box, j in 1:box
+    ]
+end
+
+function batch_at(m, z; x = 6, y = 6)
+    roi = roi_at(m, z; x, y)
+    data = reshape(roi, size(roi)..., 1)
+    return ROIBatch(data, Int32[1], Int32[1], Int32[1], IdealCamera(64, 64, m.pixel_size))
+end
+
 @testset "SplinePSFModel" begin
 
     # Unaberrated scalar PSF on a coarse grid, as in PSFLearning's bridge tests
@@ -30,123 +66,125 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
             spline; pixel_size = 0.1, z_range = (-1.5, 1.5)
         )
 
+        for zr in (
+                (0.4, -0.4), (0.1, 0.1), (NaN, 0.4), (-0.4, Inf),
+                (0.25, 0.25 + 1.0e-10), (0.2, 0.205),
+            )
+            @test_throws ArgumentError SplinePSFModel(
+                spline; pixel_size = 0.1, z_range = zr
+            )
+        end
+
         # A 2D SplinePSF has no z
         spline2d = SplinePSF(AiryPSF(1.4, 0.68), -0.5:0.1:0.5, -0.5:0.1:0.5)
         @test_throws ArgumentError SplinePSFModel(spline2d; pixel_size = 0.1)
     end
 
     @testset "construction from any callable" begin
-        astig(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2))
-        gpsf = SplinePSFModel(astig; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        gpsf = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
         @test gpsf isa SplinePSFModel{Float32}
         @test gpsf.z_range == (-0.5f0, 0.5f0)
         @test gpsf.lateral_range == 1.5f0
         # Normalized so the pixel-summed PSF at z = 0 is 1
         n_px = ceil(Int, 1.5 / 0.1)
-        @test sum(astig(0.1ix, 0.1iy, 0.0) for ix in (-n_px):n_px, iy in (-n_px):n_px) *
-            gpsf.px_scale ≈ 1 rtol = 1.0e-5
-        @test_throws ArgumentError SplinePSFModel(
-            astig; pixel_size = 0.1, z_range = (0.5, -0.5)
+        reference_sum = sum(
+            astig_shape(0.1ix, 0.1iy, 0.0) for ix in (-n_px):n_px, iy in (-n_px):n_px
+        )
+        @test reference_sum * gpsf.px_scale ≈ 1 rtol = 1.0e-5
+        for zr in (
+                (0.5, -0.5), (0.1, 0.1), (-Inf, 0.5), (-0.5, NaN),
+                (0.25, 0.25 + 1.0e-10), (0.2, 0.205),
+            )
+            @test_throws ArgumentError SplinePSFModel(
+                astig_shape; pixel_size = 0.1, z_range = zr
+            )
+        end
+    end
+
+    @testset "fit recovers the z-scan start far from focus" begin
+        amodel = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        for z in (-0.4f0, 0.4f0)
+            smld, _ = fit(batch_at(amodel, z); psf_model = amodel, backend = :cpu)
+            @test only(smld.emitters).z ≈ z atol = 0.001
+        end
+    end
+
+    @testset "fit near both axial bounds with a linear-in-z PSF" begin
+        lmodel = SplinePSFModel(linear_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        # The scan starts at the bound; false curvature used to send the step outward.
+        for z in (-0.5f0, -0.499f0, -0.497f0, 0.497f0, 0.499f0, 0.5f0)
+            smld, _ = fit(batch_at(lmodel, z); psf_model = lmodel, backend = :cpu)
+            @test only(smld.emitters).z ≈ z atol = 0.0002
+        end
+    end
+
+    @testset "fit preserves axial position covariances" begin
+        moving = SplineTestPSF(false, 0.2, -0.1, -Inf, Inf)
+        m = SplinePSFModel(moving; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        smld, _ = fit(batch_at(m, 0.2); psf_model = m, backend = :cpu, iterations = 40)
+        e = only(smld.emitters)
+        @test e.z ≈ 0.2 atol = 0.002
+        @test isfinite(e.σ_xz) && isfinite(e.σ_yz)
+        @test max(abs(e.σ_xz), abs(e.σ_yz)) > 1.0e-7
+    end
+
+    @testset "custom z constraints intersect the model range" begin
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        source = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.6, 0.6))
+        defaults = GaussMLE.default_constraints(m, 11)
+        custom(lo, hi) = GaussMLE.ParameterConstraints{5}(
+            SVector{5, Float32}(-1, -1, lo, 1, 0.01),
+            SVector{5, Float32}(13, 13, hi, Inf, Inf), defaults.max_step
+        )
+        wider = custom(-1, 1)
+        for z in (-0.55, 0.55)
+            smld, _ = fit(
+                batch_at(source, z); psf_model = m, backend = :cpu, constraints = wider
+            )
+            fitted_z = only(smld.emitters).z
+            @test m.z_range[1] <= fitted_z <= m.z_range[2]
+            @test fitted_z ≈ clamp(z, m.z_range...) atol = 0.001
+        end
+        # A narrower user interval is preserved, and a disjoint interval is refused.
+        smld, _ = fit(
+            batch_at(m, 0.4); psf_model = m, backend = :cpu, constraints = custom(0.1, 0.2)
+        )
+        @test only(smld.emitters).z ≈ 0.2 atol = 0.001
+        @test_throws ArgumentError fit(
+            batch_at(m, 0.2); psf_model = m, backend = :cpu, constraints = custom(0.6, 0.8)
         )
     end
 
-    @testset "evaluate_psf" begin
-        px_gpsf = GaussMLE.to_pixel_units(model(), 0.1)
-
-        # Center of ROI, z=0, N=1000, bg=10
-        θ = SVector{5, Float32}(6.0f0, 6.0f0, 0.0f0, 1000.0f0, 10.0f0)
-
-        # At the center pixel, PSF should be > bg
-        val_center = GaussMLE.evaluate_psf(px_gpsf, 6, 6, θ)
-        @test val_center > 10.0f0
-
-        # At a far edge pixel, should be near bg
-        val_edge = GaussMLE.evaluate_psf(px_gpsf, 1, 1, θ)
-        @test val_edge > 9.0f0
-        @test val_edge < val_center
-
-        # PSF is symmetric: (5,6) ≈ (7,6)
-        val_left = GaussMLE.evaluate_psf(px_gpsf, 5, 6, θ)
-        val_right = GaussMLE.evaluate_psf(px_gpsf, 7, 6, θ)
-        @test val_left ≈ val_right rtol = 0.01
-
-        # N=0 should give bg
-        θ_nobg = SVector{5, Float32}(6.0f0, 6.0f0, 0.0f0, 0.0f0, 10.0f0)
-        @test GaussMLE.evaluate_psf(px_gpsf, 6, 6, θ_nobg) ≈ 10.0f0
+    @testset "fit rescales to another square pixel size" begin
+        # The truth is sampled on the new camera grid, independently of fit's rescaling.
+        m = SplinePSFModel(
+            astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 2.0
+        )
+        truth_model = SplinePSFModel(
+            astig_shape; pixel_size = 0.127, z_range = (-0.5, 0.5), lateral_range = 2.0
+        )
+        smld, _ = fit(
+            batch_at(truth_model, 0.2; x = 5.4, y = 6.2); psf_model = m, backend = :cpu
+        )
+        e = only(smld.emitters)
+        @test e.x ≈ (5.4 - 0.5) * 0.127 atol = 0.001
+        @test e.y ≈ (6.2 - 0.5) * 0.127 atol = 0.001
+        @test e.z ≈ 0.2 atol = 0.001
+        @test e.photons ≈ 1000 rtol = 0.01
     end
 
-    @testset "compute_pixel_derivatives" begin
-        px_gpsf = GaussMLE.to_pixel_units(model(), 0.1)
-
-        θ = SVector{5, Float32}(6.0f0, 6.0f0, 0.0f0, 1000.0f0, 10.0f0)
-        val, dudt, d2udt2 = GaussMLE.compute_pixel_derivatives(6, 6, θ, px_gpsf)
-
-        # Model value should match evaluate_psf
-        @test val ≈ GaussMLE.evaluate_psf(px_gpsf, 6, 6, θ) rtol = 1.0e-4
-
-        # At center, x and y derivatives should be ≈ 0 (peak)
-        @test abs(dudt[1]) < 10.0f0
-        @test abs(dudt[2]) < 10.0f0
-
-        # N derivative = PSF fraction at this pixel (positive)
-        @test dudt[4] > 0
-        @test dudt[4] ≈ (val - θ[5]) / θ[4] rtol = 0.1
-
-        # bg derivative = 1
-        @test dudt[5] ≈ 1.0f0
-
-        # Second derivatives: x and y should be negative at peak (concave)
-        @test d2udt2[1] < 0
-        @test d2udt2[2] < 0
-
-        # N and bg second derivatives = 0
-        @test d2udt2[4] == 0.0f0
-        @test d2udt2[5] == 0.0f0
-    end
-
-    @testset "simple_initialize" begin
-        # Create a synthetic ROI (11x11) with signal at center
-        box_size = 11
-        roi = fill(10.0f0, box_size, box_size)
-        center = (box_size + 1) / 2
-        for j in 1:box_size, i in 1:box_size
-            r2 = (i - center)^2 + (j - center)^2
-            roi[i, j] += 1000.0f0 * exp(-r2 / 4.0f0)
+    @testset "normalization within a callable's valid range" begin
+        bounded = SplineTestPSF(false, 0.0, 0.0, 0.2, 0.5)
+        m = SplinePSFModel(bounded; pixel_size = 0.1, z_range = (0.2, 0.5))
+        truth_model = SplinePSFModel(bounded; pixel_size = 0.127, z_range = (0.2, 0.5))
+        smld, _ = fit(batch_at(truth_model, 0.3); psf_model = m, backend = :cpu)
+        @test only(smld.emitters).z ≈ 0.3 atol = 0.001
+        @test only(smld.emitters).photons ≈ 1000 rtol = 0.01
+        for value in (0.0, NaN, Inf)
+            @test_throws ArgumentError SplinePSFModel(
+                (x, y, z) -> value; pixel_size = 0.1, z_range = (-0.5, 0.5)
+            )
         end
-
-        θ = GaussMLE.simple_initialize(roi, box_size, model())
-
-        @test length(θ) == 5
-        @test θ[1] ≈ center atol = 1.0
-        @test θ[2] ≈ center atol = 1.0
-        @test -0.5f0 <= θ[3] <= 0.5f0
-        @test θ[4] > 0
-        @test θ[5] > 0
-
-        # z starts at the best point of a likelihood scan over z_range (0.1 µm grid), not
-        # at 0: exact ROIs from the model come back at their own z
-        roi_at(m, z) = [
-            GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(6, 6, z, 1000, 10))
-                for i in 1:box_size, j in 1:box_size
-        ]
-        z0 = GaussMLE.simple_initialize(roi_at(model(), 0.0f0), box_size, model())[3]
-        @test z0 ≈ 0.0f0 atol = 1.0e-6
-        astig(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2))
-        amodel = SplinePSFModel(astig; pixel_size = 0.1, z_range = (-0.5, 0.5))
-        for z in (-0.4f0, 0.4f0)
-            z0 = GaussMLE.simple_initialize(roi_at(amodel, z), box_size, amodel)[3]
-            @test z0 ≈ z atol = 1.0e-5
-        end
-    end
-
-    @testset "to_pixel_units" begin
-        gpsf = model()
-
-        gpsf_px = GaussMLE.to_pixel_units(gpsf, 0.127)
-        @test gpsf_px.pixel_size ≈ 0.127f0
-        @test gpsf_px.z_range == gpsf.z_range
-        @test gpsf_px.px_scale > 0
-        @test gpsf_px.px_scale != gpsf.px_scale
     end
 
     @testset "default_constraints" begin
@@ -161,19 +199,6 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
         # x, y bounds symmetric about the box, as for the Gaussian models
         @test constraints.lower[1:2] == [-1.0f0, -1.0f0]
         @test constraints.upper[1:2] == [13.0f0, 13.0f0]
-    end
-
-    @testset "lateral_range stored and used" begin
-        gpsf = model(lateral_range = 2.0)
-        @test gpsf.lateral_range ≈ 2.0f0
-
-        # to_pixel_units should preserve lateral_range
-        gpsf2 = GaussMLE.to_pixel_units(gpsf, 0.05)
-        @test gpsf2.lateral_range ≈ 2.0f0
-        @test gpsf2.pixel_size ≈ 0.05f0
-        # px_scale should be recomputed with the correct lateral_range
-        @test gpsf2.px_scale > 0
-        @test gpsf2.px_scale != gpsf.px_scale
     end
 
     @testset "GaussMLEConfig construction" begin

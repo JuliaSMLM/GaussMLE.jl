@@ -1,6 +1,6 @@
 # Models
 
-GaussMLE.jl provides four PSF model types to accommodate different experimental conditions. Each model differs in which parameters are fitted versus fixed.
+GaussMLE.jl provides five PSF model types to accommodate different experimental conditions, including CPU-only `SplinePSFModel` for calibrated tabulated or learned 3D PSFs. Each model differs in which parameters are fitted versus fixed.
 
 ## Available Models
 
@@ -153,19 +153,26 @@ smld, info = fit(batch; psf_model = model)     # runs on the CPU
 Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
 `SplinePSFModel(f; pixel_size, z_range)`. The camera's pixels must be square.
 
+N is the signal scale in photons for IdealCamera or electrons for sCMOS; background uses
+the corresponding units per pixel. One normalization scale is computed at the valid plane
+nearest z = 0 and reused across z, so total-signal interpretation requires consistent axial
+PSF normalization. A non-finite or non-positive reference sum throws `ArgumentError`.
+For MicroscopePSFs, the reference plane uses the spline's own valid range.
+
 **Use this model when:**
 - You have a calibrated PSF that a Gaussian does not describe well
 - You need z-position information from that PSF
 
 ## Model Comparison
 
-| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB |
-|---------|--------------|---------------|------------------|-----------------|
-| Parameters | 4 | 5 | 6 | 5 |
-| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated |
-| Dimensions | 2D | 2D | 2D | 3D |
-| Speed | Fastest | Medium | Slowest | Medium |
-| Stability | Most stable | Less stable | Least stable | Stable |
+| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel |
+|---------|--------------|---------------|------------------|-----------------|----------------|
+| Parameters | 4 | 5 | 6 | 5 | 5 |
+| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape |
+| Dimensions | 2D | 2D | 2D | 3D | 3D |
+| Speed | Fastest | Medium | Slowest | Medium | Depends on callable |
+| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
+| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU only |
 
 ## Unit Convention
 
@@ -174,15 +181,17 @@ Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
 - `GaussianXYNB(sigma)`: sigma in microns (e.g., `0.13f0` = 130nm)
 - `AstigmaticXYZNB`: sigma_x0, sigma_y0, gamma, d all in microns
 - `AstigmaticXYZNB`: Ax, Ay, Bx and By are dimensionless
+- `SplinePSFModel`: callable coordinates, z range, and pixel size are in microns
 
-Internally, x, y and lateral widths use pixels based on the camera pixel size; astigmatic z, gamma and d remain in microns.
+Internally, x, y and lateral widths use pixels based on the camera pixel size; z for both 3D models, and astigmatic gamma and d, remain in microns.
 
 ## Choosing the Right Model
 
 ### Decision Tree
 
 1. **Do you need 3D localization?**
-   - Yes -> Use `AstigmaticXYZNB` (requires calibration)
+   - Yes, with an astigmatism calibration -> Use `AstigmaticXYZNB`
+   - Yes, with a tabulated or learned PSF -> Use `SplinePSFModel` (CPU only)
    - No -> Continue to step 2
 
 2. **Is your PSF well-characterized and stable?**
@@ -282,7 +291,7 @@ println("Mean Z precision: $(mean([e.σ_z for e in smld.emitters]) * 1000) nm")
 
 ## Mathematical Formulation
 
-All models use the Gaussian expectation with pixel integration:
+The four Gaussian models use the Gaussian expectation with pixel integration:
 
 ```math
 \mu_{i,j}(\theta) = \theta_{bg} + \theta_N \int_{i-0.5}^{i+0.5} \int_{j-0.5}^{j+0.5}
@@ -294,6 +303,12 @@ Where:
 - For **GaussianXYNBS**: sigma_x = sigma_y = sigma (fitted)
 - For **GaussianXYNBSXSY**: sigma_x, sigma_y (independently fitted)
 - For **AstigmaticXYZNB**: sigma_x(z), sigma_y(z) from calibration curve
+
+`SplinePSFModel` instead samples its callable `f` at pixel centres, with camera pixel size p:
+
+```julia
+μ = bg + N * px_scale * max(0, f((j-x)*p, (i-y)*p, clamp(z, z_range...)))
+```
 
 ## Model Validation
 
