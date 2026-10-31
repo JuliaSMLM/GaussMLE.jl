@@ -102,6 +102,52 @@ end
         end
     end
 
+    @testset "invalid pixel size and lateral range" begin
+        # Invalid dimensions must be rejected before the callable is sampled.
+        no_sampling(x, y, z) = error("invalid dimensions reached PSF sampling")
+        for value in (0.0, -0.01, NaN, Inf, -Inf, 1.0e-50, 1.0e40)
+            @test_throws ArgumentError SplinePSFModel(
+                no_sampling; pixel_size = value, z_range = (-0.5, 0.5)
+            )
+            @test_throws ArgumentError SplinePSFModel(
+                no_sampling; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = value
+            )
+        end
+    end
+
+    @testset "sCMOS fit recovers microns and electrons" begin
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        box, sensor_size = 9, 32
+        truth = ((5.2, 4.7, 0.2), (4.6, 5.3, -0.2))
+        x_corners, y_corners = Int32[4, 19], Int32[16, 6]
+        readnoise = [
+            sqrt(1.0f0 + 0.5f0 * (i - 1) + 0.05f0 * (j - 1))
+                for i in 1:sensor_size, j in 1:sensor_size
+        ]
+        offset, gain = 100.0f0, 0.5f0
+        camera = SCMOSCamera(
+            sensor_size, sensor_size, 0.1f0, readnoise;
+            offset, gain, qe = 1.0f0
+        )
+        data = zeros(Float32, box, box, length(truth))
+        for (k, (x, y, z)) in enumerate(truth)
+            electrons = roi_at(m, z; x, y, box, photons = 2000)
+            data[:, :, k] .= electrons ./ gain .+ offset  # Noise-free raw ADU
+        end
+        roi_batch = ROIBatch(data, x_corners, y_corners, Int32[1, 2], camera)
+        smld, info = fit(roi_batch; psf_model = m, backend = :cpu, iterations = 40)
+        @test info.backend == :cpu
+        @test length(smld.emitters) == length(truth)
+        for (k, (e, (x, y, z))) in enumerate(zip(smld.emitters, truth))
+            @test e.x ≈ (x_corners[k] + x - 1.5) * 0.1 atol = 0.001
+            @test e.y ≈ (y_corners[k] + y - 1.5) * 0.1 atol = 0.001
+            @test e.z ≈ z atol = 0.001
+            @test e.photons ≈ 2000 rtol = 0.01  # Electrons, before ADU conversion
+            @test e.bg ≈ 10 rtol = 0.01
+            @test all(isfinite, (e.σ_x, e.σ_y, e.σ_z, e.σ_photons, e.σ_bg))
+        end
+    end
+
     @testset "fit recovers the z-scan start far from focus" begin
         amodel = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
         for z in (-0.4f0, 0.4f0)

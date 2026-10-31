@@ -34,7 +34,8 @@ must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it
 `ArgumentError`.
 
 `pixel_size` is the camera pixel size in microns; `fit` rescales the model to the camera's
-pixel size, which must be square. The PSF is sampled at pixel centres. A single scale
+pixel size, which must be square. Both `pixel_size` and `lateral_range` must be finite and
+positive before and after Float32 conversion. The PSF is sampled at pixel centres. A scale
 normalizes its positive-clipped pixel sum on the reference plane nearest z = 0 within the
 callable's valid range (the spline's own range for MicroscopePSFs). That scale is reused at
 every z; interpreting N as total signal requires consistent PSF normalization across z.
@@ -85,8 +86,19 @@ end
 function _spline_psf_model(spline, pixel_size::Real, z_range, limits, lateral_range::Real)
     (isfinite(z_range[1]) && isfinite(z_range[2]) && z_range[1] < z_range[2]) ||
         throw(ArgumentError("z_range $z_range must be finite and increasing"))
+    (isfinite(pixel_size) && pixel_size > 0) ||
+        throw(ArgumentError("pixel_size must be finite and positive"))
+    (isfinite(lateral_range) && lateral_range > 0) ||
+        throw(ArgumentError("lateral_range must be finite and positive"))
     T = Float32
     px = T(pixel_size)
+    lateral = T(lateral_range)
+    (isfinite(px) && px > zero(T)) || throw(
+        ArgumentError("pixel_size must be finite and positive after Float32 conversion")
+    )
+    (isfinite(lateral) && lateral > zero(T)) || throw(
+        ArgumentError("lateral_range must be finite and positive after Float32 conversion")
+    )
 
     # The model clamps z into z_range, so both Float32 bounds must lie inside the spline's
     # own range: clamp to it, then round inward (a bound rounded outward evaluates to 0).
@@ -103,10 +115,10 @@ function _spline_psf_model(spline, pixel_size::Real, z_range, limits, lateral_ra
     # when fit rescales the model to another camera pixel size.
     ref_lo, ref_hi = _inward_bounds(T, (limits.z_min, limits.z_max), limits)
     z_ref = clamp(zero(T), ref_lo, ref_hi)
-    px_scale = _compute_psf_scale(spline, px, T(lateral_range), z_ref)
+    px_scale = _compute_psf_scale(spline, px, lateral, z_ref)
     return SplinePSFModel{T, typeof(spline)}(
         spline, px, (zlo, zhi),
-        T(lateral_range), px_scale, z_ref
+        lateral, px_scale, z_ref
     )
 end
 
@@ -305,6 +317,7 @@ end
 
 function to_pixel_units(model::SplinePSFModel{T}, pixel_size::Real) where {T}
     new_px = T(pixel_size)
+    new_px == model.pixel_size && return model
     new_scale = _compute_psf_scale(
         model.spline_psf, new_px, model.lateral_range, model.z_ref
     )
@@ -365,36 +378,5 @@ function to_emitter(
         track_id::Int = 0,
         id::Int = idx
     ) where {T}
-    pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-    pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
-
-    # Convert pixel → micron coordinates
-    x_microns = camera.pixel_edges_x[1] + (result.x_camera[idx] - 0.5f0) * pixel_size_x
-    y_microns = camera.pixel_edges_y[1] + (result.y_camera[idx] - 0.5f0) * pixel_size_y
-    z_microns = result.parameters[3, idx]  # already in microns
-
-    photons = result.parameters[4, idx]
-    bg = result.parameters[5, idx]
-
-    # Uncertainties
-    σ_x = result.uncertainties[1, idx] * pixel_size_x
-    σ_y = result.uncertainties[2, idx] * pixel_size_y
-    σ_z = result.uncertainties[3, idx]
-    σ_xy = result.covariances[1, idx] * pixel_size_x * pixel_size_y
-    σ_xz = result.covariances[2, idx] * pixel_size_x
-    σ_yz = result.covariances[3, idx] * pixel_size_y
-    σ_photons = result.uncertainties[4, idx]
-    σ_bg = result.uncertainties[5, idx]
-
-    pvalue = result.pvalues[idx]
-
-    return Emitter3DFitGaussMLE{T}(
-        T(x_microns), T(y_microns), T(z_microns),
-        photons, bg,
-        T(σ_x), T(σ_y), T(σ_z), T(σ_xy), T(σ_xz), T(σ_yz),
-        σ_photons, σ_bg,
-        pvalue,
-        Int(result.frame_indices[idx]),
-        dataset, track_id, id
-    )
+    return _to_emitter_xyznb(result, idx, camera; dataset, track_id, id)
 end
