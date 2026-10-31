@@ -113,8 +113,10 @@ Camera noise model is determined by the ROIBatch type:
 
 # Backend Semantics
 - `:cpu` - Always use CPU, no waiting
-- `:gpu` - Explicit GPU request, wait up to gpu_timeout, error if unavailable
-- `:auto` - Try GPU with auto_timeout, fall back to CPU with warning
+- `:gpu` - Error immediately if no functional GPU is found; otherwise wait for resources
+  and retry failures up to `gpu_timeout`, then error
+- `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
+  and retry failures up to `auto_timeout`, then warn and fall back to CPU
 
 GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
 AMDGPU (`using AMDGPU`) before `fit`.
@@ -474,6 +476,8 @@ Use `ROIBatch` for real camera calibration and coordinates.
 
 # Examples
 ```julia
+using Statistics: mean
+
 # Fit 1000 ROIs
 data = zeros(Float32, 7, 7, 1000)  # Your ROI data here
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))

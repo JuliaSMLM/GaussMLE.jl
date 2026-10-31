@@ -4,11 +4,13 @@ This example demonstrates the most common use case: fitting Gaussian blobs with 
 
 ## Running the Example
 
-The complete example is available in `examples/basic_fitting.jl`:
+The complete example is available in `examples/basic_fitting.jl`. Run it from the repository root using the active project:
 
 ```bash
-julia --project=. examples/basic_fitting.jl
+julia --project examples/basic_fitting.jl
 ```
+
+The other short scripts use the same command with `scmos_camera.jl`, `gpu_acceleration.jl`, or `astigmatic_3d.jl`. They use `smld, info = fit(data, fitter)` and select devices with `backend`. The sCMOS example fits an `ROIBatch` with a calibrated camera; the GPU comparison needs functional CUDA or AMDGPU. When CUDA is unavailable, the GPU script loads AMDGPU if it is in the active environment.
 
 ## Step-by-Step Walkthrough
 

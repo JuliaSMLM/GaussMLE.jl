@@ -11,8 +11,10 @@ This directory contains user-facing examples demonstrating how to use the packag
 ## Environment Setup
 
 ### Examples Environment
-- Each file starts with: `using Pkg; Pkg.activate("examples")`
-- Has its own environment with example-specific packages:
+- The four short scripts (`basic_fitting.jl`, `scmos_camera.jl`, `gpu_acceleration.jl`,
+  `astigmatic_3d.jl`) use the repository's active project without environment activation.
+- Extended examples activate `examples/` with `using Pkg; Pkg.activate(@__DIR__)`.
+  That environment has example-specific packages:
   - CairoMakie (for plotting - NOT Plots.jl)
   - Any packages users might commonly use alongside this package
   - Visualization and output tools
@@ -24,9 +26,9 @@ Since you run Julia in separate processes (not an interactive REPL), use this co
 julia --project=. examples/my_example.jl
 ```
 
-**Important**: The example files handle their own environment activation, so:
-1. Run from the project root with `--project=.`
-2. The file itself will activate the examples environment
+**Important**:
+1. Run from the project root with `--project` (or `--project=.`)
+2. The four short scripts keep that project active; extended examples activate `examples/`
 3. Always capture stdout to see output
 4. Read generated PNG files after execution
 
@@ -35,10 +37,10 @@ julia --project=. examples/my_example.jl
 When creating new files in the examples/ directory, follow these conventions:
 
 ### File Structure
-1. **Always start with environment activation**:
+1. **Use the active project for short examples; activate for extra dependencies**:
    ```julia
    using Pkg
-   Pkg.activate("examples")
+   Pkg.activate(@__DIR__)
    ```
 
 2. **Define output directory and adjustable parameters**:
@@ -114,5 +116,7 @@ println("Plot saved to $output_file")
 
 ## Current Examples
 The examples/ directory currently contains:
-- `basicfit.jl` - Basic fitting example with visualization
-- `sigmafit.jl` - Fitting with PSF width parameter
+- `basic_fitting.jl` - Basic fitting with `smld, info = fit(data, fitter)`
+- `scmos_camera.jl` - Calibrated sCMOS `ROIBatch` with full-sensor readnoise
+- `gpu_acceleration.jl` - CPU/GPU comparison with `backend` (CUDA or AMDGPU required)
+- `astigmatic_3d.jl` - Astigmatic 3D fitting

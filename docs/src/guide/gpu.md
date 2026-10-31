@@ -15,7 +15,7 @@ fitter = GaussMLEConfig()
 # Force CPU
 fitter = GaussMLEConfig(backend = :cpu)
 
-# Force GPU (errors if unavailable after timeout)
+# Force GPU (errors immediately if no functional GPU is found)
 fitter = GaussMLEConfig(backend = :gpu)
 
 # Auto with custom timeout
@@ -35,19 +35,23 @@ The `backend` parameter controls compute device selection:
 GPU modes prefer CUDA whenever `CUDA.functional()`. Otherwise they use a functional
 AMD GPU when AMDGPU is loaded.
 
+If neither vendor is functional, `:gpu` errors immediately and `:auto` uses CPU
+without a warning. Timeouts govern resource waits and retries only after a functional
+vendor is found; a timeout in `:auto` warns before falling back to CPU.
+
 ### Timeout Configuration
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode |
-| `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode |
+| `auto_timeout` | `300.0` | Seconds for resource waits and retries in `:auto` mode |
+| `gpu_timeout` | `Inf` | Seconds for resource waits and retries in `:gpu` mode |
 | `on_wait` | `nothing` | Progress callback `(elapsed, available, required) -> nothing` |
 
 ```julia
-# Auto mode: wait up to 5 min (default), then fall back to CPU
+# Auto mode: with a functional GPU, wait/retry up to 5 min, then fall back to CPU
 fitter = GaussMLEConfig(backend = :auto, auto_timeout = 300.0)
 
-# Explicit GPU: wait up to 60s, error if still unavailable
+# Explicit GPU: with a functional GPU, wait/retry up to 60s, then error
 fitter = GaussMLEConfig(backend = :gpu, gpu_timeout = 60.0)
 
 # Progress callback for monitoring waits
@@ -76,8 +80,10 @@ Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10.
 
 Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
 contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,
-the HIP pool's cached memory is reclaimed; failure cleanup runs garbage collection
-without releasing a CUDA-style primary context.
+the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
+collection, then attempts synchronization and HIP pool reclamation on the failed
+device, restoring the previous device afterward. HIP cleanup errors are ignored;
+other errors propagate. No CUDA-style primary context is released.
 
 ## GPU Scheduling System
 
@@ -105,7 +111,7 @@ while !gpu_succeeded && before deadline:
          reclaim vendor pool       # Return cached memory
          gpu_succeeded = true
     4. Catch:
-         clean up GPU resources    # Release CUDA context or collect HIP arrays
+         clean up GPU resources    # CUDA: release context; AMD: GC, synchronize, reclaim
          loop back to step 1       # Re-poll memory for next available GPU
 ```
 

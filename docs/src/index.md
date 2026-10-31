@@ -54,11 +54,13 @@ end
 ### Unit Convention
 
 **User-facing spatial parameters use physical units (microns)**:
-- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
+- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13f0)` for 130nm PSF)
 - Output positions: microns
 - Output spatial uncertainties: microns
 - Internally, x, y and lateral widths use pixels based on camera pixel size; astigmatic z, γ and d remain in microns
 - Astigmatic coefficients Ax, Ay, Bx and By are dimensionless
+
+The fitting path currently requires Float32 PSF models; use `f0` literals for their calibration parameters.
 
 ### Supported PSF Models
 

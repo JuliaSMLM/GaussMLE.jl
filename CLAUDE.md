@@ -13,7 +13,7 @@ julia --project -e 'using Pkg; Pkg.test()'
 GROUP=QA julia --project -e 'using Pkg; Pkg.test()'
 GROUP=GPU,Long julia --project -e 'using Pkg; Pkg.test()'
 
-# Every group this machine can run (GPU is skipped without a functional CUDA GPU)
+# Every group this machine can run (GPU needs functional CUDA or AMDGPU in its group env)
 GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'
 ```
 
@@ -36,6 +36,11 @@ julia --project examples/scmos_camera.jl
 julia --project examples/gpu_acceleration.jl
 julia --project examples/astigmatic_3d.jl
 ```
+
+These four short scripts use the repository's active environment and the current API:
+`smld, info = fit(data, fitter)`, with `backend` selecting CPU or GPU. The sCMOS
+example fits an `ROIBatch` with a calibrated camera. The GPU example compares backends
+when CUDA or AMDGPU is functional; otherwise it reports that the comparison is unavailable.
 
 ## Architecture
 
@@ -82,11 +87,14 @@ SMLMData.IdealCamera
 # No calibration fields needed
 
 # sCMOS camera - Poisson + pixel-dependent readout noise
-SMLMData.SCMOSCamera
-    offset::Matrix{Float32}      # Per-pixel offset (ADU)
-    gain::Matrix{Float32}        # Per-pixel gain (e⁻/ADU)
-    readnoise::Matrix{Float32}   # Per-pixel readout noise σ (e⁻)
+SMLMData.SCMOSCamera{T}
+    offset::Union{T, Matrix{T}}     # Offset (ADU)
+    gain::Union{T, Matrix{T}}       # Gain (e⁻/ADU)
+    readnoise::Union{T, Matrix{T}}  # Readout noise σ (e⁻)
 ```
+
+Calibration values can be scalars or `(ny, nx)` matrices, with the same element type
+as the pixel size.
 
 **2. ROI Batches** (from SMLMData.jl):
 
@@ -106,7 +114,8 @@ SMLMData.ROIBatch{T}
 
 ```julia
 # 1. User creates camera with calibration
-camera = SMLMData.SCMOSCamera(offset, gain, readnoise)
+nx, ny = 512, 512
+camera = SMLMData.SCMOSCamera(nx, ny, 0.1f0, readnoise; offset=offset, gain=gain)
 # readnoise is σ in electrons
 
 # 2. ROIBatch created with camera and corner positions
@@ -114,7 +123,8 @@ batch = ROIBatch(data, x_corners, y_corners, frame_indices, camera)
 # x_corners[i], y_corners[i] = camera position for each ROI (1-based)
 
 # 3. fit() extracts variance map from camera
-variance_map = camera.readnoise .^ 2  # Convert σ → σ² (variance in e⁻²)
+variance = camera.readnoise .^ 2  # Convert σ → σ² (variance in e⁻²)
+variance_map = variance isa Real ? fill(variance, ny, nx) : variance
 # variance_map is same size as full camera sensor
 
 # 4. Kernel receives variance_map and separate corner vectors
@@ -144,7 +154,7 @@ The two camera models have **fundamentally different data flows**:
 | **Noise model** | Poisson only | Poisson + pixel readout noise |
 | **Calibration** | None | offset, gain, readnoise maps |
 | **Variance map** | Not used | Required (readnoise²) |
-| **Corners** | Not used (can be `nothing`) | Required for indexing variance map |
+| **Corners** | Required for output coordinates | Required for output coordinates and variance-map lookup |
 | **Data units** | Photons (or ADU if gain=1) | Must convert ADU → electrons |
 | **Likelihood** | `cf = data/model - 1`<br>`df = data/model²` | `cf = (data-model)/total_var`<br>`df = 1/total_var` |
 | **Kernel indexing** | `data[i,j]` only | `data[i,j]` and `variance_map[cam_y, cam_x]` |
@@ -158,7 +168,7 @@ The two camera models have **fundamentally different data flows**:
 **In unified_kernel.jl, all indexing is 1-based:**
 
 ```julia
-# For IdealCamera (no corners needed)
+# For IdealCamera (corners used for output coordinates, not noise lookup)
 for j in 1:box_size    # x: 1, 2, ..., box_size
     for i in 1:box_size  # y: 1, 2, ..., box_size
         pixel_data = data[i, j, roi_idx]
@@ -195,11 +205,16 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
 1. **Optimization (Newton-Raphson)**: Uses diagonal Hessian approximation
    - Element-wise updates: `θ[k] -= ∇L[k] / H_diag[k]`
    - More stable than full Newton method for convergence
-   - Diagonal elements: `H_diag[k] += d2udt2[k,k] * cf - dudt[k] * dudt[k] * df`
+   - Diagonal elements: `H_diag[k] += d2udt2_diag[k] * cf - dudt[k]^2 * df`
+   - Shared-σ curvature sums the two single-axis second derivatives, omitting
+     `2N * (∂Gx/∂σ) * (∂Gy/∂σ)`; astigmatic z curvature omits
+     `2 * (∂²u/∂σx∂σy) * (dσx/dz) * (dσy/dz)`
+   - sCMOS updates additionally hold the current `model + readnoise²` variance fixed
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
-   - Inverted via Cholesky decomposition (more robust than LU for positive definite matrices)
+   - Diagonal regularization attempts to stabilize inversion; Cholesky is tried first,
+     then LU. If both inversion paths fail, uncertainties are infinite
    - Off-diagonal correlations matter for CRLB
 
 **CRITICAL SIGN CONVENTION** (unified_kernel.jl):
@@ -207,19 +222,22 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
 The diagonal Hessian and Fisher matrix have **different formulas with different signs**:
 
 ```julia
-# Diagonal Hessian for Newton-Raphson (line ~331)
+# Diagonal curvature for Newton-Raphson
 H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
 #            ^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^
 #            PLUS (2nd derivative)   MINUS (1st derivative²)
 
-# Fisher Information Matrix for CRLB (line ~389)
+# Fisher Information Matrix for CRLB
 F_kl = dudt[k] * dudt[l] / variance
-H[k,l] += F_kl  # ONLY positive, no 2nd derivative term
+H[k,l] += F_kl  # Add derivative outer product, no 2nd derivative term
 ```
 
 **Why different**:
-- Hessian = actual ∇²L (both 1st and 2nd derivatives, can be negative)
-- Fisher = E[-∇²L] (only 1st derivatives, always positive definite)
+- Optimization curvature follows the Poisson Hessian formula, with the model-curvature
+  omissions above; sCMOS uses a fixed-variance approximation. Poisson `cf` and `df` are
+  zero for `model ≤ 0.01` and capped above at `10⁴`
+- Poisson Fisher = E[-∇²L] (only 1st derivatives, positive semidefinite); sCMOS uses
+  `variance = model + readnoise²` in the same outer-product accumulation
 
 Wrong signs cause convergence failure or incorrect CRLB.
 
@@ -269,19 +287,19 @@ The math is dimensionally consistent:
 - `src/camera_models.jl` - Camera noise models (IdealCamera, SCMOSCameraInternal)
 - `src/devices.jl` - Device abstraction (CPU/GPU auto-detection)
 - `src/emitters.jl` - Custom emitter types (Emitter2DFitSigma, Emitter2DFitSigmaXY)
-- `src/results.jl` - Result conversion to SMLMData.BasicSMLD
-- `src/roi_batch.jl` - ROI batch data structures
+- `src/results.jl` - Fit metadata and legacy result types
+- `src/roi_batch.jl` - Localization results and emitter/SMLD conversion
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
-- `src/gausslib/` - Legacy GaussLib reference implementation (CPU only)
+- `src/gausslib/` - Gaussian math helpers used by CPU and GPU kernels
 
 ### SMLMData Ecosystem Integration
 
 **Returns SMLMData.BasicSMLD** with model-specific emitter types:
-- `GaussianXYNB` → `SMLMData.Emitter2DFit`
+- `GaussianXYNB` → `GaussMLE.Emitter2DFitGaussMLE`
 - `GaussianXYNBS` → `GaussMLE.Emitter2DFitSigma` (custom, includes σ)
 - `GaussianXYNBSXSY` → `GaussMLE.Emitter2DFitSigmaXY` (custom, includes σx/σy)
-- `AstigmaticXYZNB` → `SMLMData.Emitter3DFit`
+- `AstigmaticXYZNB` → `GaussMLE.Emitter3DFitGaussMLE`
 
 All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
 
