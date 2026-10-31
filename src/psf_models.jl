@@ -20,7 +20,7 @@ abstract type PSFModel{NParams, T} end
 # Parameters (in order)
 1. x: x-position (fitted in ROI pixels, output in microns)
 2. y: y-position (fitted in ROI pixels, output in microns)
-3. N: total photon count
+3. N: total signal (photons for IdealCamera, electrons for sCMOS)
 4. bg: background per pixel
 
 # Fields
@@ -50,7 +50,7 @@ end
 # Parameters (in order)
 1. x: x-position (fitted in ROI pixels, output in microns)
 2. y: y-position (fitted in ROI pixels, output in microns)
-3. N: total photon count
+3. N: total signal (photons for IdealCamera, electrons for sCMOS)
 4. bg: background per pixel
 5. σ: Gaussian width (fitted in pixels, output in microns)
 
@@ -76,7 +76,7 @@ GaussianXYNBS() = GaussianXYNBS{Float32}()
 # Parameters (in order)
 1. x: x-position (fitted in ROI pixels, output in microns)
 2. y: y-position (fitted in ROI pixels, output in microns)
-3. N: total photon count
+3. N: total signal (photons for IdealCamera, electrons for sCMOS)
 4. bg: background per pixel
 5. σx: Gaussian width in x (fitted in pixels, output in microns)
 6. σy: Gaussian width in y (fitted in pixels, output in microns)
@@ -109,11 +109,11 @@ The PSF width varies with z-position according to:
 # Parameters (in order)
 1. x: x-position (fitted in ROI pixels, output in microns)
 2. y: y-position (fitted in ROI pixels, output in microns)
-3. z: z-position (fitted in pixels, output in microns)
-4. N: total photon count
+3. z: z-position (microns throughout fitting and output)
+4. N: total signal (photons for IdealCamera, electrons for sCMOS)
 5. bg: background per pixel
 
-# Fields (calibration parameters in **microns**)
+# Fields (spatial calibration parameters in **microns**)
 - `σx₀, σy₀::T`: In-focus PSF widths (microns)
 - `Ax, Ay::T`: Cubic coefficients (dimensionless)
 - `Bx, By::T`: Quartic coefficients (dimensionless)
@@ -134,8 +134,9 @@ fitter = GaussMLEConfig(psf_model = psf)
 ```
 
 # Note
-All spatial parameters in physical units (microns) for camera-independence.
-Internally converted to pixels based on camera pixel size during fitting.
+Spatial calibration parameters are specified in microns for camera-independence.
+Internally, x, y and lateral widths use pixels; z, γ and d remain in microns.
+Ax, Ay, Bx and By are dimensionless.
 
 # See also
 The astigmatic PSF model is described in Huang et al., Science 319, 810-813 (2008).
@@ -304,17 +305,18 @@ end
 """
     to_pixel_units(psf::PSFModel, pixel_size::Real)
 
-Convert PSF model from physical units (microns) to pixel units for kernel computation.
+Convert PSF lateral widths from microns to pixels for kernel computation.
 
-User-facing PSF models store parameters in microns (camera-independent).
-Kernel requires pixels for computation. This function performs the conversion.
+User-facing PSF models store spatial calibration parameters in microns.
+Only lateral widths are converted; astigmatic z, γ and d remain in microns,
+and Ax, Ay, Bx and By are dimensionless.
 
 # Arguments
-- `psf`: PSF model with parameters in microns
+- `psf`: PSF model with spatial calibration parameters in microns
 - `pixel_size`: Camera pixel size in microns
 
 # Returns
-PSF model with parameters converted to pixels
+PSF model with lateral widths converted to pixels
 
 # Example
 ```jldoctest

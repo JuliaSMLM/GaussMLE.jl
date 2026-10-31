@@ -45,7 +45,7 @@ end
 ### Key Features
 
 - **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic
-- **Physical Units**: All PSF parameters in microns (camera-independent)
+- **Physical Units**: Spatial PSF calibration parameters in microns (camera-independent); Ax, Ay, Bx and By are dimensionless
 - **Automatic GPU Acceleration**: CUDA support with automatic CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramer-Rao lower bound for each parameter
@@ -53,11 +53,12 @@ end
 
 ### Unit Convention
 
-**All user-facing parameters use physical units (microns)**:
+**User-facing spatial parameters use physical units (microns)**:
 - PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
 - Output positions: microns
-- Output uncertainties: microns
-- Internally converted to pixels for computation based on camera pixel size
+- Output spatial uncertainties: microns
+- Internally, x, y and lateral widths use pixels based on camera pixel size; astigmatic z, γ and d remain in microns
+- Astigmatic coefficients Ax, Ay, Bx and By are dimensionless
 
 ### Supported PSF Models
 
@@ -112,8 +113,9 @@ The sCMOS noise model follows [Huang et al. (2013)](https://doi.org/10.1038/nmet
 using GaussMLE
 
 # Create sCMOS camera with calibration
+readnoise_map = fill(1.6f0, 512, 512)
 camera = SCMOSCamera(
-    512, 512, 0.065,    # nx, ny, pixel_size (μm)
+    512, 512, 0.065f0,  # nx, ny, pixel_size (μm)
     readnoise_map;      # Per-pixel readnoise σ (electrons)
     offset = 100.0f0,   # Dark level (ADU)
     gain = 0.5f0,       # Conversion (e⁻/ADU)
@@ -181,11 +183,12 @@ The base 2D emitter type (`Emitter2DFitGaussMLE`) contains:
 | Field | Description | Units |
 |-------|-------------|-------|
 | `x`, `y` | Fitted position | microns |
-| `photons` | Total photon count | photons |
-| `bg` | Background level | photons/pixel |
+| `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
+| `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
-| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
+| `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |

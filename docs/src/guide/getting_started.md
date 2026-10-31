@@ -112,11 +112,12 @@ All 2D emitter types include these base fields:
 | Field | Description | Units |
 |-------|-------------|-------|
 | `x`, `y` | Fitted position | microns |
-| `photons` | Total photon count | photons |
-| `bg` | Background level | photons/pixel |
+| `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
+| `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
-| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
+| `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
@@ -161,7 +162,7 @@ n_rois = size(data, 3)
 # Camera provides pixel_size for unit conversion
 camera = IdealCamera(0:1023, 0:1023, 0.1)  # 100nm pixels
 
-# Create ROIBatch - all ROIs at camera position (1,1) if corners don't matter
+# Dummy corners deliberately place all ROIs at the same camera position (1,1)
 batch = ROIBatch(
     data,
     ones(Int32, n_rois),       # x_corners: all at column 1
@@ -174,12 +175,12 @@ batch = ROIBatch(
 fitter = GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
 smld, info = fit(batch, fitter)
 
-# Results in microns (relative to ROI corner)
+# Results in microns in camera coordinates
 println("Position: ($(smld.emitters[1].x), $(smld.emitters[1].y)) μm")
 ```
 
 !!! note "When corners matter"
-    For sCMOS cameras, the corners must be the actual camera positions because the fitter indexes into the pixel-specific variance map. For IdealCamera with uniform noise, corners can all be (1,1) since no variance map lookup is needed.
+    Results use camera coordinates for both camera types, so real corners are required to preserve sensor positions. Dummy (1,1) corners deliberately place all ROIs at the same sensor location. For sCMOS cameras, real corners are also required to index the pixel-specific variance map.
 
 ### Creating ROIBatch from Known Positions
 

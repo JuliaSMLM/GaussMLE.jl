@@ -74,8 +74,9 @@ GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU fai
 
 ```
 while !gpu_succeeded && before deadline:
-    1. Poll NVML for available GPU (no CUDA context needed)
-    2. Check contention: skip if other_procs > 0 AND (low memory OR compute > 90%)
+    1. Poll GPU memory (prefer context-free NVML; fall back to CUDA if unsupported);
+       skip a GPU with free memory < 1.5x required
+    2. If memory came from NVML, skip if other_procs > 0 AND compute > 90%
     3. Try:
          CUDA.device!(dev)         # Create context on selected GPU
          <process all batches>     # Run fitting kernel
@@ -83,7 +84,7 @@ while !gpu_succeeded && before deadline:
          gpu_succeeded = true
     4. Catch:
          release CUDA context      # Free reserved memory
-         loop back to step 1       # Re-poll NVML for next available GPU
+         loop back to step 1       # Re-poll memory for next available GPU
 ```
 
 After the loop: `:auto` falls back to CPU, `:gpu` errors.
@@ -92,31 +93,34 @@ After the loop: `:auto` falls back to CPU, `:gpu` errors.
 
 The loop handles three distinct GPU failure scenarios:
 
-1. **No free memory** - NVML poll waits with jittered backoff (0.5s intervals). All GPUs are scanned each tick; whichever frees up first is used.
+1. **No free memory** - Memory polling waits with jittered backoff (0.5s intervals). All GPUs are scanned each tick; whichever frees up first is used.
 
-2. **TOCTOU context creation race** - NVML shows sufficient free memory, but `CUDA.device!()` fails because another process grabbed the GPU between the check and context creation. The context is released and NVML is re-polled.
+2. **TOCTOU context creation race** - The memory query shows sufficient free memory, but `CUDA.device!()` fails because another process grabbed the GPU between the check and context creation. The context is released and memory is re-polled.
 
 3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. The context is released and all batches are restarted on a re-acquired GPU (partial results from a failed CUDA context are unreliable).
 
 ### NVML Contention Detection
 
-Pre-flight GPU checks use NVIDIA Management Library (NVML) queries instead of CUDA API calls. NVML does not create CUDA contexts, so it is safe to call from multiple processes simultaneously.
+Pre-flight memory polling prefers NVIDIA Management Library (NVML) queries without creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses `CUDA.free_memory()` on that device, which may create a context. Other NVML memory-query errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
 
-A GPU is considered **contended** when:
+Contention checks apply only when memory came from NVML. A GPU with free memory below 1.5x required is skipped before the contention check. A GPU is considered **contended** when:
+
 - Other processes are present (`compute_processes > 0` excluding own PID), AND
-- Resources are threatened: free memory < 1.5x required OR compute utilization > 90%
+- Compute utilization > 90%
 
-If other processes are present but memory is ample and utilization is low, the GPU is still selected (the other processes are likely idle).
+If other processes are present but memory is sufficient and compute utilization is at most 90%, the GPU is still selected.
 
 ### Context Lifecycle
 
-**On failure:** `_release_gpu_context()` calls `cuDevicePrimaryCtxRelease` to destroy the CUDA context and free reserved memory. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
+**On failure:** `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`. The context and its reserved memory are freed when the last reference is released. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
 
 **On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
 
 ### Multi-GPU Support
 
-On systems with multiple GPUs, NVML scans all devices each poll iteration. The first GPU with sufficient free memory and low contention is selected. This naturally load-balances across GPUs.
+On systems with multiple GPUs, memory polling scans all devices each iteration. The first GPU with sufficient free memory and, when NVML is used, low contention is selected. This naturally load-balances across GPUs.
+
+Polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's NVML data by UUID, so a restricted process reads the right GPU.
 
 ## Batch Processing
 
@@ -143,7 +147,7 @@ Tune batch size based on:
 
 ### Benchmarking Your Hardware
 
-Run `Pkg.test("GaussMLE")` locally to benchmark your hardware. The test suite includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
+Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The GPU test group includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
@@ -216,6 +220,6 @@ end
 2. **Transfer**: Copy batch to GPU memory
 3. **Compute**: Run fitting kernel
 4. **Transfer**: Copy results back to CPU
-5. **Reclaim**: Return GPU memory pool to OS
-6. **Repeat**: Next batch (steps 2-5)
+5. **Repeat**: Next batch (steps 2-4)
+6. **Reclaim**: Return GPU memory pool to OS after all batches succeed
 7. **Output**: BasicSMLD with fitted parameters
