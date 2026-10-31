@@ -43,7 +43,7 @@ julia --project examples/astigmatic_3d.jl
 
 The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
-- StaticArrays (MVector/SMatrix) for stack allocation and GPU compatibility
+- Immutable StaticArrays (SVector/SMatrix) for allocation-free CPU and GPU kernels
 - Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
 - **Diagonal Newton-Raphson for optimization** (element-wise, not full matrix inverse)
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)

@@ -176,17 +176,17 @@ end
 # Model-specific initialization
 @inline function simple_initialize(roi, box_size::Int, ::GaussianXYNB{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{4, T}(x, y, photons, bg)
+    return SVector{4, T}(x, y, photons, bg)
 end
 
 @inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBS{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{5, T}(x, y, photons, bg, T(1.3))
+    return SVector{5, T}(x, y, photons, bg, T(1.3))
 end
 
 @inline function simple_initialize(roi, box_size::Int, ::GaussianXYNBSXSY{T}) where {T}
     (x, y, photons, bg) = simple_initialize_common(roi, box_size, T)
-    return MVector{6, T}(x, y, photons, bg, T(1.3), T(1.3))
+    return SVector{6, T}(x, y, photons, bg, T(1.3), T(1.3))
 end
 
 @inline function simple_initialize(roi, box_size::Int, psf::AstigmaticXYZNB{T}) where {T}
@@ -233,14 +233,7 @@ end
         z_init = T(0)
     end
 
-    return MVector{5, T}(x, y, z_init, photons, bg)
-end
-
-# Zero out a static array (more efficient than fill!)
-@inline function zero_array!(A::MVector{N, T}) where {N, T}
-    return @inbounds for i in 1:N
-        A[i] = zero(T)
-    end
+    return SVector{5, T}(x, y, z_init, photons, bg)
 end
 
 # Likelihood dispatch helpers - compile-time Val{Bool} branching
@@ -287,22 +280,19 @@ end
     corner_x = x_corners[idx]
     corner_y = y_corners[idx]
 
-    # Stack-allocated working arrays (known size at compile time)
+    # Immutable working vectors avoid heap allocation from bounds-check error paths.
     θ = simple_initialize(roi, box_size, psf_model)
-    ∇L = MVector{N, T}(undef)
-    H_diag = MVector{N, T}(undef)  # Only diagonal elements for Newton-Raphson
 
-    # Newton-Raphson iterations with scalar updates
+    # Newton-Raphson iterations with diagonal updates
     for iter in 1:iterations
         # Zero out gradient and diagonal Hessian
-        zero_array!(∇L)
-        zero_array!(H_diag)
+        ∇L = zero(SVector{N, T})
+        H_diag = zero(SVector{N, T})
 
         # Compute derivatives over all pixels
         @inbounds for j in 1:box_size, i in 1:box_size
             # Model and derivatives at this pixel
-            θ_static = SVector{N, T}(θ)
-            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ_static, psf_model)
+            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ, psf_model)
 
             # Likelihood terms based on camera model (Val dispatch for compile-time
             # optimization)
@@ -311,28 +301,17 @@ end
                 camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
             )
 
-            # Accumulate gradient and diagonal Hessian
-            for k in 1:N
-                ∇L[k] += dudt[k] * cf
-                H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
-            end
+            # Whole-vector operations preserve arithmetic order per element.
+            ∇L = ∇L + dudt * cf
+            H_diag = H_diag + (d2udt2_diag * cf - (dudt .* dudt) * df)
         end
 
-        # Scalar Newton-Raphson updates with constraints
-        Δθ = MVector{N, T}(undef)
-        @inbounds for k in 1:N
-            if abs(H_diag[k]) > T(1.0e-10)
-                Δθ[k] = ∇L[k] / H_diag[k]
-            else
-                Δθ[k] = zero(T)
-            end
-        end
+        # Elementwise Newton-Raphson updates with constraints
+        Δθ = map((g, h) -> abs(h) > T(1.0e-10) ? g / h : zero(T), ∇L, H_diag)
 
         # Apply constraints
-        θ_new = apply_constraints!(SVector{N, T}(θ), SVector{N, T}(Δθ), constraints)
-        @inbounds for i in 1:N
-            θ[i] = θ_new[i]
-        end
+        θ_new = apply_constraints!(θ, Δθ, constraints)
+        θ = θ_new
     end
 
     # Compute final log-likelihood and full Fisher Information Matrix for CRLB
@@ -340,8 +319,7 @@ end
     H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
 
     @inbounds for j in 1:box_size, i in 1:box_size
-        θ_static = SVector{N, T}(θ)
-        model, dudt, _ = compute_pixel_derivatives(i, j, θ_static, psf_model)
+        model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
         data_ij = roi[i, j]
 
         # Log-likelihood contribution (dispatch based on camera_model Val)
