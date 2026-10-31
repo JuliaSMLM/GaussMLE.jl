@@ -3,7 +3,7 @@
 # on a GPU host; the Long group checks bias and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
-# Share one callable type across the regression cases to limit Core kernel compilation.
+# Share one Float32-only callable type to cover dispatch and limit Core compilation.
 struct SplineTestPSF
     linear::Bool
     x_shift::Float64
@@ -12,7 +12,7 @@ struct SplineTestPSF
     z_max::Float64
 end
 
-function (psf::SplineTestPSF)(x, y, z)
+function (psf::SplineTestPSF)(x::Float32, y::Float32, z::Float32)
     psf.z_min <= z <= psf.z_max || error("evaluated outside the callable's valid z range")
     dx, dy = x - psf.x_shift * z, y - psf.y_shift * z
     if psf.linear
@@ -26,15 +26,15 @@ end
 const astig_shape = SplineTestPSF(false, 0.0, 0.0, -Inf, Inf)
 const linear_shape = SplineTestPSF(true, 0.0, 0.0, -Inf, Inf)
 
-function roi_at(m, z; x = 6, y = 6, box = 11)
+function roi_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
     return [
-        GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(x, y, z, 1000, 10))
+        GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(x, y, z, photons, 10))
             for i in 1:box, j in 1:box
     ]
 end
 
-function batch_at(m, z; x = 6, y = 6)
-    roi = roi_at(m, z; x, y)
+function batch_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
+    roi = roi_at(m, z; x, y, box, photons)
     data = reshape(roi, size(roi)..., 1)
     return ROIBatch(data, Int32[1], Int32[1], Int32[1], IdealCamera(64, 64, m.pixel_size))
 end
@@ -88,7 +88,8 @@ end
         # Normalized so the pixel-summed PSF at z = 0 is 1
         n_px = ceil(Int, 1.5 / 0.1)
         reference_sum = sum(
-            astig_shape(0.1ix, 0.1iy, 0.0) for ix in (-n_px):n_px, iy in (-n_px):n_px
+            astig_shape(0.1f0 * ix, 0.1f0 * iy, 0.0f0)
+                for ix in (-n_px):n_px, iy in (-n_px):n_px
         )
         @test reference_sum * gpsf.px_scale ≈ 1 rtol = 1.0e-5
         for zr in (
@@ -173,13 +174,17 @@ end
         @test e.photons ≈ 1000 rtol = 0.01
     end
 
-    @testset "normalization within a callable's valid range" begin
-        bounded = SplineTestPSF(false, 0.0, 0.0, 0.2, 0.5)
-        m = SplinePSFModel(bounded; pixel_size = 0.1, z_range = (0.2, 0.5))
-        truth_model = SplinePSFModel(bounded; pixel_size = 0.127, z_range = (0.2, 0.5))
-        smld, _ = fit(batch_at(truth_model, 0.3); psf_model = m, backend = :cpu)
-        @test only(smld.emitters).z ≈ 0.3 atol = 0.001
-        @test only(smld.emitters).photons ≈ 1000 rtol = 0.01
+    @testset "Float32-only callable normalization and rescaling" begin
+        # Each endpoint nearest zero rounds outward in Float32, so move it inward before
+        # normalization. The same callable type exercises construction and fitting.
+        for (zr, z) in (((0.20000001, 0.5), 0.3), ((-0.5, -0.20000001), -0.3))
+            bounded = SplineTestPSF(false, 0.0, 0.0, zr...)
+            m = SplinePSFModel(bounded; pixel_size = 0.1, z_range = zr)
+            truth_model = SplinePSFModel(bounded; pixel_size = 0.127, z_range = zr)
+            smld, _ = fit(batch_at(truth_model, z); psf_model = m, backend = :cpu)
+            @test only(smld.emitters).z ≈ z atol = 0.001
+            @test only(smld.emitters).photons ≈ 1000 rtol = 0.01
+        end
         for value in (0.0, NaN, Inf)
             @test_throws ArgumentError SplinePSFModel(
                 (x, y, z) -> value; pixel_size = 0.1, z_range = (-0.5, 0.5)
@@ -187,18 +192,35 @@ end
         end
     end
 
-    @testset "default_constraints" begin
-        # PSFLearning's test used (-0.8, 0.8); a SplinePSF z_range must lie within the
-        # spline's own range, which is ±0.5 here
-        gpsf = model(z_range = (-0.4, 0.4))
+    @testset "default fits clamp to lateral and axial bounds" begin
+        # Truncated tails converge slowly, and in a 7-pixel box this fit stalls inside the
+        # bound (x = -0.86 at any iteration count); an 11-pixel box reaches it. Keep z close
+        # to zero so a width change cannot absorb the lateral displacement.
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.01, 0.01))
+        box = 11
+        center = Float32((box + 1) / 2)
+        for axis in 1:2, position in (-1.5f0, Float32(box + 2.5))
+            x, y = axis == 1 ? (position, center) : (center, position)
+            smld, _ = fit(
+                batch_at(m, 0; x, y, box, photons = 5000);
+                psf_model = m, backend = :cpu, iterations = 500
+            )
+            e = only(smld.emitters)
+            # Corner (1, 1): invert the output's conversion from ROI pixels to microns.
+            fitted = (e.x, e.y)[axis] / m.pixel_size + 0.5f0
+            bound = clamp(position, -1.0f0, Float32(box + 2))
+            @test fitted ≈ bound atol = 0.001f0 rtol = 0
+            @test m.z_range[1] <= e.z <= m.z_range[2]
+        end
 
-        constraints = GaussMLE.default_constraints(gpsf, 11)
-        @test constraints isa GaussMLE.ParameterConstraints{5}
-        @test constraints.lower[3] ≈ -0.4f0
-        @test constraints.upper[3] ≈ 0.4f0
-        # x, y bounds symmetric about the box, as for the Gaussian models
-        @test constraints.lower[1:2] == [-1.0f0, -1.0f0]
-        @test constraints.upper[1:2] == [13.0f0, 13.0f0]
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.4, 0.4))
+        source = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        for z in (-0.45, 0.45)
+            smld, _ = fit(batch_at(source, z); psf_model = m, backend = :cpu)
+            fitted_z = only(smld.emitters).z
+            @test m.z_range[1] <= fitted_z <= m.z_range[2]
+            @test fitted_z ≈ clamp(z, m.z_range...) atol = 0.001
+        end
     end
 
     @testset "GaussMLEConfig construction" begin

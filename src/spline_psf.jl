@@ -51,7 +51,8 @@ near either bound. Initial z comes from a Poisson likelihood scan with spacing a
 - `z_range::Tuple{T, T}`: valid axial range in microns
 - `lateral_range::T`: lateral extent in microns used for the normalization sum
 - `px_scale::T`: normalization factor so that the pixel-summed PSF ≈ 1
-- `z_ref::Float64`: reference plane for normalization (microns), preserved on rescaling
+- `z_ref::T`: normalization plane nearest zero in the inward-rounded callable range
+  (microns), preserved on rescaling
 
 # Example
 ```jldoctest
@@ -70,7 +71,7 @@ struct SplinePSFModel{T, S} <: PSFModel{5, T}
     z_range::Tuple{T, T}
     lateral_range::T
     px_scale::T
-    z_ref::Float64
+    z_ref::T
 end
 
 function SplinePSFModel(spline; pixel_size::Real, z_range, lateral_range::Real = 1.5)
@@ -98,8 +99,10 @@ function _spline_psf_model(spline, pixel_size::Real, z_range, limits, lateral_ra
         ArgumentError("z_range $z_range is too narrow for a 0.01 µm axial stencil")
     )
 
-    # Keep this reference plane when fit rescales the model to another camera pixel size.
-    z_ref = clamp(0.0, Float64(limits.z_min), Float64(limits.z_max))
+    # Round the callable's full range inward and choose the plane nearest zero. Keep it
+    # when fit rescales the model to another camera pixel size.
+    ref_lo, ref_hi = _inward_bounds(T, (limits.z_min, limits.z_max), limits)
+    z_ref = clamp(zero(T), ref_lo, ref_hi)
     px_scale = _compute_psf_scale(spline, px, T(lateral_range), z_ref)
     return SplinePSFModel{T, typeof(spline)}(
         spline, px, (zlo, zhi),
@@ -140,7 +143,7 @@ end
 Normalize the positive-clipped pixel sum at the valid reference plane `z_ref`.
 Throw `ArgumentError` if the sum is non-finite or non-positive.
 """
-function _compute_psf_scale(spline, pixel_size::T, lateral_range::T, z_ref) where {T}
+function _compute_psf_scale(spline, pixel_size::T, lateral_range::T, z_ref::T) where {T}
     n_px = ceil(Int, lateral_range / pixel_size)
     norm_sum = zero(T)
     for iy in (-n_px):n_px, ix in (-n_px):n_px
