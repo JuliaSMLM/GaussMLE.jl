@@ -175,9 +175,8 @@ of the host table. No kernel calls the original point PSF or allocates a new tab
 The Float32 coefficients occupy `4 * prod(size(model.pixel_psf.coefficients))` bytes,
 typically about 5 to 10 MiB for a PSFLearning export, in addition to the ROI data.
 
-Each Newton/Fisher pixel evaluation gathers 4 × 4 × 4 coefficients once and obtains the
-value, analytic first derivatives, and diagonal second derivatives from cubic B-spline
-basis weights. Each lateral derivative uses its own pixel size. Non-positive values
+Each pixel evaluation gathers 4 × 4 × 4 coefficients once and obtains the value and
+analytic first derivatives from cubic B-spline basis weights. Each lateral derivative uses its own pixel size. Non-positive values
 are clipped to zero with zero derivatives; axial derivatives are evaluated at clamped z.
 The initial z scan uses a value-only gather from the same table.
 
@@ -206,8 +205,11 @@ at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt o
 Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
 likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
-background steps are not capped (photons ≥ 1, background ≥ 0.01). `fit` on a bare `Array` uses this model's
-own `pixel_size`, not the 0.1 µm of the Gaussian models.
+background steps are not capped (photons ≥ 1, background ≥ 0.01). `iterations` counts
+Levenberg-Marquardt iterations (one pixel pass each), where the Gaussian models count
+Newton-Raphson iterations. For sCMOS the reported log-likelihood and p-value use the
+Gaussian approximation -(d - μ)²/(2(μ + v)), not the fitted objective. `fit` on a bare
+`Array` uses this model's own `pixel_size`, not the 0.1 µm of the Gaussian models.
 
 **Use this model when:**
 - You have a calibrated PSF that a Gaussian does not describe well

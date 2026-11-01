@@ -27,7 +27,7 @@ using Statistics
 # Create fitter with default settings
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
 # - Auto backend selection (GPU if available)
-# - 20 Newton-Raphson iterations
+# - 20 Newton-Raphson iterations (Levenberg-Marquardt for SplinePSFModel)
 fitter = GaussMLEConfig()
 
 # Or with explicit configuration
