@@ -121,9 +121,6 @@ Camera noise model is determined by the ROIBatch type:
 GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
 AMDGPU (`using AMDGPU`) before `fit`.
 
-GPU polling and timeouts apply to GPU-compatible models. For `SplinePSFModel`, `:auto`
-selects CPU directly without polling or warning, and `:gpu` throws `ArgumentError`.
-
 # Examples
 ```julia
 # Simple usage with auto GPU detection
@@ -276,15 +273,8 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    # A model the kernel cannot run on a GPU skips GPU polling entirely under :auto
-    model_gpu_compatible = gpu_compatible(psf_pixels)
-    if !model_gpu_compatible && fitter.backend == :gpu
-        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use \
-            backend = :cpu or :auto"))
-    end
-    vendor = fitter.backend == :cpu || !model_gpu_compatible ? nothing : _gpu_vendor()
-    use_cpu = fitter.backend == :cpu || !model_gpu_compatible ||
-        (fitter.backend != :gpu && vendor === nothing)
+    vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
+    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && vendor === nothing)
 
     if fitter.backend == :gpu && vendor === nothing
         error("No functional GPU found: CUDA is not functional; AMD GPUs require \
@@ -299,7 +289,8 @@ function _run_mle_kernel!(
         timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
         deadline = time() + timeout
         actual_batch = min(fitter.batch_size, n_fits)
-        required_memory = estimate_batch_memory(actual_batch, box_size, n_params)
+        required_memory = estimate_batch_memory(actual_batch, box_size, n_params) +
+            _psf_table_bytes(psf_pixels)
         gpu_succeeded = false
 
         while !gpu_succeeded && time() < deadline
@@ -320,6 +311,9 @@ function _run_mle_kernel!(
                 # Acquire GPU context
                 _activate_gpu!(vendor, dev_idx)
                 gpu_backend = _ka_gpu_backend(vendor)
+                # Transfer a spline's table once for all batches on this device. A retry
+                # may replace the device/context, so it must adapt the host model again.
+                device_psf = _prepare_psf_model(gpu_backend, psf_pixels)
 
                 # Process all batches on GPU
                 actual_batch_size = min(fitter.batch_size, n_fits)
@@ -366,7 +360,7 @@ function _run_mle_kernel!(
                     kernel = unified_gaussian_mle_kernel!(gpu_backend)
                     kernel(
                         d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                        d_batch_data, psf_pixels, use_scmos, d_variance_map, d_x_corners,
+                        d_batch_data, device_psf, use_scmos, d_variance_map, d_x_corners,
                         d_y_corners,
                         constraints, fitter.iterations,
                         ndrange = batch_size_actual
@@ -415,6 +409,7 @@ function _run_mle_kernel!(
         actual_backend = :cpu
         device_id = -1
         ka_backend = KernelAbstractions.CPU()
+        cpu_psf = _prepare_psf_model(ka_backend, psf_pixels)
         cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
         actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
 
@@ -424,7 +419,7 @@ function _run_mle_kernel!(
             kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
             kernel(
                 results, uncertainties, covariances, log_likelihoods,
-                data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
+                data, cpu_psf, use_scmos, variance_map, x_corners, y_corners,
                 constraints, fitter.iterations,
                 ndrange = n_fits
             )
@@ -448,7 +443,7 @@ function _run_mle_kernel!(
                 kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
                 kernel(
                     batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                    batch_data, psf_pixels, use_scmos, variance_map, batch_x_corners,
+                    batch_data, cpu_psf, use_scmos, variance_map, batch_x_corners,
                     batch_y_corners,
                     constraints, fitter.iterations,
                     ndrange = batch_size_actual

@@ -1,6 +1,8 @@
 # Models
 
-GaussMLE.jl provides five PSF model types to accommodate different experimental conditions, including CPU-only `SplinePSFModel` for calibrated tabulated or learned 3D PSFs. Each model differs in which parameters are fitted versus fixed.
+GaussMLE.jl provides five PSF model types, including `SplinePSFModel` for calibrated
+tabulated or learned 3D PSFs. All models run on CPU and GPU. Each differs in which
+parameters are fitted versus fixed.
 
 ## Available Models
 
@@ -141,14 +143,14 @@ The PSF width varies with z according to:
 A 3D model (x, y, z, N, bg) backed by a tabulated PSF: a measured or learned PSF, such as a
 MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The callable supplies the point
 PSF; GaussMLE integrates it over each camera pixel. z is in microns throughout, and the model
-runs on the CPU only.
+runs on CPU (POCL), CUDA and AMDGPU from the same pixel-integral table and fitting kernel.
 
 ```julia
 using GaussMLE, MicroscopePSFs
 
 psf = load_psf("psf.h5")                       # a 3D SplinePSF, in microns
 model = SplinePSFModel(psf; pixel_size = 0.1)  # z_range defaults to the spline's own range
-smld, info = fit(batch; psf_model = model)     # runs on the CPU
+smld, info = fit(batch; psf_model = model)     # GPU when available, otherwise CPU
 ```
 
 Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
@@ -165,6 +167,19 @@ quadrature with five sub-intervals per lateral axis. The lateral table spacings 
 with zero second derivative at each axis endpoint. Fitting uses the table, with zero outside
 its lateral range and z clamped to `z_range`. A change in either camera pixel size rebuilds
 the table and signal scale once; an unchanged `(x, y)` pair reuses the model.
+
+At fit time, Adapt transfers the coefficient table to the selected GPU and removes the
+point callable from the kernel model. The table is shared across batches; a retry after
+a GPU failure transfers it again to the selected device. POCL uses a device-array view
+of the host table. No kernel calls the original point PSF or allocates a new table.
+The Float32 coefficients occupy `4 * prod(size(model.pixel_psf.coefficients))` bytes,
+typically about 5 to 10 MiB for a PSFLearning export, in addition to the ROI data.
+
+Each Newton/Fisher pixel evaluation gathers 4 × 4 × 4 coefficients once and obtains the
+value, analytic first derivatives, and diagonal second derivatives from cubic B-spline
+basis weights. Each lateral derivative uses its own pixel size. Non-positive values
+are clipped to zero with zero derivatives; axial derivatives are evaluated at clamped z.
+The initial z scan uses a value-only gather from the same table.
 
 The input must describe a point PSF: an already pixel-integrated callable would be integrated
 twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` before constructing the model.
@@ -198,7 +213,7 @@ Point samples are clipped at zero before quadrature for both conventions.
 | Dimensions | 2D | 2D | 2D | 3D | 3D |
 | Speed | Fastest | Medium | Slowest | Medium | Table lookup |
 | Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
-| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU only |
+| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 
 ## Unit Convention
 
@@ -217,7 +232,7 @@ Internally, x, y and lateral widths use pixels based on the camera pixel size; z
 
 1. **Do you need 3D localization?**
    - Yes, with an astigmatism calibration -> Use `AstigmaticXYZNB`
-   - Yes, with a tabulated or learned PSF -> Use `SplinePSFModel` (CPU only)
+   - Yes, with a tabulated or learned PSF -> Use `SplinePSFModel`
    - No -> Continue to step 2
 
 2. **Is your PSF well-characterized and stable?**

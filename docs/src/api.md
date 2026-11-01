@@ -26,7 +26,6 @@ GaussianXYNBS
 GaussianXYNBSXSY
 AstigmaticXYZNB
 SplinePSFModel
-GaussMLE.gpu_compatible
 ```
 
 ### Custom Emitter Types
@@ -59,9 +58,10 @@ Device selection is controlled via the `backend` keyword argument to `GaussMLECo
 
 - `:auto` - Automatically select the backend (default)
 - `:cpu` - Force CPU execution
-- `:gpu` - Error immediately without functional CUDA; otherwise wait up to `gpu_timeout`
+- `:gpu` - Error immediately without a functional CUDA or loaded AMD GPU; otherwise wait
+  up to `gpu_timeout`
 
-For CPU-only `SplinePSFModel`, `:auto` selects CPU directly and `:gpu` throws `ArgumentError`.
+`SplinePSFModel` follows the same rules as the Gaussian models on CPU and GPU.
 
 Example:
 ```julia

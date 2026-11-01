@@ -1,7 +1,7 @@
 """
 Spline PSF model: 3D fitting (x, y, z, N, bg) with a tabulated PSF, such as a learned PSF
 from PSFLearning saved as a MicroscopePSFs `SplinePSF`. Moved from PSFLearning's GaussMLE
-bridge (PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU only.
+bridge (PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU and GPU.
 """
 
 """
@@ -9,8 +9,8 @@ bridge (PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU only.
 
 A 3D PSF model backed by a point PSF `S`: any callable `(x, y, z)` in microns relative to
 the emitter, such as a `MicroscopePSFs.SplinePSF`. GaussMLE integrates this point PSF over
-each camera pixel. It runs on the CPU only (see
-[`gpu_compatible`](@ref)).
+each camera pixel on the host. CPU (POCL), CUDA and AMDGPU fitting use the same table
+and kernel; the point callable never reaches a kernel.
 
 # Parameters (in order)
 1. x: x-position (fitted in ROI pixels, output in microns)
@@ -22,10 +22,10 @@ each camera pixel. It runs on the CPU only (see
 # Constructors
     SplinePSFModel(spline; pixel_size, z_range, lateral_range = 1.5)
 
-`spline` is a point PSF callable `(x, y, z)` in microns. `z_range` is the valid axial range in
-microns; it must be finite, increasing, and at least 0.01 µm wide after inward Float32
-rounding to support the axial derivative stencil. The fit clamps z into it. Custom z
-constraints are intersected with `z_range`; an empty intersection throws `ArgumentError`.
+`spline` is a point PSF callable `(x, y, z)` in microns. `z_range` is the valid axial range
+in microns; it must be finite, increasing, and at least 0.01 µm wide after inward Float32
+rounding. The fit clamps z into it. Custom z constraints are intersected with `z_range`;
+an empty intersection throws `ArgumentError`.
 
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
                    z_range = (psf.z_min, psf.z_max), lateral_range = 1.5)
@@ -47,6 +47,12 @@ Fitting uses this table; a different camera pixel size rebuilds it once, while t
 pixel size reuses the model. A callable that is already pixel-integrated would be integrated
 twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` first.
 
+At fit time, Adapt moves the coefficient array to the selected backend once and drops
+the point callable from the kernel model. All batches share that table; a retry after a
+GPU failure transfers it again. POCL uses the host array through its device-array view.
+The table occupies `4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about
+5 to 10 MiB for a PSFLearning export, in addition to the ROI and result arrays.
+
 For a `MicroscopePSFs.AbstractPSF`, the point PSF must be a normalized photon density in
 µm^-2, including when constructed from a stack. Pixel averages are multiplied by the pixel
 area without renormalization, so N is total photons (or total electrons for sCMOS) at every
@@ -62,8 +68,10 @@ same at every z. Pixel-size rescaling preserves the reference plane. A non-finit
 non-positive reference sum throws `ArgumentError`. Point samples are clipped at zero before
 quadrature for both conventions.
 
-Spatial derivatives use 5 nm finite differences; the axial stencil shifts inside `z_range`
-near either bound. Initial z comes from a Poisson likelihood scan with spacing at most
+One 4 × 4 × 4 coefficient gather gives the value and analytic first and diagonal second
+derivatives of the cubic interpolant, using each axis's pixel size. Non-positive values
+are clipped to zero with zero derivatives. z is differentiated at its clamped value.
+Initial z comes from a Poisson likelihood scan with spacing at most
 0.1 µm. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
 `z_range`, with a maximum z step of 0.05 µm.
 
@@ -142,7 +150,7 @@ function _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range::R
     )
     h = T(0.005)
     (zlo + h <= zhi - h && zlo + h > zlo && zhi - h < zhi) || throw(
-        ArgumentError("z_range $z_range is too narrow for a 0.01 µm axial stencil")
+        ArgumentError("z_range $z_range must span at least 0.01 µm in Float32")
     )
 
     # Round the callable's full range inward and choose the plane nearest zero. Keep it
@@ -157,8 +165,20 @@ function _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range::R
     )
 end
 
-gpu_compatible(::SplinePSFModel) = false
 _has_axial_position(::Type{<:SplinePSFModel}) = true
+
+function Adapt.adapt_structure(to, model::SplinePSFModel{T}) where {T}
+    table = Adapt.adapt(to, model.pixel_psf)
+    return SplinePSFModel{T, Nothing, typeof(table)}(
+        nothing, table, model.pixel_size, model.z_range, model.lateral_range,
+        model.px_scale, model.z_ref
+    )
+end
+
+# Backend adaptation also strips the host-only callable on the POCL CPU path.
+_prepare_psf_model(backend, model::SplinePSFModel) = Adapt.adapt(backend, model)
+_psf_table_bytes(model::SplinePSFModel{T}) where {T} =
+    sizeof(T) * length(model.pixel_psf.coefficients)
 
 function _model_for_camera(model::SplinePSFModel, camera)
     px_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
@@ -176,14 +196,21 @@ function _inward_bounds(::Type{T}, zr, spline) where {T}
     return tlo, thi
 end
 
-# Cubic coefficients include one ghost node at each end of every axis. All storage is
-# ordinary CPU arrays; evaluation only combines scalars and tuples and allocates nothing.
-struct _PixelIntegratedPSF{T}
-    coefficients::Array{T, 3}
+# Cubic coefficients include one ghost node at each end of every axis. The host builds
+# an Array; Adapt supplies the backend's array or device view without changing the math.
+struct _PixelIntegratedPSF{T, A <: AbstractArray{T, 3}}
+    coefficients::A
     lateral_step::Tuple{T, T}
     lateral_radius::Tuple{T, T}
     z_range::Tuple{T, T}
     z_step::T
+end
+
+function Adapt.adapt_structure(to, table::_PixelIntegratedPSF)
+    return _PixelIntegratedPSF(
+        Adapt.adapt(to, table.coefficients), table.lateral_step, table.lateral_radius,
+        table.z_range, table.z_step
+    )
 end
 
 @inline function _spline_cubic_weights(t::T) where {T}
@@ -196,22 +223,43 @@ end
     )
 end
 
+@inline function _spline_cubic_derivatives(t::T) where {T}
+    t2 = t * t
+    first = (
+        -(one(T) - t)^2 / T(2),
+        T(1.5) * t2 - T(2) * t,
+        T(0.5) + t - T(1.5) * t2,
+        t2 / T(2),
+    )
+    second = (one(T) - t, T(3) * t - T(2), one(T) - T(3) * t, t)
+    return first, second
+end
+
 @inline function _spline_interval(u::T, n::Int) where {T}
     node = clamp(u, zero(T), T(n - 1))
-    i = min(floor(Int, node), n - 2)
+    # Nonnegative and bounded by an existing array: truncation is floor, without a
+    # checked conversion's exception path in device code.
+    i = min(unsafe_trunc(Int, node), n - 2)
     return i, node - T(i)
 end
 
-@inline function (table::_PixelIntegratedPSF{T})(dx::T, dy::T, z::T) where {T}
-    radius_x, radius_y = table.lateral_radius
-    (abs(dx) > radius_x || abs(dy) > radius_y) && return zero(T)
+@inline function _spline_coordinates(table::_PixelIntegratedPSF{T}, dx, dy, z) where {T}
     c = table.coefficients
-    ny, nx, nz = size(c) .- 2
+    ny, nx, nz = size(c, 1) - 2, size(c, 2) - 2, size(c, 3) - 2
     h_x, h_y = table.lateral_step
     ix, tx = _spline_interval(dx / h_x + T((nx - 1) ÷ 2), nx)
     iy, ty = _spline_interval(dy / h_y + T((ny - 1) ÷ 2), ny)
     z_c = clamp(z, table.z_range...)
     iz, tz = _spline_interval((z_c - table.z_range[1]) / table.z_step, nz)
+    return ix, iy, iz, tx, ty, tz
+end
+
+# Value-only gather for evaluation and the initial z scan.
+@inline function (table::_PixelIntegratedPSF{T})(dx::T, dy::T, z::T) where {T}
+    radius_x, radius_y = table.lateral_radius
+    (abs(dx) > radius_x || abs(dy) > radius_y) && return zero(T)
+    ix, iy, iz, tx, ty, tz = _spline_coordinates(table, dx, dy, z)
+    c = table.coefficients
     wx, wy, wz = _spline_cubic_weights(tx), _spline_cubic_weights(ty),
         _spline_cubic_weights(tz)
     value = zero(T)
@@ -227,6 +275,54 @@ end
         value += wz[k] * plane
     end
     return value
+end
+
+# A single coefficient load feeds all seven accumulators. Differentiate the basis in
+# grid coordinates, then convert to derivatives per micron along each physical axis.
+@inline function _spline_value_derivatives(
+        table::_PixelIntegratedPSF{T}, dx::T, dy::T, z::T
+    ) where {T}
+    zeros7 = (zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T))
+    radius_x, radius_y = table.lateral_radius
+    (abs(dx) > radius_x || abs(dy) > radius_y) && return zeros7
+    ix, iy, iz, tx, ty, tz = _spline_coordinates(table, dx, dy, z)
+    wx, wy, wz = _spline_cubic_weights(tx), _spline_cubic_weights(ty),
+        _spline_cubic_weights(tz)
+    dwx, d2wx = _spline_cubic_derivatives(tx)
+    dwy, d2wy = _spline_cubic_derivatives(ty)
+    dwz, d2wz = _spline_cubic_derivatives(tz)
+    c = table.coefficients
+    value, gx, gy, gz, gxx, gyy, gzz = zeros7
+    @inbounds for k in 1:4
+        plane, plane_x, plane_y = zero(T), zero(T), zero(T)
+        plane_xx, plane_yy = zero(T), zero(T)
+        for j in 1:4
+            row, row_y, row_yy = zero(T), zero(T), zero(T)
+            for i in 1:4
+                coefficient = c[iy + i, ix + j, iz + k]
+                row += wy[i] * coefficient
+                row_y += dwy[i] * coefficient
+                row_yy += d2wy[i] * coefficient
+            end
+            plane += wx[j] * row
+            plane_x += dwx[j] * row
+            plane_y += wx[j] * row_y
+            plane_xx += d2wx[j] * row
+            plane_yy += wx[j] * row_yy
+        end
+        value += wz[k] * plane
+        gx += wz[k] * plane_x
+        gy += wz[k] * plane_y
+        gz += dwz[k] * plane
+        gxx += wz[k] * plane_xx
+        gyy += wz[k] * plane_yy
+        gzz += d2wz[k] * plane
+    end
+    value <= zero(T) && return zeros7
+    h_x, h_y = table.lateral_step
+    h_z = table.z_step
+    return value, gx / h_x, gy / h_y, gz / h_z,
+        gxx / (h_x * h_x), gyy / (h_y * h_y), gzz / (h_z * h_z)
 end
 
 # At an interior node, c[i-1] + 4c[i] + c[i+1] = 6f[i]. Natural ends give
@@ -420,60 +516,29 @@ end
     dy = (i - y) * px_y
     z_c = clamp(z, model.z_range[1], model.z_range[2])
 
-    # PSF value
-    f0 = max(zero(T), model.pixel_psf(dx, dy, z_c)) * scale
-
-    # Central finite differences for spatial derivatives
-    h_lat = T(0.005)   # 5 nm step for lateral
-    h_z = T(0.005)   # 5 nm step for axial
-
-    fxp = max(zero(T), model.pixel_psf(dx + h_lat, dy, z_c)) * scale
-    fxm = max(zero(T), model.pixel_psf(dx - h_lat, dy, z_c)) * scale
-    fyp = max(zero(T), model.pixel_psf(dx, dy + h_lat, z_c)) * scale
-    fym = max(zero(T), model.pixel_psf(dx, dy - h_lat, z_c)) * scale
-
-    # Shift the whole stencil inward near a bound, including its centre value. Using f0
-    # with clamped endpoints invents curvature even for a PSF that is linear in z.
-    z_s = clamp(z_c, model.z_range[1] + h_z, model.z_range[2] - h_z)
-    z_p = min(z_s + h_z, model.z_range[2])
-    z_m = max(z_s - h_z, model.z_range[1])
-    fzs = z_s == z_c ? f0 : max(zero(T), model.pixel_psf(dx, dy, z_s)) * scale
-    fzp = max(zero(T), model.pixel_psf(dx, dy, z_p)) * scale
-    fzm = max(zero(T), model.pixel_psf(dx, dy, z_m)) * scale
-
-    # Use the actual spacings to account for Float32 rounding. The quadratic through
-    # these samples gives its first derivative at z_c and its constant second derivative.
-    hp, hm = z_p - z_s, z_s - z_m
-    slope_p, slope_m = (fzp - fzs) / hp, (fzs - fzm) / hm
-    d2f_dz2 = 2 * (slope_p - slope_m) / (hp + hm)
-    df_dz = (hm * slope_p + hp * slope_m) / (hp + hm) + (z_c - z_s) * d2f_dz2
-
-    # First derivatives of PSF w.r.t. spatial coords
-    df_ddx = (fxp - fxm) / (2 * h_lat)
-    df_ddy = (fyp - fym) / (2 * h_lat)
-
-    # Second derivatives
-    d2f_ddx2 = (fxp - 2 * f0 + fxm) / (h_lat^2)
-    d2f_ddy2 = (fyp - 2 * f0 + fym) / (h_lat^2)
+    value, gx, gy, gz, gxx, gyy, gzz = _spline_value_derivatives(
+        model.pixel_psf, dx, dy, z_c
+    )
+    f0 = value * scale
 
     # Chain rule: model = bg + N * f0
     # dx = (j-x)*px_x, dy = (i-y)*px_y → ∂dx/∂x = -px_x, ∂dy/∂y = -px_y
     model_val = bg + N * f0
 
     dudt = @SVector [
-        -N * px_x * df_ddx,  # ∂model/∂x
-        -N * px_y * df_ddy,  # ∂model/∂y
-        N * df_dz,           # ∂model/∂z
-        f0,                  # ∂model/∂N
+        -N * px_x * gx * scale, # ∂model/∂x
+        -N * px_y * gy * scale, # ∂model/∂y
+        N * gz * scale,        # ∂model/∂z
+        f0,                   # ∂model/∂N
         one(T),               # ∂model/∂bg
     ]
 
     d2udt2 = @SVector [
-        N * px_x^2 * d2f_ddx2, # ∂²model/∂x²
-        N * px_y^2 * d2f_ddy2, # ∂²model/∂y²
-        N * d2f_dz2,         # ∂²model/∂z²
-        zero(T),             # ∂²model/∂N²
-        zero(T),              # ∂²model/∂bg²
+        N * px_x^2 * gxx * scale, # ∂²model/∂x²
+        N * px_y^2 * gyy * scale, # ∂²model/∂y²
+        N * gzz * scale,         # ∂²model/∂z²
+        zero(T),                # ∂²model/∂N²
+        zero(T),                # ∂²model/∂bg²
     ]
 
     return model_val, dudt, d2udt2
@@ -510,8 +575,7 @@ end
     # Starting every fit at z = 0 sends ROIs far from focus (|z| 0.4-0.5 µm for the
     # astigmatic test spline) into a wrong minimum on the other side of focus, so start at
     # the best z of a coarse likelihood scan instead.
-    z = _spline_z_scan(roi, box_size, model, x, y, total, bg)
-    return MVector{5, T}(x, y, z, total, bg)
+    return _spline_z_scan(roi, box_size, model, x, y, total, bg)
 end
 
 # Grid spacing (µm) of the z start scan. The basin of the true z is several tenths of a µm
@@ -519,12 +583,13 @@ end
 const SPLINE_Z_SCAN_STEP = 0.1f0
 
 # z on an even grid over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the highest
-# Poisson log-likelihood at the given x, y, N and bg.
+# Poisson log-likelihood at the given x, y, N and bg; return all starting parameters.
 @inline function _spline_z_scan(
         roi, box_size::Int, model::SplinePSFModel{T}, x, y, N, bg
     ) where {T}
     zlo, zhi = model.z_range
-    n = max(2, ceil(Int, (zhi - zlo) / SPLINE_Z_SCAN_STEP) + 1)
+    # Host construction already allocated a finer axial grid, so this count fits Int.
+    n = max(2, unsafe_trunc(Int, ceil((zhi - zlo) / SPLINE_Z_SCAN_STEP)) + 1)
     bg_scan = max(bg, T(0.01))  # the bg lower bound of default_constraints; keeps μ > 0
     best_z, best_ll = zero(T), typemin(T)
     for k in 0:(n - 1)
@@ -539,7 +604,7 @@ const SPLINE_Z_SCAN_STEP = 0.1f0
             best_z, best_ll = z, ll
         end
     end
-    return best_z
+    return SVector{5, T}(x, y, best_z, N, bg)
 end
 
 function to_pixel_units(

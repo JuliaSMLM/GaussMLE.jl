@@ -163,14 +163,9 @@ const Params{N} = SVector{N, Float32}
 Base.length(::Type{<:PSFModel{N, T}}) where {N, T} = N
 Base.length(::PSFModel{N, T}) where {N, T} = N
 
-"""
-    gpu_compatible(psf_model::PSFModel) -> Bool
-
-Whether the fitting kernel can run `psf_model` on a GPU. For a model that returns `false`,
-`backend = :auto` goes straight to the CPU (no GPU polling) and `backend = :gpu` throws
-`ArgumentError`. The Gaussian models are GPU-compatible; [`SplinePSFModel`](@ref) is not.
-"""
-gpu_compatible(::PSFModel) = true
+# Gaussian models contain only scalars. Tabulated models specialize these host helpers.
+_prepare_psf_model(backend, model::PSFModel) = model
+_psf_table_bytes(::PSFModel) = 0
 
 # Whether parameter 3 is axial position (x, y, z, N, bg ordering).
 _has_axial_position(::Type{<:PSFModel}) = false

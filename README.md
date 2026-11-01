@@ -52,7 +52,7 @@ Spatial PSF calibration parameters are specified in microns for camera-independe
 | `GaussianXYNBS` | `GaussianXYNBS()` | x, y, N, bg, σ | Variable-width 2D Gaussian |
 | `GaussianXYNBSXSY` | `GaussianXYNBSXSY()` | x, y, N, bg, σx, σy | Anisotropic 2D Gaussian |
 | `AstigmaticXYZNB` | `AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d)` | x, y, z, N, bg | 3D astigmatic localization |
-| `SplinePSFModel` | `SplinePSFModel(psf; pixel_size)` | x, y, z, N, bg | Tabulated or learned 3D PSF (CPU only) |
+| `SplinePSFModel` | `SplinePSFModel(psf; pixel_size)` | x, y, z, N, bg | Tabulated or learned 3D PSF |
 
 ## Output Format
 

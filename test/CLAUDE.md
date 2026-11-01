@@ -8,7 +8,7 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 |---|---|---|---|
 | Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, pixel integration, total photons at every z, density guard, dispatch, rectangular pixels) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing, CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, SplinePSFModel `:auto` goes to the CPU | CUDA or AMD GPU; spline host check currently requires CUDA |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing, CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, spline CPU/GPU agreement and GPU bias/CRLB per z band, spline/AstigmaticXYZNB throughput at box 13 and 15, spline `:auto` uses GPU | CUDA or AMD GPU |
 | Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |
 
 Spline tests treat the callable as a point PSF. A MicroscopePSFs PSF is a normalized photon

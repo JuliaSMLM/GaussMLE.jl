@@ -44,7 +44,8 @@ end
 
 ### Key Features
 
-- **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic, and CPU-only tabulated 3D PSFs
+- **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic, and tabulated
+  3D PSFs on CPU and GPU
 - **Physical Units**: Spatial PSF calibration parameters in microns (camera-independent); Ax, Ay, Bx and By are dimensionless
 - **Automatic GPU Acceleration**: CUDA or AMD (with AMDGPU loaded), with CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
@@ -70,7 +71,7 @@ The fitting path currently requires Float32 PSF models; use `f0` literals for th
 | `GaussianXYNBS()` | x, y, N, bg, sigma | Variable PSF width |
 | `GaussianXYNBSXSY()` | x, y, N, bg, sigma_x, sigma_y | Anisotropic PSF |
 | `AstigmaticXYZNB{T}(...)` | x, y, z, N, bg | 3D astigmatic imaging |
-| `SplinePSFModel(psf; ...)` | x, y, z, N, bg | Calibrated tabulated or learned 3D PSF (CPU only) |
+| `SplinePSFModel(psf; ...)` | x, y, z, N, bg | Calibrated tabulated or learned 3D PSF |
 
 ## Typical SMLM Pipeline
 
