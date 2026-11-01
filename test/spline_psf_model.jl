@@ -1,5 +1,5 @@
 # SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
-# methods, CPU-only backend dispatch and the square-pixel check. The GPU group checks :auto
+# methods, CPU-only backend dispatch and rectangular pixels. The GPU group checks :auto
 # on a GPU host; the Long group checks bias and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
@@ -55,7 +55,7 @@ end
         @test gpsf isa SplinePSFModel{Float32}
         @test gpsf isa GaussMLE.PSFModel{5, Float32}
         @test gpsf.spline_psf === spline  # retained as the point PSF for rebuilds
-        @test gpsf.pixel_size ≈ 0.1f0
+        @test gpsf.pixel_size == (0.1f0, 0.1f0)
         @test gpsf.z_range == (-0.5f0, 0.5f0)
         @test gpsf.px_scale > 0
         @test length(gpsf) == 5
@@ -112,6 +112,11 @@ end
             @test_throws ArgumentError SplinePSFModel(
                 no_sampling; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = value
             )
+            for pixel_size in ((value, 0.1), (0.1, value))
+                @test_throws ArgumentError SplinePSFModel(
+                    no_sampling; pixel_size, z_range = (-0.5, 0.5)
+                )
+            end
         end
     end
 
@@ -253,7 +258,7 @@ end
             )
             e = only(smld.emitters)
             # Corner (1, 1): invert the output's conversion from ROI pixels to microns.
-            fitted = (e.x, e.y)[axis] / m.pixel_size + 0.5f0
+            fitted = (e.x, e.y)[axis] / m.pixel_size[axis] + 0.5f0
             bound = clamp(position, -1.0f0, Float32(box + 2))
             @test fitted ≈ bound atol = 0.001f0 rtol = 0
             @test m.z_range[1] <= e.z <= m.z_range[2]
@@ -431,18 +436,51 @@ end
 
     @testset "non-square pixels" begin
         rect = (0.127, 0.116)  # PSFLearning's default config
-        @test_throws ArgumentError fit(
-            batch(IdealCamera(64, 64, rect)); psf_model = gpsf, backend = :cpu
-        )
-        @test_throws ArgumentError fit(
-            batch(SCMOSCamera(64, 64, rect, 1.6)); psf_model = gpsf, backend = :cpu
-        )
+        for camera in (IdealCamera(64, 64, rect), SCMOSCamera(64, 64, rect, 1.6))
+            smld, _ = fit(batch(camera); psf_model = gpsf, backend = :cpu)
+            @test length(smld.emitters) == n
+        end
         # Gaussian models keep their current behaviour
         smld, _ = fit(
             batch(IdealCamera(64, 64, rect));
             psf_model = GaussianXYNB(0.13f0), backend = :cpu
         )
         @test length(smld.emitters) == n
+    end
+
+    @testset "pixel integration on a rectangular camera" begin
+        px_x, px_y = 0.1313, 0.1258
+        box = 13
+        edges_x, edges_y = collect(0:box) .* px_x, collect(0:box) .* px_y
+        truth = ((7.2, 6.7, -0.4), (6.6, 7.3, 0.0), (7.35, 6.8, 0.4))
+        n = length(truth)
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth)
+            emitters = [Emitter3D((x - 0.5) * px_x, (y - 0.5) * px_y, z, 2000.0)]
+            data[:, :, k] .= MicroscopePSFs.integrate_pixels(
+                astig_spline, edges_x, edges_y, emitters; sampling = 8
+            ) .+ 10
+        end
+        camera = IdealCamera(64, 64, (px_x, px_y))
+        roi_batch = ROIBatch(data, ones(Int32, n), ones(Int32, n), Int32.(1:n), camera)
+        # gpsf was built at 0.1 µm square pixels; fitting must rebuild both axes.
+        smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu, iterations = 40)
+        for (k, (x, y, z)) in enumerate(truth)
+            e = smld.emitters[k]
+            @test e.x ≈ (x - 0.5) * px_x atol = 0.001
+            @test e.y ≈ (y - 0.5) * px_y atol = 0.001
+            @test e.z ≈ z atol = 0.003
+            @test abs(e.photons / 2000 - 1) <= 0.005
+        end
+
+        direct = SplinePSFModel(astig_spline; pixel_size = (px_x, px_y))
+        one_roi = ROIBatch(data[:, :, 1:1], Int32[1], Int32[1], Int32[1], camera)
+        direct_smld, _ = fit(one_roi; psf_model = direct, backend = :cpu, iterations = 40)
+        e = only(direct_smld.emitters)
+        for field in (:x, :y, :z, :photons, :bg)
+            expected = getproperty(smld.emitters[1], field)
+            @test getproperty(e, field) ≈ expected atol = 1.0e-6 rtol = 1.0e-5
+        end
     end
 
 end

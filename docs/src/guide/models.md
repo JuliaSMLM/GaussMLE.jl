@@ -152,15 +152,19 @@ smld, info = fit(batch; psf_model = model)     # runs on the CPU
 ```
 
 Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
-`SplinePSFModel(f; pixel_size, z_range)`. The camera's pixels must be square.
+`SplinePSFModel(f; pixel_size, z_range)`. `pixel_size` accepts a `Real` for square pixels
+or an `(x, y)` tuple for rectangular pixels, for example `(0.1313, 0.1258)` in microns.
+The model stores both sizes as a Float32 tuple, and `fit(::ROIBatch)` rescales each axis
+to the camera's own spacing. This rectangular-pixel support is specific to `SplinePSFModel`.
 
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
-quadrature with five sub-intervals per lateral axis. The lateral table spacing is `pixel_size / 5`,
-extending to at least `±(lateral_range + pixel_size)`; axial nodes span the inward-rounded
+quadrature with five sub-intervals per lateral axis. The lateral table spacings are
+`pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least
+`±(lateral_range + pixel_size_axis)` per axis; axial nodes span the inward-rounded
 `z_range` with spacing at most 0.02 µm. A natural cubic B-spline interpolates these averages,
 with zero second derivative at each axis endpoint. Fitting uses the table, with zero outside
-its lateral range and z clamped to `z_range`. A different camera pixel size rebuilds the table
-and signal scale once; an unchanged pixel size reuses the model.
+its lateral range and z clamped to `z_range`. A change in either camera pixel size rebuilds
+the table and signal scale once; an unchanged `(x, y)` pair reuses the model.
 
 The input must describe a point PSF: an already pixel-integrated callable would be integrated
 twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` before constructing the model.
@@ -326,22 +330,22 @@ Where:
 - For **GaussianXYNBSXSY**: sigma_x, sigma_y (independently fitted)
 - For **AstigmaticXYZNB**: sigma_x(z), sigma_y(z) from calibration curve
 
-For `SplinePSFModel`, let `f` be the point PSF in micron coordinates and p the camera pixel size.
+For `SplinePSFModel`, let `f` be the point PSF in micron coordinates and pₓ, pᵧ the camera pixel sizes.
 The table interpolates the pixel average:
 
 ```math
-A_p(d_x,d_y,z) = \frac{1}{p^2}
-\int_{d_y-p/2}^{d_y+p/2} \int_{d_x-p/2}^{d_x+p/2}
+A_{p_x,p_y}(d_x,d_y,z) = \frac{1}{p_x p_y}
+\int_{d_y-p_y/2}^{d_y+p_y/2} \int_{d_x-p_x/2}^{d_x+p_x/2}
 \max(0, f(u,v,z))\,du\,dv.
 ```
 
 With `table` the natural cubic interpolant of these averages, the expected count is:
 
 ```julia
-μ = bg + N * px_scale * max(0, table((j-x)*p, (i-y)*p, clamp(z, z_range...)))
+μ = bg + N * px_scale * max(0, table((j-x)*p_x, (i-y)*p_y, clamp(z, z_range...)))
 ```
 
-For a `MicroscopePSFs.AbstractPSF` photon density, `px_scale = p^2`, so the signal is N times
+For a `MicroscopePSFs.AbstractPSF` photon density, `px_scale = p_x * p_y`, so the signal is N times
 the pixel integral. For a plain callable, `px_scale` is the reciprocal sum of pixel averages
 on the reference patch at `z_ref`, so N counts the photons in that patch on the reference
 plane. The final clipping removes negative interpolation overshoot.
