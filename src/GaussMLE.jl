@@ -7,7 +7,7 @@ Noise models: Poisson (`IdealCamera`) and sCMOS (`SCMOSCamera`, per-pixel readou
 
 Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
 `GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` and `SplinePSFModel` (a tabulated 3D
-PSF, CPU only); `generate_roi_batch` for simulated data. Results are `SMLMData.BasicSMLD`
+PSF on CPU or GPU); `generate_roi_batch` for simulated data. Results are `SMLMData.BasicSMLD`
 with model-specific emitter types.
 """
 module GaussMLE
@@ -45,7 +45,7 @@ include("psf_derivatives.jl")
 include("constraints.jl")
 include("emitters.jl")  # Custom emitter types with PSF parameters
 include("roi_batch.jl")  # ROI batch data structure
-include("spline_psf.jl")  # Tabulated 3D PSF (CPU only)
+include("spline_psf.jl")  # Tabulated 3D PSF on CPU and GPU
 include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")

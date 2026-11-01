@@ -1,5 +1,5 @@
 # SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
-# methods, CPU-only backend dispatch and rectangular pixels. The GPU group checks :auto
+# methods, backend dispatch and rectangular pixels. The GPU group checks :auto
 # on a GPU host; the Long group checks bias and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
 
@@ -420,18 +420,20 @@ end
         end
     end
 
-    @testset "backend dispatch: CPU only" begin
-        @test GaussMLE.gpu_compatible(gpsf) == false
-        @test GaussMLE.gpu_compatible(GaussianXYNB(0.13f0)) == true
-        @test GaussMLE.gpu_compatible(
-            AstigmaticXYZNB{Float32}(
-                0.13f0, 0.13f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.25f0, 0.4f0
-            )
-        )
-        # :gpu is refused before any CUDA check, so this holds on hosts without a GPU too
-        @test_throws ArgumentError fit(
-            batch(IdealCamera(64, 64, 0.1)); psf_model = gpsf, backend = :gpu
-        )
+    @testset "backend dispatch: same GPU requirement as Gaussian models" begin
+        @test GaussMLEConfig(psf_model = gpsf, backend = :gpu).backend == :gpu
+        if GaussMLE._gpu_vendor() === nothing
+            roi_batch = batch(IdealCamera(64, 64, 0.1))
+            failures = map((GaussianXYNB(0.13f0), gpsf)) do psf
+                try
+                    fit(roi_batch; psf_model = psf, backend = :gpu)
+                catch err
+                    err
+                end
+            end
+            @test all(err -> err isa ErrorException, failures)
+            @test sprint(showerror, failures[1]) == sprint(showerror, failures[2])
+        end
     end
 
     @testset "non-square pixels" begin

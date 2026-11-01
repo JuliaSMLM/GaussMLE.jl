@@ -52,6 +52,12 @@ The package uses a unified kernel approach via KernelAbstractions.jl:
 - Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
 - **Diagonal Newton-Raphson for optimization** (element-wise, not full matrix inverse)
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
+- Spline pixel-integral tables are built on the host and adapted once per backend attempt;
+  CPU (POCL), CUDA and AMDGPU use one kernel, with the point callable removed before launch
+- Spline values and analytic first/diagonal second derivatives share one 4 × 4 × 4 gather;
+  rectangular pixels use each axis's spacing, and non-positive values have zero derivatives
+- Spline initialization and z scanning use immutable `SVector` parameters; the scan gathers
+  values only. Coefficients typically occupy 5 to 10 MiB for a PSFLearning export
 
 ### Data Types and Conventions
 
@@ -294,7 +300,8 @@ The math is dimensionally consistent:
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
 - `src/gausslib/` - Gaussian math helpers used by CPU and GPU kernels
-- `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), CPU only via the `gpu_compatible` trait
+- `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), host
+  construction, backend adaptation, and analytic derivatives on CPU and GPU
 - `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor (weak dependency)
 
 ### SMLMData Ecosystem Integration

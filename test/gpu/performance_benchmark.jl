@@ -1,6 +1,7 @@
 # Performance benchmark with a correctness check: all 4 PSF models x 2 cameras x CPU and
 # GPU, fits per second, and empirical std / CRLB within [0.8, 1.2] for every parameter.
 using Test, GaussMLE, SMLMData, Random, Statistics, Printf
+using MicroscopePSFs: MicroscopePSFs
 
 include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
 # extract_roi_coords
@@ -29,5 +30,21 @@ for r in results
                 (outside [0.8, 1.2])"
         end
         @test ratio_ok
+    end
+end
+
+@testset "Spline / AstigmaticXYZNB throughput" begin
+    comparison = run_spline_comparison_benchmark()
+    expected = Set(Iterators.product(
+        ("AstigmaticXYZNB", "SplinePSFModel"), (13, 15), (:ideal, :scmos), devices
+    ))
+    actual = Set((r.model, r.box, r.camera, r.device) for r in comparison)
+    @test length(comparison) == length(expected)
+    @test actual == expected
+    for row in comparison
+        @test row.backend == row.device
+        @test row.n_fits == 10_000
+        @test isfinite(row.fits_per_second) && row.fits_per_second > 0
+        @test row.finite
     end
 end

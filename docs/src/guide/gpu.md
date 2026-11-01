@@ -39,11 +39,21 @@ If neither vendor is functional, `:gpu` errors immediately and `:auto` uses CPU
 without a warning. Timeouts govern resource waits and retries only after a functional
 vendor is found; a timeout in `:auto` warns before falling back to CPU.
 
-A PSF model the kernel cannot run on a GPU (`GaussMLE.gpu_compatible(model) == false`, currently
-`SplinePSFModel`) is routed to the CPU: `:auto` goes straight to the CPU without polling the GPU,
-and `:gpu` throws `ArgumentError`.
-In this merge, spline fitting uses the CPU path; compatibility with its POCL kernel is
-still pending, so spline fits are not yet runnable on this branch.
+All five PSF models, including `SplinePSFModel`, follow these backend rules.
+
+### Spline Table Transfer
+
+`SplinePSFModel` builds its pixel-integral coefficient table on the host. Adapt moves
+that table to the selected CUDA or AMD GPU before the first batch. All batches in a fit
+share it; a retry after a GPU failure transfers it again because the device or context
+may have changed. GPU memory polling includes the table's storage requirement.
+
+CPU fitting uses the same table through POCL's device-array view. The kernel model
+contains no point callable: fit, derivatives and CRLB all read the same coefficients.
+A value/derivative evaluation gathers 4 × 4 × 4 coefficients once; the initial z scan
+uses a value-only gather. Coefficients occupy
+`4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about 5 to 10 MiB for a
+PSFLearning export, in addition to the batched ROI and result arrays.
 
 ### Timeout Configuration
 
@@ -193,7 +203,13 @@ Tune batch size based on:
 
 ### Benchmarking Your Hardware
 
-Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The performance benchmark covers the four Gaussian models with both cameras on CPU and GPU, reporting fits/second and MLE optimality (std/CRLB ratio). Separate spline Monte Carlo validation runs on CPU with IdealCamera in the Long group; the GPU group checks that spline `:auto` dispatch goes directly to CPU.
+Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware.
+The performance benchmark covers the four Gaussian models with both cameras on CPU and
+GPU, reporting fits/second and MLE optimality (std/CRLB ratio). A paired spline and
+`AstigmaticXYZNB` benchmark uses identical 10,000-ROI stacks at box sizes 13 and 15, with
+ideal and sCMOS cameras, and reports CPU/GPU throughput plus the spline/Gaussian ratio.
+The GPU group also checks spline CPU/GPU agreement and GPU bias/CRLB in each 0.1 µm z
+band. Independent spline Monte Carlo validation remains in the Long group on CPU.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
