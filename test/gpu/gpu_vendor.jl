@@ -20,6 +20,37 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         @test device_idx in 0:(n_devices - 1)
     end
 
+    # The retry loop waits and polls again only for these; any other error rethrows (:gpu)
+    # or falls back to the CPU at once (:auto). A fit cannot raise either kind on demand.
+    @testset "Resource error classification" begin
+        resource, other = if vendor isa GaussMLE.CUDAGPU
+            (
+                (
+                    CUDA.OutOfGPUMemoryError(), CUDA.CuError(CUDA.ERROR_OUT_OF_MEMORY),
+                    CUDA.CuError(CUDA.ERROR_DEVICE_UNAVAILABLE),
+                ),
+                (CUDA.CuError(CUDA.ERROR_INVALID_VALUE),),
+            )
+        else
+            (
+                (
+                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorOutOfMemory),
+                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorNotInitialized),
+                ),
+                (AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorInvalidValue),),
+            )
+        end
+        for e in resource
+            @test GaussMLE._is_resource_error(vendor, e)
+        end
+        deterministic = (
+            other..., ErrorException("compile error"), BoundsError(), InterruptException(),
+        )
+        for e in deterministic
+            @test !GaussMLE._is_resource_error(vendor, e)
+        end
+    end
+
     if vendor isa GaussMLE.ROCmGPU
         @testset "ROCm failure cleanup" begin
             @test GaussMLE._release_gpu_context(vendor, 0) === nothing

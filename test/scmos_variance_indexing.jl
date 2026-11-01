@@ -117,3 +117,54 @@ box_size = 15
     # At high variance (207 e⁻²), readnoise dominates over Poisson (~5 e⁻)
     @test mean_σ_B > mean_σ_A  # Sanity check
 end
+
+# The kernel indexes the variance map by corner, so an ROI off the sensor is a device-side
+# bounds error: fit(::ROIBatch) rejects it on the host before any launch, naming the ROI.
+@testset "ROIs outside the sCMOS sensor are rejected before any launch" begin
+    psf_model = GaussMLE.GaussianXYNB(0.13f0)
+    sensor, box, n = 32, 7, 3
+    scmos = SMLMData.SCMOSCamera(
+        sensor, sensor, 0.1f0, fill(2.0f0, sensor, sensor);
+        offset = 100.0f0, gain = 1.0f0, qe = 1.0f0
+    )
+    last_corner = sensor - box + 1
+    corners = Int32[1 last_corner 8; 1 last_corner 9]  # x row, y row
+    batch = GaussMLE.generate_roi_batch(
+        scmos, psf_model; n_rois = n, roi_size = box, corners, seed = 5
+    )
+    with_corners(x, y) = ROIBatch(batch.data, x, y, batch.frame_indices, scmos)
+
+    # ROIs touching the sensor edges are on the sensor.
+    smld, _ = fit(batch; psf_model, backend = :cpu)
+    @test length(smld.emitters) == n
+
+    # (x corners, y corners, index of the first bad ROI)
+    bad = (
+        (Int32[1, 8, 0], Int32[1, 1, 9], 3),    # x corner < 1
+        (Int32[1, 8, 8], Int32[1, 1, -4], 3),   # y corner < 1
+        (Int32[1, 8, 8], Int32[1, 27, 9], 2),   # y corner + box - 1 > sensor
+        (Int32[1, 27, 8], Int32[1, 8, 9], 2),   # x corner + box - 1 > sensor
+        (Int32[40, 27, 8], Int32[1, 8, 9], 1),  # the first of several bad ROIs
+    )
+    for (x, y, index) in bad, backend in (:cpu, :gpu, :auto)
+        err = try
+            fit(with_corners(x, y); psf_model, backend)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test err isa ArgumentError && occursin("ROI $index ", err.msg)
+    end
+
+    # An IdealCamera never indexes calibration by corner and converts corners to microns
+    # linearly, so ROIs off its nominal sensor still fit (fit(::Array) tiles ROIs far
+    # beyond its stand-in camera this way).
+    ideal = ROIBatch(
+        batch.data, Int32[1, 100, 5000], Int32[1, 1, 1], batch.frame_indices,
+        IdealCamera(sensor, sensor, 0.1f0)
+    )
+    smld, _ = fit(ideal; psf_model, backend = :cpu)
+    @test all(e -> isfinite(e.x) && isfinite(e.y), smld.emitters)
+    @test smld.emitters[3].x > smld.emitters[2].x > smld.emitters[1].x
+end

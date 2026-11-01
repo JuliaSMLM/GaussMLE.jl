@@ -6,9 +6,9 @@ a CUDA GPU, or an AMD GPU with AMDGPU loaded, with Cramér-Rao lower bound uncer
 Noise models: Poisson (`IdealCamera`) and sCMOS (`SCMOSCamera`, per-pixel readout noise).
 
 Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
-`GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` and `SplinePSFModel` (a tabulated 3D
-PSF on CPU or GPU); `generate_roi_batch` for simulated data. Results are `SMLMData.BasicSMLD`
-with model-specific emitter types.
+`GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` and `SplinePSFModel` (a tabulated
+3D PSF on CPU or GPU); `generate_roi_batch` for simulated data. Results are
+`SMLMData.BasicSMLD` with model-specific emitter types.
 """
 module GaussMLE
 

@@ -6,10 +6,10 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, pixel integration, total photons at every z, density guard, dispatch, rectangular pixels, Array pixel size, bright emitters, objective maximum for sCMOS and for IdealCamera with negative pixels) | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke and CPU kernel for GaussianXYNB (a 1,000-ROI sCMOS batch), sCMOS variance-map indexing regression and rejection of ROIs off the sensor, default bounds from the actual box, SplinePSFModel with IdealCamera (CPU fit, pixel integration, total photons at every z, density guard, dispatch, rectangular pixels, Array pixel size, bright emitters, objective maximum with negative pixels, truths beyond a z_range end finishing on the bound, a NaN pixel) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing, CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, spline CPU/GPU agreement and GPU bias/CRLB per z band, spline/AstigmaticXYZNB throughput at box 13 and 15, spline `:auto` uses GPU | CUDA or AMD GPU |
-| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing and resource-error classification for the retry loop, CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, spline CPU/GPU agreement and GPU bias/CRLB per z band, spline/AstigmaticXYZNB throughput at box 13 and 15, spline `:auto` uses GPU | CUDA or AMD GPU |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; the 10,000-ROI sCMOS batch POCL work-group regression; the CPU path of GaussianXYNBS and GaussianXYNBSXSY; SplinePSFModel with an SCMOSCamera (raw-ADU recovery, objective maximum including pixels with data + read-noise variance <= 0, truths beyond a z_range end, rectangular pixels); separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |
 
 Spline tests treat the callable as a point PSF. A MicroscopePSFs PSF is a normalized photon
 density in µm^-2, so N is total photons and an input stack must have that normalization.
@@ -17,6 +17,19 @@ A plain callable is normalized on the reference plane: N is the photons within t
 `lateral_range` patch at `z_ref`, and its energy must be the same at every z. The Core
 total-photon test and Long spline tests render independently with
 `MicroscopePSFs.integrate_pixels(...; sampling = 8)`.
+
+Each kernel specialization (model, camera) costs 3 to 20 s to compile on Julia 1.11 under
+`--check-bounds=yes`, which `Pkg.test` uses, and that compile is a large part of Core's time. Core
+therefore fits only GaussianXYNB (both cameras) and SplinePSFModel with IdealCamera; the
+other models and the sCMOS spline run in Long. Measure Core's time at the Julia floor
+(1.11) with the machine's load average noted.
+
+Camera noise in spline fixtures comes from SMLMSim (`poisson_noise`, `scmos_noise`, test
+extras in the root and GPU environments), not local code (lab decision 0032). Expected
+counts come from `GaussMLE.evaluate_psf` or `MicroscopePSFs.integrate_pixels`. SMLMSim's
+noise draws from the global generator, so a fixture calls `Random.seed!`.
+`test/long/utils/spline_psf_helpers.jl` holds the spline helpers that Core's
+`spline_psf_model.jl` and Long's `spline_psf_scmos.jl` share.
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
 - `test/test_groups.toml` declares the groups.

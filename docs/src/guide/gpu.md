@@ -117,7 +117,7 @@ CUDA examples include:
 
 ### Solution: Unified Retry Loop
 
-GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU failure modes uniformly:
+GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles the GPU resource failure modes uniformly:
 
 ```
 while !gpu_succeeded && before deadline:
@@ -131,7 +131,10 @@ while !gpu_succeeded && before deadline:
          gpu_succeeded = true
     4. Catch:
          clean up GPU resources    # CUDA: release context; AMD: GC, synchronize, reclaim
-         loop back to step 1       # Re-poll memory for next available GPU
+         if a resource error (out of memory, context creation):
+             loop back to step 1   # Re-poll memory for next available GPU
+         otherwise:                # a deterministic error, such as a compile error
+             :gpu rethrows at once; :auto warns once and falls back to the CPU at once
 ```
 
 After the loop: `:auto` falls back to CPU, `:gpu` errors.
@@ -146,8 +149,12 @@ The loop handles three distinct GPU failure scenarios:
    fails because another process acquired it. Resources are cleaned up and memory is
    re-polled.
 
-3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. Resources are
-   cleaned up and all batches restart on an available GPU.
+3. **Runtime OOM** - GPU allocation fails mid-batch. Resources are cleaned up and all
+   batches restart on an available GPU.
+
+Any other error is not retried, since waiting cannot clear it. `fit(::ROIBatch)` also
+checks on the host, before any launch, that every ROI of an sCMOS batch lies on the sensor
+and throws `ArgumentError` otherwise.
 
 ### NVML Contention Detection
 
@@ -234,7 +241,10 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 
 ## Result Consistency
 
-GPU and CPU results are numerically consistent (differences at machine precision ~1e-6 microns). The same unified kernel runs on both devices via KernelAbstractions.jl.
+The same unified kernel runs on every device via KernelAbstractions.jl. Agreement between GPU and CPU results depends on the model:
+
+- Gaussian models: differences are float32 rounding (about 1e-6 microns).
+- `SplinePSFModel`: the Levenberg-Marquardt accept/reject test branches on objective differences at float32 resolution near the optimum, so the two devices can stop at slightly different points along flat directions. The differences are a small fraction of the CRLB, not machine precision.
 
 ## Troubleshooting
 

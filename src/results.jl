@@ -16,7 +16,8 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
   iterations run)
 - `batch_size::Int`: Actual batch size used for processing
 - `n_batches::Int`: Number of batches processed (1 if all-at-once)
-- `memory_per_batch::Int`: Estimated memory bytes per batch
+- `memory_per_batch::Int`: Estimated memory bytes per batch, including a SplinePSFModel's
+  table
 
 # Example
 ```julia

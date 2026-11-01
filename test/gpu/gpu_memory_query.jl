@@ -10,11 +10,11 @@ if CUDA.functional()
         @testset "CUDA context release in a separate process" begin
             # Keep the test process's own CUDA context alive for the remaining tests.
             code = """
-                using GaussMLE, CUDA
-                CUDA.device!(0)
-                GaussMLE._release_gpu_context(0)
-                print("released")
-                """
+            using GaussMLE, CUDA
+            CUDA.device!(0)
+            GaussMLE._release_gpu_context(0)
+            print("released")
+            """
             command = `$(Base.julia_cmd()) --project=$(Base.active_project()) -e $code`
             output = IOBuffer()
             process = run(pipeline(ignorestatus(command); stdout = output))

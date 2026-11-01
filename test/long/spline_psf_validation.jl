@@ -1,7 +1,9 @@
 # SplinePSFModel accuracy: 200 Poisson ROIs from an astigmatic MicroscopePSFs SplinePSF,
 # fitted through fit(::ROIBatch). MicroscopePSFs.integrate_pixels renders the point photon
-# density independently, so bias, total-photon scale and CRLB checks cover pixel integration.
-using Test, GaussMLE, MicroscopePSFs, SMLMData, Distributions, Random, Statistics
+# density independently, so bias, total-photon scale and CRLB checks cover pixel
+# integration.
+using Test, GaussMLE, MicroscopePSFs, SMLMData, Random, Statistics
+using SMLMSim: poisson_noise
 
 @testset "SplinePSFModel: bias and CRLB (astigmatic SplinePSF)" begin
     zc = ZernikeCoefficients(15)
@@ -16,6 +18,7 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, Distributions, Random, Statistic
     edges = collect(0:box) .* px
 
     rng = Xoshiro(42)
+    Random.seed!(42)  # SMLMSim's noise draws from the global generator
     # x, y within ±1 pixel of the ROI centre; z within ±0.3 µm
     truth = [(7 + 2rand(rng) - 1, 7 + 2rand(rng) - 1, 0.6rand(rng) - 0.3) for _ in 1:n]
     data = zeros(Float32, box, box, n)
@@ -24,9 +27,7 @@ using Test, GaussMLE, MicroscopePSFs, SMLMData, Distributions, Random, Statistic
         signal = MicroscopePSFs.integrate_pixels(
             spline, edges, edges, emitters; sampling = 8
         )
-        for j in 1:box, i in 1:box
-            data[i, j, k] = rand(rng, Poisson(bg + signal[i, j]))
-        end
+        data[:, :, k] .= poisson_noise(bg .+ signal)
     end
     batch = ROIBatch(
         data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)
@@ -76,6 +77,7 @@ end
     model = SplinePSFModel(spline; pixel_size = px)
     edges = collect(0:box) .* px
     rng = Xoshiro(7)
+    Random.seed!(7)
 
     for zlo in -0.5:0.1:0.4
         truth = [(8 + 2rand(rng) - 1, 8 + 2rand(rng) - 1, zlo + 0.1rand(rng)) for _ in 1:n]
@@ -85,9 +87,7 @@ end
             signal = MicroscopePSFs.integrate_pixels(
                 spline, edges, edges, emitters; sampling = 8
             )
-            for j in 1:box, i in 1:box
-                data[i, j, k] = rand(rng, Poisson(bg + signal[i, j]))
-            end
+            data[:, :, k] .= poisson_noise(bg .+ signal)
         end
         batch = ROIBatch(
             data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)

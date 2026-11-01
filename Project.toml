@@ -40,6 +40,7 @@ Pkg = "1"
 Printf = "1"
 Random = "1"
 SMLMData = "0.7"
+SMLMSim = "0.7"
 SpecialFunctions = "2"
 StaticArrays = "1"
 Statistics = "1"
@@ -56,8 +57,12 @@ Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
 MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SMLMSim = "5a0a87e4-02d4-41f5-bf26-b8c94c784a04"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Documenter", "ExplicitImports", "Logging", "MicroscopePSFs", "Pkg", "Printf", "TOML", "Test"]
+test = [
+    "Aqua", "Documenter", "ExplicitImports", "Logging", "MicroscopePSFs", "Pkg", "Printf",
+    "SMLMSim", "TOML", "Test",
+]

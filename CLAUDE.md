@@ -222,7 +222,9 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
    - SplinePSFModel: `_optimize(::SplinePSFModel)` is Levenberg-Marquardt (`_lm_fit`) on the
      full Fisher matrix, climbing one objective (`_fit_objective`, read-noise variance from
      `_readout_variance`, zero for IdealCamera), with uncapped photon and background steps;
-     `iterations` counts its pixel passes
+     a parameter on a bound whose gradient points out of the box is held (identity row and
+     column, zero gradient) while the rest take the step; `iterations` counts its pixel
+     passes, the last only evaluating, so a fit takes at most `iterations - 1` steps
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties

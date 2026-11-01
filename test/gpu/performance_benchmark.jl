@@ -35,9 +35,11 @@ end
 
 @testset "Spline / AstigmaticXYZNB throughput" begin
     comparison = run_spline_comparison_benchmark()
-    expected = Set(Iterators.product(
-        ("AstigmaticXYZNB", "SplinePSFModel"), (13, 15), (:ideal, :scmos), devices
-    ))
+    expected = Set(
+        Iterators.product(
+            ("AstigmaticXYZNB", "SplinePSFModel"), (13, 15), (:ideal, :scmos), devices
+        )
+    )
     actual = Set((r.model, r.box, r.camera, r.device) for r in comparison)
     @test length(comparison) == length(expected)
     @test actual == expected

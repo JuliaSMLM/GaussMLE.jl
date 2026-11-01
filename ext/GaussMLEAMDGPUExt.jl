@@ -12,7 +12,14 @@ GaussMLE._activate_gpu!(::ROCmGPU, i) = AMDGPU.device!(AMDGPU.devices()[i + 1])
 GaussMLE._reclaim_gpu(::ROCmGPU) = AMDGPU.HIP.reclaim()
 
 function GaussMLE._active_device_id(::ROCmGPU)
-    return Int(findfirst(==(AMDGPU.device()), AMDGPU.devices()) - 1)
+    index = findfirst(==(AMDGPU.device()), AMDGPU.devices())
+    # The device was just activated, so it is in the list; -1 marks the unknown case.
+    return index === nothing ? -1 : Int(index) - 1
+end
+
+function GaussMLE._is_resource_error(::ROCmGPU, e)
+    return e isa AMDGPU.HIP.HIPError &&
+        e.code in (AMDGPU.HIP.hipErrorOutOfMemory, AMDGPU.HIP.hipErrorNotInitialized)
 end
 
 function GaussMLE._release_gpu_context(::ROCmGPU, i)

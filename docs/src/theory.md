@@ -74,7 +74,7 @@ Where:
 
 The update is zero when $|H_{\mathrm{diag},a}| \leq 10^{-10}$. Each update is clamped to its step limit, then the new parameter is clamped to its bounds. The full Fisher matrix is accumulated and inverted once after optimization for uncertainties.
 
-`SplinePSFModel` is instead fitted by Levenberg-Marquardt on the full Fisher matrix, solving $(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g$ with the per-camera objective: the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood $(d + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS). The reported log-likelihood ratio and p-value come from the likelihood given above for both cameras; for sCMOS that is the Gaussian approximation $-(d-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the spline fit maximizes.
+`SplinePSFModel` is instead fitted by Levenberg-Marquardt on the full Fisher matrix, solving $(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g$ with the per-camera objective: the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood $(d + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS). A parameter that sits on a bound with the objective's gradient pointing out of the box is held there: its row and column of the damped matrix are replaced by the identity and its gradient set to zero, so the solve moves only the free parameters. The reported log-likelihood ratio and p-value come from the likelihood given above for both cameras; for sCMOS that is the Gaussian approximation $-(d-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the spline fit maximizes.
 
 ## Derivatives
 
@@ -246,7 +246,7 @@ Note that unlike the pure Poisson case, the variance depends on both the model v
 
 ### Iteration Strategy
 
-GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson optimization (Levenberg-Marquardt for `SplinePSFModel`, one pixel pass per iteration), with no convergence checking. This matches the approach used in the original CUDA implementation (Smith et al. 2010, SMITE), where the fixed iteration count is chosen to be sufficient for convergence in typical SMLM conditions while avoiding the overhead of convergence tests on GPU hardware.
+GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson optimization (Levenberg-Marquardt for `SplinePSFModel`, one pixel pass per iteration; its last pass only evaluates, so it takes at most `iterations - 1` steps and `iterations = 1` returns the start), with no convergence checking. This matches the approach used in the original CUDA implementation (Smith et al. 2010, SMITE), where the fixed iteration count is chosen to be sufficient for convergence in typical SMLM conditions while avoiding the overhead of convergence tests on GPU hardware.
 
 ### Stability Measures
 

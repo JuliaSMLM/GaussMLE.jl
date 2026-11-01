@@ -43,9 +43,11 @@ spacing `pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least
 `±(lateral_range + pixel_size_axis)` on each axis; its axial nodes span `z_range` with
 spacing at most 0.02 µm.
 A natural cubic B-spline interpolates the table, returning zero outside its lateral range.
-Fitting uses this table; a different camera pixel size rebuilds it once, while the same
-pixel size reuses the model. A callable that is already pixel-integrated would be integrated
-twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` first.
+Fitting uses this table. `fit` rebuilds it on every call whose camera pixel size differs
+from the model's (about a second for a PSFLearning-size table), so build the model at the
+camera pixel size; the same pixel size reuses the model. A callable that is already
+pixel-integrated would be integrated twice. Tabulate slow callables, such as a vector PSF,
+as a `SplinePSF` first.
 
 At fit time, Adapt moves the coefficient array to the selected backend once and drops
 the point callable from the kernel model. All batches share that table; a retry after a
@@ -68,10 +70,10 @@ same at every z. Pixel-size rescaling preserves the reference plane. A non-finit
 non-positive reference sum throws `ArgumentError`. Point samples are clipped at zero before
 quadrature for both conventions.
 
-One 4 × 4 × 4 coefficient gather gives the value and analytic first and diagonal second
-derivatives of the cubic interpolant, using each axis's pixel size. Non-positive values
-are clipped to zero with zero derivatives. z is differentiated at its clamped value.
-The start is the centroid for x and y, the edge-pixel mean for the
+One 4 × 4 × 4 coefficient gather gives the value and analytic first derivatives of the
+cubic interpolant, using each axis's pixel size; the fit uses no second derivatives.
+Non-positive values are clipped to zero with zero derivatives. z is differentiated at its
+clamped value. The start is the centroid for x and y, the edge-pixel mean for the
 background, the positive in-box sum above it for N, and the z of a Poisson likelihood scan
 at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt on the full
 Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
@@ -80,7 +82,9 @@ default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon
 background steps are not capped (photons ≥ 1, background ≥ 0.01). For sCMOS the
 reported log-likelihood and p-value use the Gaussian approximation
 `-(d - μ)²/(2(μ + v))`, not the fitted objective. `iterations` counts
-Levenberg-Marquardt iterations (one pixel pass each). Default x/y
+Levenberg-Marquardt pixel passes: the last pass only evaluates, so the fit takes at most
+`iterations - 1` steps and `iterations = 1` returns the start. A parameter on a bound whose
+gradient points out of the box is held there while the others take their step. Default x/y
 bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use `z_range`.
 
 # Fields
@@ -235,17 +239,18 @@ end
 
 @inline function _spline_cubic_derivatives(t::T) where {T}
     t2 = t * t
-    first = (
+    return (
         -(one(T) - t)^2 / T(2),
         T(1.5) * t2 - T(2) * t,
         T(0.5) + t - T(1.5) * t2,
         t2 / T(2),
     )
-    return first
 end
 
 @inline function _spline_interval(u::T, n::Int) where {T}
-    node = clamp(u, zero(T), T(n - 1))
+    # clamp leaves NaN unchanged, and a NaN truncated below is poison, so map it to the
+    # first node here.
+    node = clamp(isnan(u) ? zero(T) : u, zero(T), T(n - 1))
     # Nonnegative and bounded by an existing array: truncation is floor, without a
     # checked conversion's exception path in device code.
     i = min(unsafe_trunc(Int, node), n - 2)
@@ -655,19 +660,6 @@ function _resolve_constraints(
         Base.setindex(constraints.lower, lo, 3), Base.setindex(constraints.upper, hi, 3),
         constraints.max_step
     )
-end
-
-function initialize_parameters(
-        roi::AbstractMatrix{T},
-        ::SplinePSFModel
-    ) where {T}
-    box_size = size(roi, 1)
-    bg = minimum(roi)
-    signal = roi .- bg
-    total = max(sum(signal), one(T))
-    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / total
-    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / total
-    return SVector{5, Float32}(Float32(x), Float32(y), 0.0f0, Float32(total), Float32(bg))
 end
 
 Base.show(io::IO, m::SplinePSFModel) = print(
