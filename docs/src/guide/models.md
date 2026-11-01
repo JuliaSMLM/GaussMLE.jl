@@ -185,13 +185,13 @@ used. Pixel-size rescaling preserves this plane and recomputes the appropriate s
 A non-finite or non-positive reference sum for a plain callable throws `ArgumentError`.
 Point samples are clipped at zero before quadrature for both conventions.
 
-Fitting starts at the intensity centroid for x and y. z, N and background come from a
-least-squares scan: at each z on a grid with spacing at most 0.1 µm the data are fitted by
-`N f(z) + bg` in closed form (`f` the unit-photon model image), and the z with the smallest
-residual is the start. The default constraints cap x and y steps at 1 pixel and z steps at
-0.05 µm; photon and background steps are not capped (photons ≥ 1, background ≥ 0.01), so
-bright beads converge in the default iterations: a step that lowers the likelihood is
-halved toward the last accepted point, so no cap is needed. `fit` on a bare `Array` uses this model's
+Fitting starts at the intensity centroid for x and y, the edge-pixel mean for the
+background, the positive in-box sum above it for N, and the z of a Poisson likelihood scan
+at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt on the full
+Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
+likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
+default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
+background steps are not capped (photons ≥ 1, background ≥ 0.01). `fit` on a bare `Array` uses this model's
 own `pixel_size`, not the 0.1 µm of the Gaussian models.
 
 **Use this model when:**

@@ -291,25 +291,139 @@ end
     return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
-# Log-likelihood of one pixel for either camera (same functions as the final pass)
-@inline function _dispatch_loglik(
+# Objective the Levenberg-Marquardt loop climbs, one pixel, either camera. Ideal: the Poisson
+# log-likelihood without constants. sCMOS: the Poisson-shifted likelihood
+# (d + v) log(mu + v) - (mu + v), v the read-noise variance at the pixel's camera position;
+# its gradient (d - mu) / (mu + v) and Fisher 1 / (mu + v) are what the update uses.
+@inline function _fit_objective(
         ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
-    return compute_log_likelihood(data, model, IdealCameraInternal())
+    return data * log(model) - model
 end
 
-@inline function _dispatch_loglik(
+@inline function _fit_objective(
         ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
-    return compute_log_likelihood(
-        data, model, variance_map, corner_y + i - 1, corner_x + j - 1
-    )
+    v = variance_map[corner_y + i - 1, corner_x + j - 1]
+    return (data + v) * log(model + v) - (model + v)
 end
 
-# Compile-time trait: a model whose Newton loop only accepts steps that do not lower the
-# log-likelihood (a rejected step is halved toward the last accepted point). The Gaussian
-# models keep the plain loop.
-_monotone_steps(::PSFModel) = false
+# Variance of the fit objective's gradient and Fisher terms: model (Ideal), model + v (sCMOS)
+@inline function _fit_variance(
+        ::Val{false}, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return model
+end
+
+@inline function _fit_variance(
+        ::Val{true}, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return model + variance_map[corner_y + i - 1, corner_x + j - 1]
+end
+
+# Compile-time trait: a model fitted by Levenberg-Marquardt on the full Fisher matrix
+# (_lm_fit) instead of the diagonal Newton loop. The Gaussian models keep the diagonal loop.
+_lm_steps(::PSFModel) = false
+
+# Solve L L' x = b for the Cholesky factor L (lower triangle) of
+# static_cholesky_decomposition!
+@inline function static_cholesky_solve!(
+        x::MVector{N, T}, L::MMatrix{N, N, T}, b::MVector{N, T}
+    ) where {N, T}
+    @inbounds for i in 1:N
+        s = b[i]
+        for k in 1:(i - 1)
+            s -= L[i, k] * x[k]
+        end
+        x[i] = s / L[i, i]
+    end
+    return @inbounds for i in N:-1:1
+        s = x[i]
+        for k in (i + 1):N
+            s -= L[k, i] * x[k]
+        end
+        x[i] = s / L[i, i]
+    end
+end
+
+# Levenberg-Marquardt fit of one ROI on the full Fisher matrix, from the start θ0. Each
+# iteration makes one pixel pass at the trial point: the objective, the gradient
+# g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var. A trial that does not lower
+# the objective is accepted (g and F stored, lambda / 10); otherwise lambda * 10. The next
+# trial is theta_acc + delta with (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped
+# and bounded. Returns the last accepted point. Registers only: no allocation, no throw.
+@inline function _lm_fit(
+        roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0
+    ) where {N, T}
+    θ = MVector{N, T}(undef)
+    @inbounds for k in 1:N
+        θ[k] = clamp(θ0[k], constraints.lower[k], constraints.upper[k])
+    end
+    θ_acc = MVector{N, T}(θ)
+    g_acc = MVector{N, T}(undef)
+    F_acc = MMatrix{N, N, T}(undef)
+    zero_array!(g_acc)
+    zero_array!(F_acc)
+    obj_acc = zero(T)
+    λ = T(1.0e-3)
+    g = MVector{N, T}(undef)
+    F = MMatrix{N, N, T}(undef)
+    A = MMatrix{N, N, T}(undef)
+    Δ = MVector{N, T}(undef)
+
+    for iter in 1:iterations
+        zero_array!(g)
+        zero_array!(F)
+        obj = zero(T)
+        @inbounds for j in 1:box_size, i in 1:box_size
+            model, dudt, _ = compute_pixel_derivatives(i, j, SVector{N, T}(θ), psf_model)
+            d = roi[i, j]
+            var = _fit_variance(camera_model, model, variance_map, corner_x, corner_y, i, j)
+            obj += _fit_objective(
+                camera_model, d, model, variance_map, corner_x, corner_y, i, j
+            )
+            r = (d - model) / var
+            w = one(T) / var
+            for k in 1:N
+                g[k] += dudt[k] * r
+                for l in 1:N
+                    F[k, l] += dudt[k] * dudt[l] * w
+                end
+            end
+        end
+
+        if iter == 1 || obj >= obj_acc
+            @inbounds for k in 1:N
+                θ_acc[k] = θ[k]
+                g_acc[k] = g[k]
+                for l in 1:N
+                    F_acc[k, l] = F[k, l]
+                end
+            end
+            obj_acc = obj
+            if iter > 1
+                λ = max(λ / 10, T(1.0e-7))
+            end
+        else
+            λ = min(λ * 10, T(1.0e7))
+        end
+
+        @inbounds for k in 1:N, l in 1:N
+            A[k, l] = F_acc[k, l] + (k == l ? λ * F_acc[k, k] : zero(T))
+        end
+        if static_cholesky_decomposition!(A)
+            static_cholesky_solve!(Δ, A, g_acc)
+        else
+            zero_array!(Δ)
+        end
+        @inbounds for k in 1:N
+            step = clamp(Δ[k], -constraints.max_step[k], constraints.max_step[k])
+            θ[k] = clamp(θ_acc[k] + step, constraints.lower[k], constraints.upper[k])
+        end
+    end
+    return θ_acc
+end
 
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
@@ -341,22 +455,21 @@ _monotone_steps(::PSFModel) = false
     θ = simple_initialize(roi, box_size, psf_model)
     ∇L = MVector{N, T}(undef)
     H_diag = MVector{N, T}(undef)  # Only diagonal elements for Newton-Raphson
-    monotone = _monotone_steps(psf_model)
-    if monotone
-        # The last accepted point must be feasible, so start inside the bounds
-        @inbounds for k in 1:N
-            θ[k] = clamp(θ[k], constraints.lower[k], constraints.upper[k])
-        end
+    newton_iterations = iterations
+    if _lm_steps(psf_model)
+        # Levenberg-Marquardt on the full Fisher matrix; the Newton loop below then runs 0 times
+        θ = _lm_fit(
+            roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+            constraints, iterations, θ
+        )
+        newton_iterations = 0
     end
-    θ_acc = MVector{N, T}(θ)  # last accepted point (monotone loops only)
-    ll_acc = zero(T)
 
     # Newton-Raphson iterations with scalar updates
-    for iter in 1:iterations
+    for iter in 1:newton_iterations
         # Zero out gradient and diagonal Hessian
         zero_array!(∇L)
         zero_array!(H_diag)
-        ll_cur = zero(T)
 
         # Compute derivatives over all pixels
         @inbounds for j in 1:box_size, i in 1:box_size
@@ -376,23 +489,6 @@ _monotone_steps(::PSFModel) = false
                 ∇L[k] += dudt[k] * cf
                 H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
             end
-            if monotone
-                ll_cur += _dispatch_loglik(
-                    camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
-                )
-            end
-        end
-
-        if monotone
-            if iter > 1 && ll_cur < ll_acc - 1.0f-6 * abs(ll_acc)
-                # Reject: halve toward the last accepted point; the iteration is consumed
-                @inbounds for k in 1:N
-                    θ[k] = (θ_acc[k] + θ[k]) / 2
-                end
-                continue
-            end
-            θ_acc = MVector{N, T}(θ)
-            ll_acc = ll_cur
         end
 
         # Scalar Newton-Raphson updates with constraints
@@ -409,22 +505,6 @@ _monotone_steps(::PSFModel) = false
         θ_new = apply_constraints!(SVector{N, T}(θ), SVector{N, T}(Δθ), constraints)
         @inbounds for i in 1:N
             θ[i] = θ_new[i]
-        end
-    end
-
-    if monotone && iterations >= 1
-        # The last step may have lowered the likelihood: report the last accepted point
-        ll_end = zero(T)
-        @inbounds for j in 1:box_size, i in 1:box_size
-            model_end = compute_pixel_derivatives(i, j, SVector{N, T}(θ), psf_model)[1]
-            ll_end += _dispatch_loglik(
-                camera_model, roi[i, j], model_end, variance_map, corner_x, corner_y, i, j
-            )
-        end
-        if ll_end < ll_acc - 1.0f-6 * abs(ll_acc)
-            @inbounds for k in 1:N
-                θ[k] = θ_acc[k]
-            end
         end
     end
 
