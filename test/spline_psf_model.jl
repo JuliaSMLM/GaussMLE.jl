@@ -54,7 +54,7 @@ end
         gpsf = model()
         @test gpsf isa SplinePSFModel{Float32}
         @test gpsf isa GaussMLE.PSFModel{5, Float32}
-        @test gpsf.spline_psf === spline  # used directly, no re-tabulation
+        @test gpsf.spline_psf === spline  # retained as the point PSF for rebuilds
         @test gpsf.pixel_size ≈ 0.1f0
         @test gpsf.z_range == (-0.5f0, 0.5f0)
         @test gpsf.px_scale > 0
@@ -309,6 +309,34 @@ end
         end
     end
 
+    @testset "fitted photons are total photons at every z" begin
+        px, box = 0.1, 13
+        edges = collect(0:box) .* px
+        truth = (
+            (7.2, 6.7, -0.4), (6.6, 7.3, -0.2), (7.1, 7.4, 0.0),
+            (7.35, 6.8, 0.2), (6.8, 7.15, 0.4),
+        )
+        n = length(truth)
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth)
+            emitters = [Emitter3D((x - 0.5) * px, (y - 0.5) * px, z, 2000.0)]
+            data[:, :, k] .= MicroscopePSFs.integrate_pixels(
+                astig_spline, edges, edges, emitters; sampling = 8
+            ) .+ 10
+        end
+        roi_batch = ROIBatch(
+            data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)
+        )
+        smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu, iterations = 40)
+        for (k, (x, y, z)) in enumerate(truth)
+            e = smld.emitters[k]
+            @test abs(e.photons / 2000 - 1) <= 0.005
+            @test e.z ≈ z atol = 0.003
+            @test e.x ≈ (x - 0.5) * px atol = 0.001
+            @test e.y ≈ (y - 0.5) * px atol = 0.001
+        end
+    end
+
     @testset "expected pixel counts are the pixel integral of the point PSF" begin
         px = 0.1
         xr, yr, zr = -1.2:0.02:1.2, -1.2:0.02:1.2, -0.6:0.05:0.6
@@ -316,11 +344,15 @@ end
         σy(z) = 0.13 * sqrt(1 + ((z + 0.25) / 0.4)^2)
         # Tabulate the point density in [y, x, z] order, without pixel integration.
         stack = [
-            px^2 / (2π * σx(z) * σy(z)) *
+            1 / (2π * σx(z) * σy(z)) *
                 exp(-dx^2 / (2 * σx(z)^2) - dy^2 / (2 * σy(z)^2))
                 for dy in yr, dx in xr, z in zr
         ]
         m = SplinePSFModel(SplinePSF(stack, xr, yr, zr); pixel_size = px)
+        # A raw bead stack or an incorrectly scaled density must not redefine N.
+        @test_throws ArgumentError SplinePSFModel(
+            SplinePSF(100 .* stack, xr, yr, zr); pixel_size = px
+        )
 
         # The Gaussian's erf integrals provide independent, noise-free pixel counts.
         truth_model = GaussMLE.to_pixel_units(
@@ -331,6 +363,40 @@ end
             (7.2, 6.7, -0.4), (6.6, 7.3, -0.3), (7.1, 7.4, 0.0),
             (7.35, 6.8, 0.3), (6.8, 7.15, 0.4),
         )
+        n = length(truth)
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth)
+            data[:, :, k] .= roi_at(truth_model, z; x, y, box, photons = 2000)
+        end
+        roi_batch = ROIBatch(
+            data, ones(Int32, n), ones(Int32, n), Int32.(1:n), IdealCamera(64, 64, px)
+        )
+        smld, _ = fit(roi_batch; psf_model = m, backend = :cpu, iterations = 40)
+        for (k, (x, y, z)) in enumerate(truth)
+            e = smld.emitters[k]
+            @test e.x ≈ (x - 0.5) * px atol = 0.001
+            @test e.y ≈ (y - 0.5) * px atol = 0.001
+            @test e.z ≈ z atol = 0.002
+            @test abs(e.photons / 2000 - 1) <= 0.002
+        end
+    end
+
+    @testset "pixel integration is rebuilt for the camera pixel size" begin
+        px = 0.108
+        xr, yr, zr = -1.2:0.02:1.2, -1.2:0.02:1.2, -0.6:0.05:0.6
+        σx(z) = 0.13 * sqrt(1 + ((z - 0.25) / 0.4)^2)
+        σy(z) = 0.13 * sqrt(1 + ((z + 0.25) / 0.4)^2)
+        stack = [
+            1 / (2π * σx(z) * σy(z)) *
+                exp(-dx^2 / (2 * σx(z)^2) - dy^2 / (2 * σy(z)^2))
+                for dy in yr, dx in xr, z in zr
+        ]
+        m = SplinePSFModel(SplinePSF(stack, xr, yr, zr); pixel_size = 0.1)
+        truth_model = GaussMLE.to_pixel_units(
+            AstigmaticXYZNB{Float32}(0.13, 0.13, 0, 0, 0, 0, 0.25, 0.4), px
+        )
+        box = 13
+        truth = ((7.2, 6.7, -0.4), (6.6, 7.3, 0.0), (7.35, 6.8, 0.4))
         n = length(truth)
         data = zeros(Float32, box, box, n)
         for (k, (x, y, z)) in enumerate(truth)

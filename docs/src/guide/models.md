@@ -139,8 +139,9 @@ The PSF width varies with z according to:
 ### SplinePSFModel - Tabulated 3D PSF
 
 A 3D model (x, y, z, N, bg) backed by a tabulated PSF: a measured or learned PSF, such as a
-MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The PSF is sampled at pixel centres,
-z is in microns throughout, and the model runs on the CPU only.
+MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The callable supplies the point
+PSF; GaussMLE integrates it over each camera pixel. z is in microns throughout, and the model
+runs on the CPU only.
 
 ```julia
 using GaussMLE, MicroscopePSFs
@@ -153,11 +154,32 @@ smld, info = fit(batch; psf_model = model)     # runs on the CPU
 Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
 `SplinePSFModel(f; pixel_size, z_range)`. The camera's pixels must be square.
 
+Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
+quadrature with five sub-intervals per lateral axis. The lateral table spacing is `pixel_size / 5`,
+extending to at least `±(lateral_range + pixel_size)`; axial nodes span the inward-rounded
+`z_range` with spacing at most 0.02 µm. A natural cubic B-spline interpolates these averages,
+with zero second derivative at each axis endpoint. Fitting uses the table, with zero outside
+its lateral range and z clamped to `z_range`. A different camera pixel size rebuilds the table
+and signal scale once; an unchanged pixel size reuses the model.
+
+The input must describe a point PSF: an already pixel-integrated callable would be integrated
+twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` before constructing the model.
+
 N is the signal scale in photons for IdealCamera or electrons for sCMOS; background uses
-the corresponding units per pixel. One normalization scale is computed at the valid plane
-nearest z = 0 and reused across z, so total-signal interpretation requires consistent axial
-PSF normalization. A non-finite or non-positive reference sum throws `ArgumentError`.
-For MicroscopePSFs, the reference plane uses the spline's own valid range.
+the corresponding units per pixel. For a `MicroscopePSFs.AbstractPSF`, the point PSF is a
+normalized photon density in µm^-2: N is total photons (or total electrons for sCMOS), and
+the pixel averages are multiplied by the pixel area without renormalization. A stack used
+to construct a `SplinePSF` must already have this density normalization. Construction throws
+`ArgumentError` if the pixel-integrated sum over the `lateral_range` patch at the reference
+plane lies outside `[0.5, 1.05]`, indicating an unnormalized density such as a raw bead image.
+
+A plain callable has arbitrary scale and is normalized on the reference plane, so N is the
+photons within the `lateral_range` patch at `z_ref` (electrons for sCMOS). Its energy must be
+the same at every z for that signal interpretation to hold across z. The reference plane is
+nearest z = 0 within the callable's valid range; for a `SplinePSF`, its own valid range is
+used. Pixel-size rescaling preserves this plane and recomputes the appropriate scale.
+A non-finite or non-positive reference sum for a plain callable throws `ArgumentError`.
+Point samples are clipped at zero before quadrature for both conventions.
 
 **Use this model when:**
 - You have a calibrated PSF that a Gaussian does not describe well
@@ -170,7 +192,7 @@ For MicroscopePSFs, the reference plane uses the spline's own valid range.
 | Parameters | 4 | 5 | 6 | 5 | 5 |
 | PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape |
 | Dimensions | 2D | 2D | 2D | 3D | 3D |
-| Speed | Fastest | Medium | Slowest | Medium | Depends on callable |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup |
 | Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
 | Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU only |
 
@@ -304,11 +326,25 @@ Where:
 - For **GaussianXYNBSXSY**: sigma_x, sigma_y (independently fitted)
 - For **AstigmaticXYZNB**: sigma_x(z), sigma_y(z) from calibration curve
 
-`SplinePSFModel` instead samples its callable `f` at pixel centres, with camera pixel size p:
+For `SplinePSFModel`, let `f` be the point PSF in micron coordinates and p the camera pixel size.
+The table interpolates the pixel average:
+
+```math
+A_p(d_x,d_y,z) = \frac{1}{p^2}
+\int_{d_y-p/2}^{d_y+p/2} \int_{d_x-p/2}^{d_x+p/2}
+\max(0, f(u,v,z))\,du\,dv.
+```
+
+With `table` the natural cubic interpolant of these averages, the expected count is:
 
 ```julia
-μ = bg + N * px_scale * max(0, f((j-x)*p, (i-y)*p, clamp(z, z_range...)))
+μ = bg + N * px_scale * max(0, table((j-x)*p, (i-y)*p, clamp(z, z_range...)))
 ```
+
+For a `MicroscopePSFs.AbstractPSF` photon density, `px_scale = p^2`, so the signal is N times
+the pixel integral. For a plain callable, `px_scale` is the reciprocal sum of pixel averages
+on the reference patch at `z_ref`, so N counts the photons in that patch on the reference
+plane. The final clipping removes negative interpolation overshoot.
 
 ## Model Validation
 
