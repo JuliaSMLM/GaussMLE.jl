@@ -595,7 +595,6 @@ end
 
 # Models can specialize camera conversion without changing the ROIBatch fit methods.
 function _model_for_camera(model::PSFModel, camera)
-    _check_pixel_geometry(model, camera)
     pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     return to_pixel_units(model, pixel_size)
 end
