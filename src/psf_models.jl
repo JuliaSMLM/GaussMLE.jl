@@ -171,9 +171,6 @@ _psf_table_bytes(::PSFModel) = 0
 _has_axial_position(::Type{<:PSFModel}) = false
 _has_axial_position(::Type{<:AstigmaticXYZNB}) = true
 
-# Optional geometry checks used by the default camera-to-model conversion.
-_check_pixel_geometry(::PSFModel, camera) = nothing
-
 # PSF evaluation interface
 
 # Fixed sigma model
