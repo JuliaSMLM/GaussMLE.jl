@@ -19,6 +19,14 @@ _reclaim_gpu(::CUDAGPU) = CUDA.reclaim()
 _active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
 _release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
 
+# Whether `e` is a resource error that waiting can clear (out of memory, a context that
+# cannot be created); the retry loop rethrows or falls back to the CPU for any other.
+function _is_resource_error(::CUDAGPU, e)
+    e isa CUDA.OutOfGPUMemoryError && return true
+    return e isa CUDA.CuError &&
+        e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE)
+end
+
 function _poll_gpu(
         ::CUDAGPU, backend::Symbol, required_bytes::Integer; timeout, on_wait = nothing,
     )
@@ -38,21 +46,6 @@ function _gpu_vendor()
     end
     return nothing
 end
-
-# Smart device selection
-function auto_device()
-    if CUDA.functional()
-        @info "CUDA GPU detected, using GPU acceleration"
-        return GPU()
-    else
-        @info "No CUDA GPU available, using CPU"
-        return CPU()
-    end
-end
-
-# Backend mapping for KernelAbstractions
-backend(::CPU) = KernelAbstractions.CPU()
-backend(::GPU) = CUDABackend()
 
 """
     _nvml_device(device_idx::Integer)
@@ -124,55 +117,6 @@ function _gpu_contended(
     return util.compute > 0.9
 end
 
-# Multi-GPU support
-"""
-    find_best_gpu()
-
-Find the GPU with most free memory and switch to it.
-Returns the 0-based CUDA device ordinal, which honors `CUDA_VISIBLE_DEVICES`.
-
-For single-GPU systems, simply returns 0.
-"""
-function find_best_gpu()
-    !CUDA.functional() && return 0
-
-    n_devices = length(CUDA.devices())
-    n_devices == 1 && return 0
-
-    # Prefer NVML to avoid creating CUDA contexts under contention.
-    best_device = 0
-    max_free = 0
-
-    for i in 0:(n_devices - 1)
-        free, _ = _gpu_free_memory(i)
-        if free > max_free
-            max_free = free
-            best_device = i
-        end
-    end
-
-    # Activate the winning device after querying free memory.
-    CUDA.device!(best_device)
-
-    if n_devices > 1
-        @info "Selected GPU $best_device with $(Base.format_bytes(max_free)) free memory"
-    end
-
-    return best_device
-end
-
-# Allow explicit device selection with fallback (legacy API)
-function select_device(device::Union{ComputeDevice, Nothing} = nothing)
-    if isnothing(device)
-        return auto_device()
-    elseif device isa GPU && !CUDA.functional()
-        @warn "GPU requested but not available, falling back to CPU"
-        return CPU()
-    else
-        return device
-    end
-end
-
 """
     _release_gpu_context(device_idx)
 
@@ -192,52 +136,6 @@ function _release_gpu_context(device_idx::Integer)
     end
     # NOTE: Do NOT call CUDA.reclaim() here - it requires an active context
     # and will either hang or re-create the context we just released.
-end
-
-# GPU memory wait utilities
-"""
-    wait_for_gpu_memory(required_bytes; timeout=30.0, poll=0.5, on_wait=nothing)
-
-Wait until GPU has sufficient free memory. Returns true if memory became available,
-false if timeout reached.
-
-# Arguments
-- `required_bytes`: Minimum bytes needed (will wait for 1.5x this amount as safety margin)
-- `timeout`: Maximum seconds to wait (default 30.0)
-- `poll`: Polling interval in seconds (default 0.5)
-- `on_wait`: Optional callback `(elapsed, available, required) -> nothing` for progress
-  feedback
-"""
-function wait_for_gpu_memory(
-        required_bytes::Integer;
-        timeout::Float64 = 30.0,
-        poll::Float64 = 0.5,
-        on_wait = nothing
-    )
-
-    !CUDA.functional() && return false
-
-    deadline = time() + timeout
-    start = time()
-
-    while time() < deadline
-        CUDA.reclaim()  # Free cached memory
-        available = CUDA.free_memory()
-
-        # 1.5x buffer for fragmentation safety
-        if available > required_bytes * 1.5
-            return true
-        end
-
-        if on_wait !== nothing
-            on_wait(time() - start, available, required_bytes)
-        end
-
-        # Poll with jitter to avoid thundering herd
-        sleep(poll * (1.0 + 0.2 * rand()))
-    end
-
-    return false
 end
 
 """
@@ -327,114 +225,3 @@ function _poll_gpu(backend::Symbol, required_bytes::Integer; timeout, on_wait = 
         return -1, false, true
     end
 end
-
-"""
-    select_backend(backend::Symbol, required_bytes; kwargs...)
-
-Select compute backend with NVML-based contention detection and GPU memory wait.
-
-Memory checks prefer NVML without CUDA context creation, falling back to CUDA when
-NVML memory queries are unsupported. In `:auto` mode, polling errors warn and return
-`CPU()`; explicit `:gpu` requests propagate them. A runtime try/catch in
-`_run_mle_kernel!` provides defense in depth.
-
-# Arguments
-- `backend`: `:cpu`, `:gpu`, or `:auto`
-- `required_bytes`: Estimated GPU memory needed for operation
-
-# Keyword Arguments
-- `auto_timeout=300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
-- `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
-- `on_wait=nothing`: Callback `(elapsed, available, required) -> nothing` for progress
-
-# Returns
-- `CPU()` or `GPU()` device instance
-
-# Semantics
-- `:cpu` - Always CPU, no waiting
-- `:gpu` - Explicit GPU, NVML poll up to gpu_timeout, error if unavailable
-- `:auto` - NVML poll up to auto_timeout, fall back to CPU with warning
-"""
-function select_backend(
-        backend::Symbol, required_bytes::Integer;
-        auto_timeout::Float64 = 300.0,
-        gpu_timeout::Float64 = Inf,
-        on_wait = nothing
-    )
-
-    backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
-
-    if backend == :cpu
-        return CPU()
-
-    elseif backend == :gpu
-        if !CUDA.functional()
-            error("GPU requested but CUDA not functional")
-        end
-        # NVML poll: scan all GPUs, wait for first available
-        # Retry loop handles TOCTOU race: NVML check passes but another process
-        # grabs the GPU between check and CUDA.device!() context creation.
-        # On catch, release the CUDA context to avoid holding zombie memory
-        # reservations that deadlock other processes polling for free memory.
-        deadline = time() + gpu_timeout
-        while true
-            device_idx, available, _ = _poll_gpu(
-                backend, required_bytes;
-                timeout = max(0.0, deadline - time()), on_wait = on_wait
-            )
-            if !available
-                error("No GPU with sufficient memory after $(gpu_timeout)s")
-            end
-            try
-                CUDA.device!(device_idx)
-                return GPU()
-            catch e
-                # Release context to free reserved memory before retrying
-                _release_gpu_context(device_idx)
-                if time() >= deadline
-                    rethrow()
-                end
-                @warn "GPU $device_idx context creation failed (contention race), \
-                    retrying" exception = e
-            end
-        end
-
-    else  # :auto
-        if !CUDA.functional()
-            return CPU()
-        end
-        # Same retry pattern as :gpu but falls back to CPU on timeout
-        # instead of erroring. On TOCTOU catch, release context and re-poll
-        # with remaining timeout - GPU contention spikes are typically short.
-        deadline = time() + auto_timeout
-        while true
-            device_idx, available, failed = _poll_gpu(
-                backend, required_bytes;
-                timeout = max(0.0, deadline - time()), on_wait = on_wait
-            )
-            failed && return CPU()
-            if !available
-                @warn "No GPU available after $(auto_timeout)s, using CPU"
-                return CPU()
-            end
-            try
-                CUDA.device!(device_idx)
-                return GPU()
-            catch e
-                _release_gpu_context(device_idx)
-                if time() >= deadline
-                    @warn "GPU context creation failed and timeout reached, using \
-                        CPU" exception = e
-                    return CPU()
-                end
-                @warn "GPU $device_idx context creation failed (contention race), \
-                    retrying" exception = e
-            end
-        end
-    end
-end
-
-# Default on_wait callback for user feedback
-const DEFAULT_ON_WAIT = (elapsed, available, required) ->
-@info "Waiting for GPU memory..." elapsed = round(elapsed, digits = 1) available =
-    Base.format_bytes(available) required = Base.format_bytes(required)

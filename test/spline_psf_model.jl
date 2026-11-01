@@ -1,76 +1,13 @@
 # SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
 # methods, backend dispatch, rectangular pixels, Array pixel size, bright emitters, and
-# that fits of both cameras (including negative ideal-camera pixels) end at a maximum of
-# the fit objective. The GPU group checks :auto on a GPU host; the Long group checks bias
-# and CRLB.
+# that IdealCamera fits (including negative pixels, and truths beyond a z_range end) end at
+# a maximum of the fit objective. The sCMOS spline kernel costs about 15 s to compile on
+# Julia 1.11, so its tests are in the Long group (test/long/spline_psf_scmos.jl), as are
+# bias and CRLB; the GPU group checks :auto on a GPU host.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Random
-using Distributions: Poisson
+using SMLMSim: poisson_noise
 
-# Share one Float32-only callable type to cover dispatch and limit Core compilation.
-struct SplineTestPSF
-    linear::Bool
-    x_shift::Float64
-    y_shift::Float64
-    z_min::Float64
-    z_max::Float64
-end
-
-function (psf::SplineTestPSF)(x::Float32, y::Float32, z::Float32)
-    psf.z_min <= z <= psf.z_max || error("evaluated outside the callable's valid z range")
-    dx, dy = x - psf.x_shift * z, y - psf.y_shift * z
-    if psf.linear
-        # An identifiable change that is linear in z and positive over the full grid.
-        return exp(-(dx^2 + dy^2) / (2 * 0.13^2)) *
-            (1 + z * tanh((dx^2 - dy^2) / 0.02))
-    end
-    return exp(-dx^2 / (2 * (0.13 + 0.1z)^2) - dy^2 / (2 * (0.13 - 0.1z)^2))
-end
-
-const astig_shape = SplineTestPSF(false, 0.0, 0.0, -Inf, Inf)
-const linear_shape = SplineTestPSF(true, 0.0, 0.0, -Inf, Inf)
-
-function roi_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
-    return [
-        GaussMLE.evaluate_psf(m, i, j, SVector{5, Float32}(x, y, z, photons, 10))
-            for i in 1:box, j in 1:box
-    ]
-end
-
-function batch_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
-    roi = roi_at(m, z; x, y, box, photons)
-    data = reshape(roi, size(roi)..., 1)
-    return ROIBatch(data, Int32[1], Int32[1], Int32[1], IdealCamera(64, 64, m.pixel_size))
-end
-
-# Each fitted ROI ends at a maximum of the objective the fit climbs, (d + v) log(mu + v) -
-# (mu + v) with v(k, i, j) the read-noise variance (zero: Poisson). The check is a
-# coordinatewise perturbation; data is (box, box, n) and corners are camera positions.
-function check_objective_maximum(smld, model, data, v, x_corners, y_corners, px)
-    box = size(data, 1)
-    function objective(k, θ)
-        s = 0.0
-        for j in 1:box, i in 1:box
-            μ = Float64(GaussMLE.evaluate_psf(model, i, j, SVector{5, Float32}(θ)))
-            vk = Float64(v(k, i, j))
-            s += (data[i, j, k] + vk) * log(μ + vk) - (μ + vk)
-        end
-        return s
-    end
-    for (k, e) in enumerate(smld.emitters)
-        θ = [
-            e.x / px + 1.5 - x_corners[k], e.y / px + 1.5 - y_corners[k], e.z,
-            e.photons, e.bg,
-        ]
-        scale = [1.0e-3, 1.0e-3, 1.0e-4, 1.0e-3 * θ[4], 1.0e-3 * θ[5]]
-        base = objective(k, θ)
-        for p in 1:5, sgn in (-1, 1)
-            moved = copy(θ)
-            moved[p] += sgn * scale[p]
-            @test objective(k, moved) - base <= 1.0e-3
-        end
-    end
-    return nothing
-end
+include(joinpath(@__DIR__, "long", "utils", "spline_psf_helpers.jl"))
 
 @testset "SplinePSFModel" begin
 
@@ -150,39 +87,6 @@ end
                     no_sampling; pixel_size, z_range = (-0.5, 0.5)
                 )
             end
-        end
-    end
-
-    @testset "sCMOS fit recovers microns and electrons" begin
-        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
-        box, sensor_size = 9, 32
-        truth = ((5.2, 4.7, 0.2), (4.6, 5.3, -0.2))
-        x_corners, y_corners = Int32[4, 19], Int32[16, 6]
-        readnoise = [
-            sqrt(1.0f0 + 0.5f0 * (i - 1) + 0.05f0 * (j - 1))
-                for i in 1:sensor_size, j in 1:sensor_size
-        ]
-        offset, gain = 100.0f0, 0.5f0
-        camera = SCMOSCamera(
-            sensor_size, sensor_size, 0.1f0, readnoise;
-            offset, gain, qe = 1.0f0
-        )
-        data = zeros(Float32, box, box, length(truth))
-        for (k, (x, y, z)) in enumerate(truth)
-            electrons = roi_at(m, z; x, y, box, photons = 2000)
-            data[:, :, k] .= electrons ./ gain .+ offset  # Noise-free raw ADU
-        end
-        roi_batch = ROIBatch(data, x_corners, y_corners, Int32[1, 2], camera)
-        smld, info = fit(roi_batch; psf_model = m, backend = :cpu, iterations = 40)
-        @test info.backend == :cpu
-        @test length(smld.emitters) == length(truth)
-        for (k, (e, (x, y, z))) in enumerate(zip(smld.emitters, truth))
-            @test e.x ≈ (x_corners[k] + x - 1.5) * 0.1 atol = 0.001
-            @test e.y ≈ (y_corners[k] + y - 1.5) * 0.1 atol = 0.001
-            @test e.z ≈ z atol = 0.001
-            @test e.photons ≈ 2000 rtol = 0.01  # Electrons, before ADU conversion
-            @test e.bg ≈ 10 rtol = 0.01
-            @test all(isfinite, (e.σ_x, e.σ_y, e.σ_z, e.σ_photons, e.σ_bg))
         end
     end
 
@@ -338,6 +242,10 @@ end
         smld, info = fit(batch(IdealCamera(64, 64, 0.1)); psf_model = gpsf, backend = :cpu)
         @test info.backend == :cpu
         @test length(smld.emitters) == n
+        # The memory estimate counts the table that the GPU poll counts.
+        table_bytes = 4 * length(gpsf.pixel_psf.coefficients)
+        @test info.memory_per_batch ==
+            GaussMLE.estimate_batch_memory(n, box, 5) + table_bytes
         @test smld.emitters[1] isa Emitter3DFitGaussMLE{Float32}
         for (e, (x, y, z)) in zip(smld.emitters, truth)
             @test e.x ≈ (x - 0.5) * 0.1 atol = 0.005
@@ -471,10 +379,8 @@ end
 
     @testset "non-square pixels" begin
         rect = (0.127, 0.116)  # PSFLearning's default config
-        for camera in (IdealCamera(64, 64, rect), SCMOSCamera(64, 64, rect, 1.6))
-            smld, _ = fit(batch(camera); psf_model = gpsf, backend = :cpu)
-            @test length(smld.emitters) == n
-        end
+        smld, _ = fit(batch(IdealCamera(64, 64, rect)); psf_model = gpsf, backend = :cpu)
+        @test length(smld.emitters) == n
         # Gaussian models keep their current behaviour
         smld, _ = fit(
             batch(IdealCamera(64, 64, rect));
@@ -564,51 +470,48 @@ end
         end
     end
 
-    @testset "sCMOS fits end at a maximum of the fit objective" begin
-        px, box, sensor_size = 0.1, 11, 40
-        edges = collect(0:box) .* px
-        truth = ((6.2, 5.8, -0.3), (5.7, 6.4, 0.2), (6.0, 6.0, 0.35), (6.4, 5.6, -0.1))
-        n = length(truth)
-        x_corners, y_corners = Int32[3, 25, 6, 28], Int32[5, 8, 24, 27]
-        readnoise = [
-            sqrt(1.0f0 + 0.02f0 * (i - 1) + 0.05f0 * (j - 1))
-                for i in 1:sensor_size, j in 1:sensor_size
-        ]
-        camera = SCMOSCamera(
-            sensor_size, sensor_size, Float32(px), readnoise;
-            offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
-        )
-        rng = MersenneTwister(7)
-        data = zeros(Float32, box, box, n)
-        for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
-            μ = GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(x, y, z, 2000, 10))
-            data[i, j, k] = rand(rng, Poisson(Float64(μ))) +
-                readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1] * randn(rng)
-        end
-        roi_batch = ROIBatch(data, x_corners, y_corners, Int32.(1:n), camera)
-        smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu)
-
-        v(k, i, j) = readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1]^2
-        check_objective_maximum(smld, gpsf, data, v, x_corners, y_corners, px)
-    end
-
     @testset "IdealCamera fits with negative pixels end at a maximum of the objective" begin
         px, box = 0.1, 11
         truth = ((6.2, 5.8, -0.3), (5.7, 6.4, 0.2), (6.0, 6.0, 0.35), (6.4, 5.6, -0.1))
         n = length(truth)
-        rng = MersenneTwister(11)
+        Random.seed!(11)
         # Counts at background 6 with 4 subtracted (an offset-subtracted camera): the
         # background is 2 and over a tenth of the pixels are negative.
-        data = zeros(Float32, box, box, n)
+        mu = zeros(Float32, box, box, n)
         for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
-            μ = GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(x, y, z, 1000, 6))
-            data[i, j, k] = rand(rng, Poisson(Float64(μ))) - 4
+            mu[i, j, k] = GaussMLE.evaluate_psf(
+                gpsf, i, j, SVector{5, Float32}(x, y, z, 1000, 6)
+            )
         end
+        data = Float32.(poisson_noise(mu)) .- 4
         @test count(<(0), data) > 0.05 * length(data)
         corners = ones(Int32, n)
         roi_batch = ROIBatch(data, corners, corners, Int32.(1:n), IdealCamera(64, 64, px))
         smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu)
         check_objective_maximum(smld, gpsf, data, (k, i, j) -> 0, corners, corners, px)
+    end
+
+    @testset "IdealCamera fits beyond a z_range end finish on the bound" begin
+        check_fits_beyond_z_range(astig_spline, gpsf, :ideal)
+    end
+
+    @testset "a NaN pixel stays in its own ROI and cannot index out of the table" begin
+        camera = IdealCamera(64, 64, 0.1)
+        config = GaussMLEConfig(psf_model = gpsf, backend = :cpu)
+        poisoned = copy(data)
+        poisoned[3, 4, 1] = NaN32
+        smld, _ = fit(batch(camera), config)
+        corners = ones(Int32, n)
+        smld_nan, _ = fit(ROIBatch(poisoned, corners, corners, Int32.(1:n), camera), config)
+        for k in 2:n
+            @test smld_nan.emitters[k].x == smld.emitters[k].x
+            @test smld_nan.emitters[k].z == smld.emitters[k].z
+        end
+        # Device code must not truncate a NaN coordinate: PTX and GCN convert it to 0, but
+        # the compiler may treat unsafe_trunc(Int, NaN) as poison. A direct check, because
+        # a fit cannot show which index was formed.
+        @test GaussMLE._spline_interval(NaN32, 5) == (0, 0.0f0)
+        @test GaussMLE._spline_interval(2.5f0, 5) == (2, 0.5f0)
     end
 
 end

@@ -84,7 +84,9 @@ end
 end
 
 # GPU-compatible back substitution for solving Ax = b with LU-decomposed A
-@inline function static_back_substitution(A::SMatrix{N, N, T}, b::SVector{N, T}) where {N, T}
+@inline function static_back_substitution(
+        A::SMatrix{N, N, T}, b::SVector{N, T}
+    ) where {N, T}
     # Forward substitution for Ly = b
     x = b
     @inbounds for i in 1:N
@@ -350,8 +352,9 @@ end
 # positive and finite add nothing). A trial that raises the objective is accepted (g and F
 # stored, lambda / 10); an equal objective is accepted with lambda unchanged; a lower one
 # is rejected (lambda * 10). The next trial is theta_acc + delta with
-# (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded; if the factorization
-# fails, delta = 0 and lambda * 10. Returns the last accepted point.
+# (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded, with a parameter
+# that sits on a bound and whose gradient points out of the box held fixed; if the
+# factorization fails, delta = 0 and lambda * 10. Returns the last accepted point.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -402,11 +405,27 @@ end
         @inbounds for k in 1:N
             A = Base.setindex(A, F_acc[k, k] + λ * F_acc[k, k], k, k)
         end
+        # A parameter on a bound whose ascent gradient points out of the box is held:
+        # its row and column become the identity and its gradient zero, so the solve
+        # moves only the free parameters (the coupled photon and background steps
+        # otherwise assume the held one moves, and the clamped trial is rejected).
+        g_free = g_acc
+        @inbounds for k in 1:N
+            held = (θ_acc[k] <= constraints.lower[k] && g_acc[k] < zero(T)) ||
+                (θ_acc[k] >= constraints.upper[k] && g_acc[k] > zero(T))
+            if held
+                for l in 1:N
+                    A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), k, l)
+                    A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), l, k)
+                end
+                g_free = Base.setindex(g_free, zero(T), k)
+            end
+        end
         ok, L = static_cholesky_decomposition(A)
         if !ok
             λ = min(λ * 10, T(1.0e7))
         end
-        Δ = ok ? static_cholesky_solve(L, g_acc) : zero(SVector{N, T})
+        Δ = ok ? static_cholesky_solve(L, g_free) : zero(SVector{N, T})
         step = clamp.(Δ, -constraints.max_step, constraints.max_step)
         θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
     end

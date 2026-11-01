@@ -14,6 +14,13 @@ using Pkg
 Pkg.add("GaussMLE")
 ```
 
+GaussMLE 0.4.3 needs KernelAbstractions 0.10. Reactant (every version from 0.2.23 to at
+least 0.2.304) caps KernelAbstractions at 0.9, so any environment with Reactant (for
+example PSFLearning or SMLMDeepFit) resolves GaussMLE 0.4.2 until Reactant allows 0.10.
+PSF learning and GPU spline fitting therefore run in separate environments, linked by the
+exported PSF file (`psf.h5`): learn the PSF in the Reactant environment, then load the saved
+spline PSF in an environment with GaussMLE 0.4.3 and build `SplinePSFModel` there.
+
 ## Quick Start
 
 ```julia

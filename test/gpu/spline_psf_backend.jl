@@ -1,5 +1,6 @@
 # Independent pixel-integral data, CPU/GPU agreement and GPU bias/CRLB in every z band.
-using Test, GaussMLE, MicroscopePSFs, SMLMData, Distributions, Random, Statistics
+using Test, GaussMLE, MicroscopePSFs, SMLMData, Random, Statistics
+using SMLMSim: poisson_noise, scmos_noise
 
 include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
 
@@ -18,6 +19,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
     edges_x, edges_y = collect(0:box) .* px_x, collect(0:box) .* px_y
     photons, bg = 3000.0, 10.0
     rng = Xoshiro(7)
+    Random.seed!(7)  # SMLMSim's noise draws from the global generator
     parameter_fields = (:x, :y, :z, :photons, :bg)
     uncertainty_fields = (:σ_x, :σ_y, :σ_z, :σ_photons, :σ_bg)
 
@@ -38,7 +40,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         @testset "z band $band, $camera_kind" for camera_kind in (:ideal, :scmos)
             if camera_kind == :ideal
                 camera = IdealCamera(64, 64, (px_x, px_y))
-                data = Float32[rand(rng, Poisson(mu)) for mu in signal]
+                data = Float32.(poisson_noise(signal))
             else
                 # Raw ADU, with nonuniform full-sensor noise and nontrivial ROI corners.
                 readnoise = [
@@ -48,11 +50,14 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 camera = SCMOSCamera(
                     64, 64, (px_x, px_y), readnoise; gain, offset, qe = 1.0
                 )
+                # scmos_noise reads the calibration at the ROI's own sensor pixels.
+                roi_camera = SCMOSCamera(
+                    box, box, (px_x, px_y), readnoise[11:(10 + box), 6:(5 + box)];
+                    gain, offset, qe = 1.0
+                )
                 data = similar(signal)
-                for k in 1:n, j in 1:box, i in 1:box
-                    electrons = rand(rng, Poisson(signal[i, j, k])) +
-                        randn(rng, Float32) * readnoise[i + 10, j + 5]
-                    data[i, j, k] = electrons / gain + offset
+                for k in 1:n
+                    data[:, :, k] .= scmos_noise(signal[:, :, k], roi_camera)
                 end
             end
             corner_x, corner_y = camera_kind == :ideal ? (1, 1) : (6, 11)

@@ -591,7 +591,10 @@ function run_spline_comparison_benchmark()
     )
     device_symbols = gpu_backend() === nothing ? (:cpu,) : (:cpu, :gpu)
     rows = NamedTuple[]
-    println("\nSpline / AstigmaticXYZNB comparison: 10,000 ROIs, 20 Newton iterations")
+    println(
+        "\nSpline / AstigmaticXYZNB comparison: 10,000 ROIs, 20 iterations \
+        (AstigmaticXYZNB: Newton-Raphson steps; SplinePSFModel: Levenberg-Marquardt passes)"
+    )
     println("Times include host/device transfers; table construction is excluded.")
     @printf("%-18s %3s %-7s %-6s %12s\n", "Model", "Box", "Camera", "Device", "fits/s")
 
@@ -643,9 +646,11 @@ function run_spline_comparison_benchmark()
     println("\nSpline throughput / AstigmaticXYZNB throughput:")
     for box in (13, 15), camera in (:ideal, :scmos), device in device_symbols
         pair = filter(r -> r.box == box && r.camera == camera && r.device == device, rows)
-        gaussian_rate = only(filter(
-            r -> r.model == "AstigmaticXYZNB", pair
-        )).fits_per_second
+        gaussian_rate = only(
+            filter(
+                r -> r.model == "AstigmaticXYZNB", pair
+            )
+        ).fits_per_second
         spline_rate = only(filter(r -> r.model == "SplinePSFModel", pair)).fits_per_second
         @printf(
             "box=%d camera=%s backend=%s: %.3fx\n",

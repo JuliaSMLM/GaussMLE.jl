@@ -1,7 +1,8 @@
 using Test, GaussMLE, SMLMData, Statistics
 
 """
-Consolidated test of new simulator and ROIBatch features
+Consolidated test of new simulator and ROIBatch features. The Long group fits the other
+Gaussian models (test/long/gaussian_models_cpu.jl).
 """
 
 @testset "New Features Tests" begin
@@ -97,32 +98,5 @@ Consolidated test of new simulator and ROIBatch features
         # So we can't test exact coordinates, but we can test that positions are reasonable
         @test all([isfinite(e.x) && e.x >= 0 for e in smld.emitters])
         @test all([isfinite(e.y) && e.y >= 0 for e in smld.emitters])
-    end
-
-    @testset "Different PSF Models" begin
-        camera = SMLMData.IdealCamera(256, 256, 0.1)
-
-        psf_models = [
-            GaussMLE.GaussianXYNB(0.13f0),
-            GaussMLE.GaussianXYNBS(),
-            GaussMLE.GaussianXYNBSXSY(),
-        ]
-
-        for psf in psf_models
-            batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 5, seed = 42)
-            fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
-            )
-            smld, _info = GaussMLE.fit(batch, fitter)
-
-            @test length(smld.emitters) == 5
-            # Check that uncertainties are finite
-            σ_x_vals = [e.σ_x for e in smld.emitters]
-            σ_photons_vals = [e.σ_photons for e in smld.emitters]
-            @test !any(isinf.(σ_x_vals))
-            @test !any(isnan.(σ_x_vals))
-            @test !any(isinf.(σ_photons_vals))
-            @test !any(isnan.(σ_photons_vals))
-        end
     end
 end

@@ -165,8 +165,10 @@ quadrature with five sub-intervals per lateral axis. The lateral table spacings 
 `±(lateral_range + pixel_size_axis)` per axis; axial nodes span the inward-rounded
 `z_range` with spacing at most 0.02 µm. A natural cubic B-spline interpolates these averages,
 with zero second derivative at each axis endpoint. Fitting uses the table, with zero outside
-its lateral range and z clamped to `z_range`. A change in either camera pixel size rebuilds
-the table and signal scale once; an unchanged `(x, y)` pair reuses the model.
+its lateral range and z clamped to `z_range`. `fit` rebuilds the table and signal scale on
+every call whose camera pixel size differs from the model's, about a second for a
+PSFLearning-size table, so a chunked pipeline pays it per chunk: build the model at the
+camera pixel size. An unchanged `(x, y)` pair reuses the model.
 
 At fit time, Adapt transfers the coefficient table to the selected GPU and removes the
 point callable from the kernel model. The table is shared across batches; a retry after
@@ -205,15 +207,28 @@ at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt o
 Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
 likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
-background steps are not capped (photons ≥ 1, background ≥ 0.01). `iterations` counts
-Levenberg-Marquardt iterations (one pixel pass each), where the Gaussian models count
-Newton-Raphson iterations. For sCMOS the reported log-likelihood and p-value use the
-Gaussian approximation -(d - μ)²/(2(μ + v)), not the fitted objective. `fit` on a bare
-`Array` uses this model's own `pixel_size`, not the 0.1 µm of the Gaussian models.
+background steps are not capped (photons ≥ 1, background ≥ 0.01). A parameter on a bound
+whose gradient points out of the box is held there while the others take their step.
+`iterations` counts Levenberg-Marquardt pixel passes, where the Gaussian models count
+Newton-Raphson iterations: the last pass only evaluates, so the fit takes at most
+`iterations - 1` steps and `iterations = 1` returns the start. For sCMOS the reported
+log-likelihood and p-value use the Gaussian approximation -(d - μ)²/(2(μ + v)), not the
+fitted objective. `fit` on a bare `Array` uses this model's own `pixel_size`, not the 0.1 µm
+of the Gaussian models.
 
 **Use this model when:**
 - You have a calibrated PSF that a Gaussian does not describe well
 - You need z-position information from that PSF
+
+## Custom PSF Models
+
+A subtype of `GaussMLE.PSFModel` defined outside this package must be `isbits` after
+`Adapt.adapt_structure` to run on any backend, the CPU included, since 0.4.3: the kernel
+receives every model through Adapt. Hold numbers, `SVector`s and arrays that Adapt moves to
+the device, and drop host-only fields (a callable, a heap array) in `adapt_structure`, as
+`SplinePSFModel` does with its point PSF. `simple_initialize` must return an `SVector`, as
+`SplinePSFModel`'s does, not an `MVector`. Otherwise the fit fails with a
+`GPUCompiler.KernelError` ("passing non-bitstype argument").
 
 ## Model Comparison
 

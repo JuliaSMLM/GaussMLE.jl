@@ -1,4 +1,6 @@
-# Unified kernel on the CPU backend: each Gaussian model fits a simple blob batch.
+# Unified kernel on the CPU backend: GaussianXYNB fits a simple blob batch (the Long group
+# runs the other Gaussian models). The kernels use fit's work-group size, so they share its
+# compiled specializations.
 using Test, GaussMLE, KernelAbstractions, LinearAlgebra
 
 @testset "Unified Kernel Tests" begin
@@ -44,7 +46,9 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
 
             # Run unified kernel on CPU
             backend = KernelAbstractions.CPU()
-            kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
+            kernel = GaussMLE.unified_gaussian_mle_kernel!(
+                backend, GaussMLE.CPU_WORKGROUP_SIZE
+            )
 
             # Create dummy corners and variance for new kernel signature
             x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
@@ -70,76 +74,17 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
             @test all(100 .< results[3, :] .< 20000)  # photons (integrated Gaussian)
             @test all(0 .< results[4, :] .< 100)  # background
         end
-
-        @testset "GaussianXYNBS (N=5)" begin
-            psf_model = GaussMLE.GaussianXYNBS{Float32}()
-            constraints = GaussMLE.default_constraints(psf_model, box_size)
-
-            results = Matrix{Float32}(undef, 5, n_test_blobs)
-            uncertainties = Matrix{Float32}(undef, 5, n_test_blobs)
-            covariances = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods = Vector{Float32}(undef, n_test_blobs)
-
-            backend = KernelAbstractions.CPU()
-            kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-
-            # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
-            y_corners = fill(Int32(1), n_test_blobs)
-            variance_map = zeros(Float32, 512, 512)
-
-            kernel(
-                results, uncertainties, covariances, log_likelihoods,
-                data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                constraints, iterations,
-                ndrange = n_test_blobs
-            )
-
-            @test all(isfinite.(results))
-            @test all(uncertainties .> 0)
-            @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
-        end
-
-        @testset "GaussianXYNBSXSY (N=6)" begin
-            psf_model = GaussMLE.GaussianXYNBSXSY{Float32}()
-            constraints = GaussMLE.default_constraints(psf_model, box_size)
-
-            results = Matrix{Float32}(undef, 6, n_test_blobs)
-            uncertainties = Matrix{Float32}(undef, 6, n_test_blobs)
-            covariances = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods = Vector{Float32}(undef, n_test_blobs)
-
-            backend = KernelAbstractions.CPU()
-            kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
-
-            # Create dummy corners and variance for new kernel signature
-            x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_test_blobs]
-            y_corners = fill(Int32(1), n_test_blobs)
-            variance_map = zeros(Float32, 512, 512)
-
-            kernel(
-                results, uncertainties, covariances, log_likelihoods,
-                data, psf_model, Val(false), variance_map, x_corners, y_corners,
-                constraints, iterations,
-                ndrange = n_test_blobs
-            )
-
-            @test all(isfinite.(results))
-            @test all(uncertainties .> 0)
-            @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
-        end
     end
 
     @testset "Large sCMOS batch on CPU" begin
-        # KA once chose one large work-group for this batch and crashed POCL.
-        n_rois = 10_000
+        # KA once chose one large work-group for a 10,000-ROI batch and crashed POCL; the
+        # Long group runs that size with XYNBS. This smaller batch spans many work-groups.
+        n_rois = 1_000
         camera = SCMOSCamera(
             512, 512, 0.1f0, fill(5.0f0, 512, 512);
             offset = 100.0f0, gain = 0.5f0, qe = 0.82f0
         )
-        psf_model = GaussianXYNBS()
+        psf_model = GaussianXYNB(0.13f0)
         batch = GaussMLE.generate_roi_batch(
             camera, psf_model;
             n_rois = n_rois, roi_size = 11, seed = 42,
@@ -190,7 +135,9 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
         uncertainties = zeros(Float32, 4, n)
         covariances = zeros(Float32, 3, n)
         log_likelihoods = zeros(Float32, n)
-        kernel = GaussMLE.unified_gaussian_mle_kernel!(KernelAbstractions.CPU())
+        kernel = GaussMLE.unified_gaussian_mle_kernel!(
+            KernelAbstractions.CPU(), GaussMLE.CPU_WORKGROUP_SIZE
+        )
         kernel(
             results, uncertainties, covariances, log_likelihoods,
             data, psf_model, Val(false), zeros(Float32, 512, 512),

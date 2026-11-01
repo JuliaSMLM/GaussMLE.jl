@@ -3,6 +3,28 @@ High-level API for Gaussian MLE fitting
 """
 
 # Input validation helpers
+
+# Throw ArgumentError for the first ROI of `roi_batch` that does not lie on a sensor of
+# `sensor_size = (rows, columns)`: 1 <= corner and corner + box - 1 <= sensor size on both
+# axes. A device-side lookup outside the sensor is a kernel exception, not a clear error.
+function _validate_roi_corners(roi_batch, sensor_size::Tuple{Int, Int})
+    box = size(roi_batch.data, 1)
+    rows, columns = sensor_size
+    for k in eachindex(roi_batch.x_corners)
+        x, y = Int(roi_batch.x_corners[k]), Int(roi_batch.y_corners[k])
+        if x < 1 || y < 1 || x + box - 1 > columns || y + box - 1 > rows
+            throw(
+                ArgumentError(
+                    "ROI $k with corner (x = $x, y = $y) and box $box does not lie on the \
+                    $columns×$rows sensor (1 <= corner and corner + box - 1 <= sensor \
+                    size on both axes)"
+                )
+            )
+        end
+    end
+    return nothing
+end
+
 function validate_fit_input(data::AbstractArray{T, 3}, camera = nothing) where {T}
     # Check for empty data
     if isempty(data)
@@ -67,7 +89,8 @@ functional.
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
 - `iterations::Int`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
+  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
+  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
 - `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
   `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
@@ -104,7 +127,8 @@ Camera noise model is determined by the ROIBatch type:
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `iterations = 20`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
+  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
+  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
@@ -286,8 +310,9 @@ function _run_mle_kernel!(
     if !use_cpu
         # --- Unified GPU retry loop ---
         # Handles: (1) no free memory (vendor polls), (2) TOCTOU context creation
-        # race, (3) runtime OOM - all in one loop. On any GPU failure, release
-        # resources and re-poll. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        # race, (3) runtime OOM - all in one loop. On a resource error, release
+        # resources and re-poll; any other error rethrows (:gpu) or falls to the CPU
+        # (:auto) at once. Falls to CPU (:auto) or errors (:gpu) on timeout.
         timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
         deadline = time() + timeout
         actual_batch = min(fitter.batch_size, n_fits)
@@ -383,13 +408,25 @@ function _run_mle_kernel!(
                 actual_backend = :gpu
                 device_id = _active_device_id(vendor)
             catch e
-                # Release GPU resources, then loop back to poll for free memory
-                @warn "GPU error on device $dev_idx, releasing resources" exception = (
-                    e, catch_backtrace(),
-                )
+                # Only a resource error (out of memory, context creation) can clear by
+                # waiting. Anything else is deterministic: release the GPU, then rethrow
+                # under :gpu or fall back to the CPU at once under :auto.
+                resource = _is_resource_error(vendor, e)
+                if resource
+                    @warn "GPU error on device $dev_idx, releasing resources" exception = (
+                        e, catch_backtrace(),
+                    )
+                end
                 _release_gpu_context(vendor, dev_idx)
-                if fitter.backend == :gpu && time() >= deadline
-                    rethrow()
+                if resource
+                    fitter.backend == :gpu && time() >= deadline && rethrow()
+                else
+                    (fitter.backend == :gpu || e isa InterruptException) && rethrow()
+                    @warn "GPU error on device $dev_idx, using CPU" exception = (
+                        e, catch_backtrace(),
+                    )
+                    use_cpu = true
+                    break
                 end
             end
         end
@@ -577,7 +614,8 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
+        _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch
@@ -664,7 +702,8 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
+        _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch
@@ -680,11 +719,14 @@ function fit(
     # Start timing
     t0 = time_ns()
 
+    variance_map = extract_variance_map(roi_batch.camera, Float32)
+    # The kernel indexes the variance map by corner, so every ROI must lie on the sensor.
+    _validate_roi_corners(roi_batch, size(variance_map))
+
     # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
     data_electrons = to_electrons(
         roi_batch.data, roi_batch.camera, roi_batch.x_corners, roi_batch.y_corners
     )
-    variance_map = extract_variance_map(roi_batch.camera, Float32)
 
     n_fits = size(data_electrons, 3)
     n_params = length(fitter.psf_model)
@@ -733,7 +775,8 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params)
+    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
+        _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch
@@ -755,7 +798,8 @@ Kwargs match GaussMLEConfig fields exactly.
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
 - `iterations=20`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
+  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
+  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time
@@ -763,6 +807,11 @@ Kwargs match GaussMLEConfig fields exactly.
 - `auto_timeout=300.0`: Seconds to wait for GPU in auto mode
 - `gpu_timeout=Inf`: Seconds to wait for GPU in explicit gpu mode
 - `on_wait=nothing`: Callback for GPU wait progress
+
+# Throws
+`ArgumentError` for an `SCMOSCamera` batch with an ROI that does not lie on the sensor
+(`1 <= corner` and `corner + box - 1 <= sensor size` on both axes), naming the first such
+ROI, before any kernel launch.
 
 # Returns
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
