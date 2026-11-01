@@ -210,6 +210,9 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
      `2N * (∂Gx/∂σ) * (∂Gy/∂σ)`; astigmatic z curvature omits
      `2 * (∂²u/∂σx∂σy) * (dσx/dz) * (dσy/dz)`
    - sCMOS updates additionally hold the current `model + readnoise²` variance fixed
+   - SplinePSFModel's loop is monotone (`_monotone_steps`): a step that lowers the
+     log-likelihood is halved toward the last accepted point, so its photon and
+     background steps are uncapped; the Gaussian loop is plain
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties

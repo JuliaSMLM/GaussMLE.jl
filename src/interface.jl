@@ -464,7 +464,8 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 - `variance_map=nothing`: Poisson noise when `nothing`; a supplied readnoise-variance map
   (electrons²) selects the sCMOS path for data already calibrated in electrons
 
-Array input assumes 0.1 μm pixels and synthetic horizontally tiled ROI corners.
+Array input assumes 0.1 μm pixels (a `SplinePSFModel` keeps its own `pixel_size`, so
+emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI corners.
 For n ROIs of side b, `variance_map` must cover rows `1:b` and columns `1:b*n`;
 one b×b map is not reused across ROIs.
 Use `ROIBatch` for real camera calibration and coordinates.
@@ -506,8 +507,8 @@ function fit(
     # Convert data to Float32 if needed
     data_f32 = convert(Array{Float32, 3}, data)
 
-    # Default pixel size for Array input (no camera attached)
-    pixel_size = 0.1f0
+    # Pixel size for Array input (no camera attached): 0.1 µm, or the model's own
+    pixel_size = _array_fit_pixel_size(fitter.psf_model)
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
     # Allocate result arrays
@@ -573,6 +574,11 @@ function fit(
     # Return tuple (BasicSMLD, GaussMLEFitInfo)
     return (to_smld(loc_result, batch), info)
 end
+
+# Pixel size (µm) that fit(::Array) uses: 0.1 µm for every model except SplinePSFModel,
+# which keeps its own (x, y) pixel size.
+_array_fit_pixel_size(::PSFModel) = 0.1f0
+_array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
 
 # Convenience function for single ROI fitting
 function fit(roi::AbstractMatrix{T}, fitter::GaussMLEConfig) where {T}

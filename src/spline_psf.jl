@@ -63,9 +63,14 @@ non-positive reference sum throws `ArgumentError`. Point samples are clipped at 
 quadrature for both conventions.
 
 Spatial derivatives use 5 nm finite differences; the axial stencil shifts inside `z_range`
-near either bound. Initial z comes from a Poisson likelihood scan with spacing at most
-0.1 µm. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
-`z_range`, with a maximum z step of 0.05 µm.
+near either bound. The start is the centroid for x and y, and the z, N and background of a
+least-squares scan: at each z on a grid with spacing at most 0.1 µm, data ≈ N f(z) + bg is
+solved in closed form for the unit-photon model image f, and the z with the smallest
+residual wins. The model is fitted from this start and its default photon and background
+steps are not capped, so bright beads converge in the default iterations. A step that
+lowers the likelihood is halved toward the last accepted point. Default x/y
+bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use `z_range`, with a maximum
+z step of 0.05 µm (maximum x/y step 1 pixel; photons ≥ 1, background ≥ 0.01).
 
 # Fields
 - `spline_psf::S`: the point PSF callable, retained for rebuilding at another pixel size
@@ -508,19 +513,71 @@ end
     x, y = sum_x / total, sum_y / total
 
     # Starting every fit at z = 0 sends ROIs far from focus (|z| 0.4-0.5 µm for the
-    # astigmatic test spline) into a wrong minimum on the other side of focus, so start at
-    # the best z of a coarse likelihood scan instead.
-    z = _spline_z_scan(roi, box_size, model, x, y, total, bg)
-    return MVector{5, T}(x, y, z, total, bg)
+    # astigmatic test spline) into a wrong minimum on the other side of focus, and the
+    # edge-mean background and positive-sum photons are far off for a defocused bright bead.
+    # Start at the best z of a coarse least-squares scan, with its photons and background.
+    z, N, bg = _spline_z_scan(roi, box_size, model, x, y, total, bg)
+    return MVector{5, T}(x, y, z, N, bg)
 end
 
 # Grid spacing (µm) of the z start scan. The basin of the true z is several tenths of a µm
 # wide; a 0.2 µm grid already picks a neighbouring basin at |z| 0.3-0.4 µm.
 const SPLINE_Z_SCAN_STEP = 0.1f0
 
-# z on an even grid over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the highest
-# Poisson log-likelihood at the given x, y, N and bg.
+# Relative determinant below which the 2 x 2 least-squares system of the scan is singular
+# (the model image is nearly constant over the box).
+const SPLINE_SCAN_SINGULAR = 1.0e-8
+
+# (z, N, bg) of the grid z over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the
+# smallest residual sum of squares of data ~ N * f(z) + bg at the given x, y, where f is the
+# unit-photon, zero-background model image. N and bg are the closed-form least-squares
+# solution from one pass of sums, clamped to the default lower bounds (1 and 0.01). A z with a
+# singular system is skipped; if every z is singular the start is the Poisson scan with the
+# edge-mean background and positive-sum photons.
 @inline function _spline_z_scan(
+        roi, box_size::Int, model::SplinePSFModel{T}, x, y, N0, bg0
+    ) where {T}
+    zlo, zhi = model.z_range
+    n = max(2, ceil(Int, (zhi - zlo) / SPLINE_Z_SCAN_STEP) + 1)
+    npix = Float64(box_size * box_size)
+    sd = 0.0
+    sdd = 0.0
+    @inbounds for j in 1:box_size, i in 1:box_size
+        d = Float64(roi[i, j])
+        sd += d
+        sdd += d * d
+    end
+    found = false
+    best_z, best_N, best_bg, best_rss = zero(T), one(T), T(0.01), Inf
+    for k in 0:(n - 1)
+        z = zlo + (zhi - zlo) * T(k) / T(n - 1)
+        θ = SVector{5, T}(x, y, z, one(T), zero(T))
+        sf = 0.0
+        sff = 0.0
+        sdf = 0.0
+        @inbounds for j in 1:box_size, i in 1:box_size
+            f = Float64(evaluate_psf(model, i, j, θ))
+            sf += f
+            sff += f * f
+            sdf += Float64(roi[i, j]) * f
+        end
+        det = npix * sff - sf * sf
+        det > SPLINE_SCAN_SINGULAR * npix * sff || continue
+        Nk = max((npix * sdf - sf * sd) / det, 1.0)
+        bgk = max((sff * sd - sf * sdf) / det, 0.01)
+        rss = sdd - 2 * Nk * sdf - 2 * bgk * sd + Nk * Nk * sff + 2 * Nk * bgk * sf +
+            bgk * bgk * npix
+        if rss < best_rss
+            found = true
+            best_z, best_N, best_bg, best_rss = z, T(Nk), T(bgk), rss
+        end
+    end
+    found && return best_z, best_N, best_bg
+    return _spline_z_scan_poisson(roi, box_size, model, x, y, N0, bg0)
+end
+
+# Fallback start: z with the highest Poisson log-likelihood at the given x, y, N and bg.
+@inline function _spline_z_scan_poisson(
         roi, box_size::Int, model::SplinePSFModel{T}, x, y, N, bg
     ) where {T}
     zlo, zhi = model.z_range
@@ -539,7 +596,7 @@ const SPLINE_Z_SCAN_STEP = 0.1f0
             best_z, best_ll = z, ll
         end
     end
-    return best_z
+    return best_z, T(N), T(bg)
 end
 
 function to_pixel_units(
@@ -564,12 +621,16 @@ function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y:
     return to_pixel_units(model, (pixel_size_x, pixel_size_y))
 end
 
+# The Newton loop rejects a step that lowers the log-likelihood (halved toward the last
+# accepted point), so the photon and background steps need no cap.
+_monotone_steps(::SplinePSFModel) = true
+
 function default_constraints(model::SplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)
     return ParameterConstraints{5}(
         SVector{5, Float32}(lower, lower, model.z_range[1], 1.0f0, 0.01f0),
         SVector{5, Float32}(upper, upper, model.z_range[2], Inf32, Inf32),
-        SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, 100.0f0, 2.0f0)
+        SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, Inf32, Inf32)
     )
 end
 
