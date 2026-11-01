@@ -6,7 +6,7 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, pixel integration, total photons at every z, density guard, dispatch, square pixels) | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, pixel integration, total photons at every z, density guard, dispatch, rectangular pixels) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
 | GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, SplinePSFModel `:auto` goes to the CPU | lab GPU machine |
 | Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |

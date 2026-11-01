@@ -176,7 +176,7 @@ gpu_compatible(::PSFModel) = true
 _has_axial_position(::Type{<:PSFModel}) = false
 _has_axial_position(::Type{<:AstigmaticXYZNB}) = true
 
-# fit(::ROIBatch) checks the camera against the model; SplinePSFModel needs square pixels
+# Optional geometry checks used by the default camera-to-model conversion.
 _check_pixel_geometry(::PSFModel, camera) = nothing
 
 # PSF evaluation interface
