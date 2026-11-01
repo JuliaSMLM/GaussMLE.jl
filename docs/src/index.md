@@ -229,9 +229,11 @@ The Gaussian expectation model for pixel (i,j) is:
 \frac{1}{2\pi \sigma_x \sigma_y} \exp\left(-\frac{(x-\theta_x)^2}{2\sigma_x^2} - \frac{(y-\theta_y)^2}{2\sigma_y^2}\right) dx \, dy
 ```
 
-The fitting uses Newton-Raphson optimization with:
+The Gaussian models are fitted by Newton-Raphson optimization with:
 - **Diagonal Hessian**: For fast parameter updates
 - **Full Fisher Information**: For accurate CRLB uncertainties
+
+`SplinePSFModel` is fitted by Levenberg-Marquardt on the full Fisher matrix instead. The `pvalue` comes from the log-likelihood ratio for both cameras; for sCMOS it is the Gaussian approximation, not the objective the spline fit maximizes.
 
 ## References
 

@@ -66,7 +66,8 @@ functional.
 # Fields
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
-- `iterations::Int`: Number of Newton-Raphson iterations
+- `iterations::Int`: Newton-Raphson iterations for the Gaussian models;
+  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
 - `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
   `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
@@ -102,7 +103,8 @@ Camera noise model is determined by the ROIBatch type:
 # Keyword Arguments
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `iterations = 20`: Number of Newton-Raphson iterations
+- `iterations = 20`: Newton-Raphson iterations for the Gaussian models;
+  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch
@@ -474,7 +476,8 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
   (electrons²) selects the sCMOS path for data already calibrated in electrons
 
 Array input assumes 0.1 μm pixels (a `SplinePSFModel` keeps its own `pixel_size`, so
-emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI corners.
+emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI
+corners.
 For n ROIs of side b, `variance_map` must cover rows `1:b` and columns `1:b*n`;
 one b×b map is not reused across ROIs.
 Use `ROIBatch` for real camera calibration and coordinates.
@@ -587,7 +590,6 @@ end
 # Pixel size (µm) that fit(::Array) uses: 0.1 µm for every model except SplinePSFModel,
 # which keeps its own (x, y) pixel size.
 _array_fit_pixel_size(::PSFModel) = 0.1f0
-_array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
 
 # Convenience function for single ROI fitting
 function fit(roi::AbstractMatrix{T}, fitter::GaussMLEConfig) where {T}
@@ -752,7 +754,8 @@ Kwargs match GaussMLEConfig fields exactly.
 
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
-- `iterations=20`: Number of Newton-Raphson iterations
+- `iterations=20`: Newton-Raphson iterations for the Gaussian models;
+  Levenberg-Marquardt iterations (one pixel pass each) for `SplinePSFModel`
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time

@@ -50,11 +50,13 @@ The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
 - Immutable StaticArrays (SVector/SMatrix) for allocation-free CPU and GPU kernels
 - Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
-- **Diagonal Newton-Raphson for optimization** (element-wise, not full matrix inverse)
+- **Optimization by dispatch (`_optimize`)**: diagonal Newton-Raphson for the Gaussian
+  models (element-wise, not full matrix inverse), Levenberg-Marquardt on the full Fisher
+  matrix for `SplinePSFModel`
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
 - Spline pixel-integral tables are built on the host and adapted once per backend attempt;
   CPU (POCL), CUDA and AMDGPU use one kernel, with the point callable removed before launch
-- Spline values and analytic first/diagonal second derivatives share one 4 × 4 × 4 gather;
+- Spline values and analytic first derivatives share one 4 × 4 × 4 gather (second derivatives are zero: no fit uses them);
   rectangular pixels use each axis's spacing, and non-positive values have zero derivatives
 - Spline initialization and z scanning use immutable `SVector` parameters; the scan gathers
   values only. Coefficients typically occupy 5 to 10 MiB for a PSFLearning export
@@ -208,7 +210,8 @@ end
 #### Newton-Raphson vs Fisher Information
 The kernel uses **different approaches** for optimization vs uncertainty estimation:
 
-1. **Optimization (Newton-Raphson)**: Uses diagonal Hessian approximation
+1. **Optimization: diagonal Newton (Gaussian models), Levenberg-Marquardt
+   (SplinePSFModel)**. Gaussian models use a diagonal Hessian approximation
    - Element-wise updates: `θ[k] -= ∇L[k] / H_diag[k]`
    - More stable than full Newton method for convergence
    - Diagonal elements: `H_diag[k] += d2udt2_diag[k] * cf - dudt[k]^2 * df`
@@ -216,9 +219,10 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
      `2N * (∂Gx/∂σ) * (∂Gy/∂σ)`; astigmatic z curvature omits
      `2 * (∂²u/∂σx∂σy) * (dσx/dz) * (dσy/dz)`
    - sCMOS updates additionally hold the current `model + readnoise²` variance fixed
-   - SplinePSFModel uses Levenberg-Marquardt on the full Fisher matrix (`_lm_steps`,
-     `_lm_fit`) climbing the Poisson (Ideal) or Poisson-shifted (sCMOS) objective, with
-     uncapped photon and background steps; the Gaussian models use the diagonal update
+   - SplinePSFModel: `_optimize(::SplinePSFModel)` is Levenberg-Marquardt (`_lm_fit`) on the
+     full Fisher matrix, climbing one objective (`_fit_objective`, read-noise variance from
+     `_readout_variance`, zero for IdealCamera), with uncapped photon and background steps;
+     `iterations` counts its pixel passes
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties

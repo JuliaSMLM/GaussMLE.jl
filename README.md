@@ -26,7 +26,7 @@ batch = ROIBatch(data, x_corners, y_corners, frames, camera)
 smld, info = fit(batch, GaussMLEConfig(
     psf_model    = GaussianXYNB(0.13f0),  # fixed-σ Gaussian, σ in μm
     backend      = :auto,                  # :cpu, :gpu, or :auto (GPU w/ CPU fallback)
-    iterations   = 20,                     # Newton-Raphson iterations
+    iterations   = 20,                     # Newton-Raphson (Levenberg-Marquardt for SplinePSFModel) iterations
     batch_size   = 10_000,                 # ROIs per GPU kernel launch
 ))
 

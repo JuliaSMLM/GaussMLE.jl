@@ -1,7 +1,10 @@
 # SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
-# methods, backend dispatch and rectangular pixels. The GPU group checks :auto
-# on a GPU host; the Long group checks bias and CRLB.
+# methods, backend dispatch, rectangular pixels, Array pixel size, bright emitters, and
+# that fits of both cameras (including negative ideal-camera pixels) end at a maximum of
+# the fit objective. The GPU group checks :auto on a GPU host; the Long group checks bias
+# and CRLB.
 using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Random
+using Distributions: Poisson
 
 # Share one Float32-only callable type to cover dispatch and limit Core compilation.
 struct SplineTestPSF
@@ -37,6 +40,36 @@ function batch_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
     roi = roi_at(m, z; x, y, box, photons)
     data = reshape(roi, size(roi)..., 1)
     return ROIBatch(data, Int32[1], Int32[1], Int32[1], IdealCamera(64, 64, m.pixel_size))
+end
+
+# Each fitted ROI ends at a maximum of the objective the fit climbs, (d + v) log(mu + v) -
+# (mu + v) with v(k, i, j) the read-noise variance (zero: Poisson). The check is a
+# coordinatewise perturbation; data is (box, box, n) and corners are camera positions.
+function check_objective_maximum(smld, model, data, v, x_corners, y_corners, px)
+    box = size(data, 1)
+    function objective(k, θ)
+        s = 0.0
+        for j in 1:box, i in 1:box
+            μ = Float64(GaussMLE.evaluate_psf(model, i, j, SVector{5, Float32}(θ)))
+            vk = Float64(v(k, i, j))
+            s += (data[i, j, k] + vk) * log(μ + vk) - (μ + vk)
+        end
+        return s
+    end
+    for (k, e) in enumerate(smld.emitters)
+        θ = [
+            e.x / px + 1.5 - x_corners[k], e.y / px + 1.5 - y_corners[k], e.z,
+            e.photons, e.bg,
+        ]
+        scale = [1.0e-3, 1.0e-3, 1.0e-4, 1.0e-3 * θ[4], 1.0e-3 * θ[5]]
+        base = objective(k, θ)
+        for p in 1:5, sgn in (-1, 1)
+            moved = copy(θ)
+            moved[p] += sgn * scale[p]
+            @test objective(k, moved) - base <= 1.0e-3
+        end
+    end
+    return nothing
 end
 
 @testset "SplinePSFModel" begin
@@ -488,14 +521,13 @@ end
     @testset "fit(::Array) fits at the model's pixel size" begin
         px_x, px_y = 0.13, 0.12
         box = 13
-        edges_x, edges_y = collect(0:box) .* px_x, collect(0:box) .* px_y
         x, y, z = 7.2, 6.7, 0.2
-        emitters = [Emitter3D((x - 0.5) * px_x, (y - 0.5) * px_y, z, 2000.0)]
-        roi = MicroscopePSFs.integrate_pixels(
-            astig_spline, edges_x, edges_y, emitters; sampling = 8
-        ) .+ 10
-        data = reshape(Float32.(roi), box, box, 1)
         direct = SplinePSFModel(astig_spline; pixel_size = (px_x, px_y))
+        roi = [
+            GaussMLE.evaluate_psf(direct, i, j, SVector{5, Float32}(x, y, z, 2000, 10))
+                for i in 1:box, j in 1:box
+        ]
+        data = reshape(Float32.(roi), box, box, 1)
         smld_a, _ = fit(
             data, GaussMLEConfig(psf_model = direct, backend = :cpu, iterations = 40)
         )
@@ -518,7 +550,7 @@ end
         for (k, (x, y, z)) in enumerate(truth)
             emitters = [Emitter3D((x - 0.5) * px, (y - 0.5) * px, z, 3.0e5)]
             data[:, :, k] .= MicroscopePSFs.integrate_pixels(
-                astig_spline, edges, edges, emitters; sampling = 8
+                astig_spline, edges, edges, emitters; sampling = 4
             ) .+ 50
         end
         smld, _ = fit(data, GaussMLEConfig(psf_model = gpsf, backend = :cpu))
@@ -543,53 +575,40 @@ end
                 for i in 1:sensor_size, j in 1:sensor_size
         ]
         camera = SCMOSCamera(
-            sensor_size, sensor_size, Float32(px), readnoise; offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
+            sensor_size, sensor_size, Float32(px), readnoise;
+            offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
         )
         rng = MersenneTwister(7)
         data = zeros(Float32, box, box, n)
-        for (k, (x, y, z)) in enumerate(truth)
-            emitters = [Emitter3D((x - 0.5) * px, (y - 0.5) * px, z, 2000.0)]
-            mean_img = MicroscopePSFs.integrate_pixels(
-                astig_spline, edges, edges, emitters; sampling = 8
-            ) .+ 10
-            for j in 1:box, i in 1:box
-                λ = Float64(mean_img[i, j])
-                # Poisson draw by Knuth's product (λ is below 150 here)
-                threshold, count, prod = exp(-λ), 0, rand(rng)
-                while prod > threshold
-                    count += 1
-                    prod *= rand(rng)
-                end
-                data[i, j, k] = count + readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1] *
-                    randn(rng)
-            end
+        for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
+            μ = GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(x, y, z, 2000, 10))
+            data[i, j, k] = rand(rng, Poisson(Float64(μ))) +
+                readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1] * randn(rng)
         end
         roi_batch = ROIBatch(data, x_corners, y_corners, Int32.(1:n), camera)
         smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu)
 
-        # Poisson-shifted objective of ROI k at θ = (x, y, z, photons, bg)
-        function objective(k, θ)
-            s = 0.0
-            for j in 1:box, i in 1:box
-                μ = Float64(GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(θ)))
-                v = Float64(readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1])^2
-                s += (data[i, j, k] + v) * log(μ + v) - (μ + v)
-            end
-            return s
+        v(k, i, j) = readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1]^2
+        check_objective_maximum(smld, gpsf, data, v, x_corners, y_corners, px)
+    end
+
+    @testset "IdealCamera fits with negative pixels end at a maximum of the objective" begin
+        px, box = 0.1, 11
+        truth = ((6.2, 5.8, -0.3), (5.7, 6.4, 0.2), (6.0, 6.0, 0.35), (6.4, 5.6, -0.1))
+        n = length(truth)
+        rng = MersenneTwister(11)
+        # Counts at background 6 with 4 subtracted (an offset-subtracted camera): the
+        # background is 2 and over a tenth of the pixels are negative.
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
+            μ = GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(x, y, z, 1000, 6))
+            data[i, j, k] = rand(rng, Poisson(Float64(μ))) - 4
         end
-        for (k, e) in enumerate(smld.emitters)
-            θ = [
-                e.x / px + 1.5 - x_corners[k], e.y / px + 1.5 - y_corners[k], e.z,
-                e.photons, e.bg,
-            ]
-            scale = [1.0e-3, 1.0e-3, 1.0e-4, 1.0e-3 * θ[4], 1.0e-3 * θ[5]]
-            base = objective(k, θ)
-            for p in 1:5, sgn in (-1, 1)
-                moved = copy(θ)
-                moved[p] += sgn * scale[p]
-                @test objective(k, moved) - base <= 1.0e-3
-            end
-        end
+        @test count(<(0), data) > 0.05 * length(data)
+        corners = ones(Int32, n)
+        roi_batch = ROIBatch(data, corners, corners, Int32.(1:n), IdealCamera(64, 64, px))
+        smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu)
+        check_objective_maximum(smld, gpsf, data, (k, i, j) -> 0, corners, corners, px)
     end
 
 end

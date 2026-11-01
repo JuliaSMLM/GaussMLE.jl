@@ -254,45 +254,32 @@ end
     return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
-# Objective the Levenberg-Marquardt loop climbs, one pixel, either camera. Ideal: the Poisson
-# log-likelihood without constants. sCMOS: the Poisson-shifted likelihood
-# (d + v) log(mu + v) - (mu + v), v the read-noise variance at the pixel's camera position;
-# its gradient (d - mu) / (mu + v) and Fisher 1 / (mu + v) are what the update uses.
-@inline function _fit_objective(
-        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
-    ) where {T}
-    # Deviance form: the same dependence on the model as data * log(model) - model, minus
-    # the saturated term, so each term is of order one and float32 sums resolve the
-    # last iterations' changes (the plain form's terms are about 1e4).
-    data > zero(T) || return -model
-    return data * log(model / data) - (model - data)
-end
-
-@inline function _fit_objective(
-        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
-    ) where {T}
-    v = variance_map[corner_y + i - 1, corner_x + j - 1]
-    s = data + v
-    s > zero(T) || return s * log(model + v) - (model + v)
-    return s * log((model + v) / s) - (model + v - s)
-end
-
-# Variance of the fit objective's gradient and Fisher terms: model (Ideal), model + v (sCMOS)
-@inline function _fit_variance(
+# Read-noise variance at the pixel's camera position: zero for the ideal camera (Poisson
+# only), the variance map's value for sCMOS.
+@inline function _readout_variance(
         ::Val{false}, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
-    return model
+    return zero(T)
 end
 
-@inline function _fit_variance(
+@inline function _readout_variance(
         ::Val{true}, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
-    return model + variance_map[corner_y + i - 1, corner_x + j - 1]
+    return variance_map[corner_y + i - 1, corner_x + j - 1]
 end
 
-# Compile-time trait: a model fitted by Levenberg-Marquardt on the full Fisher matrix
-# (_lm_fit) instead of the diagonal Newton loop. The Gaussian models keep the diagonal loop.
-_lm_steps(::PSFModel) = false
+# Objective the Levenberg-Marquardt loop climbs, one pixel, either camera: the
+# Poisson-shifted likelihood (d + v) log(mu + v) - (mu + v) with v the read-noise variance
+# (v = 0: the Poisson log-likelihood). Its gradient (d - mu) / (mu + v) and Fisher
+# 1 / (mu + v) are what the update uses. Written as the deviance s log(1 + r / s) - r,
+# s = d + v, r = mu - d, which has the same dependence on mu but a float32 error of about
+# eps * |r| rather than eps * d.
+@inline function _fit_objective(data::T, model::T, v::T) where {T}
+    s = data + v
+    r = model - data
+    s > zero(T) || return s * log(model + v) - (model + v)
+    return s * log1p(r / s) - r
+end
 
 # Solve (L L') x = b for the Cholesky factor L (lower triangle) of
 # static_cholesky_decomposition
@@ -317,12 +304,54 @@ _lm_steps(::PSFModel) = false
     return x
 end
 
+# Fit one ROI from the start θ0 and return θ. The Gaussian models take `iterations`
+# diagonal Newton-Raphson steps; SplinePSFModel overrides this with Levenberg-Marquardt.
+@inline function _optimize(
+        roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y, constraints, iterations::Int, θ0
+    ) where {N, T}
+    θ = θ0
+    # Newton-Raphson iterations with diagonal updates
+    for iter in 1:iterations
+        # Zero out gradient and diagonal Hessian
+        ∇L = zero(SVector{N, T})
+        H_diag = zero(SVector{N, T})
+
+        # Compute derivatives over all pixels
+        @inbounds for j in 1:box_size, i in 1:box_size
+            # Model and derivatives at this pixel
+            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ, psf_model)
+
+            # Likelihood terms based on camera model (Val dispatch for compile-time
+            # optimization)
+            data_ij = roi[i, j]
+            cf, df = _dispatch_likelihood(
+                camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
+            )
+
+            # Whole-vector operations preserve arithmetic order per element.
+            ∇L = ∇L + dudt * cf
+            H_diag = H_diag + (d2udt2_diag * cf - (dudt .* dudt) * df)
+        end
+
+        # Elementwise Newton-Raphson updates with constraints
+        Δθ = map((g, h) -> abs(h) > T(1.0e-10) ? g / h : zero(T), ∇L, H_diag)
+
+        # Apply constraints
+        θ_new = apply_constraints!(θ, Δθ, constraints)
+        θ = θ_new
+    end
+    return θ
+end
+
 # Levenberg-Marquardt fit of one ROI on the full Fisher matrix, from the start θ0. Each
 # iteration makes one pixel pass at the trial point: the objective, the gradient
-# g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var. A trial that does not lower
-# the objective is accepted (g and F stored, lambda / 10); otherwise lambda * 10. The next
-# trial is theta_acc + delta with (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped
-# and bounded; delta = 0 if the factorization fails. Returns the last accepted point.
+# g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var (pixels whose variance is not
+# positive and finite add nothing). A trial that raises the objective is accepted (g and F
+# stored, lambda / 10); an equal objective is accepted with lambda unchanged; a lower one
+# is rejected (lambda * 10). The next trial is theta_acc + delta with
+# (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded; if the factorization
+# fails, delta = 0 and lambda * 10. Returns the last accepted point.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -342,15 +371,18 @@ end
         @inbounds for j in 1:box_size, i in 1:box_size
             model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
             d = roi[i, j]
-            var = _fit_variance(camera_model, model, variance_map, corner_x, corner_y, i, j)
-            obj += _fit_objective(
-                camera_model, d, model, variance_map, corner_x, corner_y, i, j
+            v = _readout_variance(
+                camera_model, model, variance_map, corner_x, corner_y, i, j
             )
-            g = g + dudt * ((d - model) / var)
-            F = F + (dudt * dudt') * (one(T) / var)
+            var = model + v
+            obj += _fit_objective(d, model, v)
+            if var > zero(T) && isfinite(var)
+                g = g + dudt * ((d - model) / var)
+                F = F + (dudt * dudt') * (one(T) / var)
+            end
         end
 
-        if iter == 1 || obj >= obj_acc
+        if iter == 1 || obj > obj_acc
             θ_acc = θ
             g_acc = g
             F_acc = F
@@ -358,6 +390,10 @@ end
             if iter > 1
                 λ = max(λ / 10, T(1.0e-7))
             end
+        elseif obj == obj_acc
+            θ_acc = θ
+            g_acc = g
+            F_acc = F
         else
             λ = min(λ * 10, T(1.0e7))
         end
@@ -367,6 +403,9 @@ end
             A = Base.setindex(A, F_acc[k, k] + λ * F_acc[k, k], k, k)
         end
         ok, L = static_cholesky_decomposition(A)
+        if !ok
+            λ = min(λ * 10, T(1.0e7))
+        end
         Δ = ok ? static_cholesky_solve(L, g_acc) : zero(SVector{N, T})
         step = clamp.(Δ, -constraints.max_step, constraints.max_step)
         θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
@@ -402,46 +441,10 @@ end
 
     # Immutable working vectors avoid heap allocation from bounds-check error paths.
     θ = simple_initialize(roi, box_size, psf_model)
-    newton_iterations = iterations
-    if _lm_steps(psf_model)
-        # Levenberg-Marquardt on the full Fisher matrix; the Newton loop below then runs 0 times
-        θ = _lm_fit(
-            roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
-            constraints, iterations, θ
-        )
-        newton_iterations = 0
-    end
-
-    # Newton-Raphson iterations with diagonal updates
-    for iter in 1:newton_iterations
-        # Zero out gradient and diagonal Hessian
-        ∇L = zero(SVector{N, T})
-        H_diag = zero(SVector{N, T})
-
-        # Compute derivatives over all pixels
-        @inbounds for j in 1:box_size, i in 1:box_size
-            # Model and derivatives at this pixel
-            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ, psf_model)
-
-            # Likelihood terms based on camera model (Val dispatch for compile-time
-            # optimization)
-            data_ij = roi[i, j]
-            cf, df = _dispatch_likelihood(
-                camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
-            )
-
-            # Whole-vector operations preserve arithmetic order per element.
-            ∇L = ∇L + dudt * cf
-            H_diag = H_diag + (d2udt2_diag * cf - (dudt .* dudt) * df)
-        end
-
-        # Elementwise Newton-Raphson updates with constraints
-        Δθ = map((g, h) -> abs(h) > T(1.0e-10) ? g / h : zero(T), ∇L, H_diag)
-
-        # Apply constraints
-        θ_new = apply_constraints!(θ, Δθ, constraints)
-        θ = θ_new
-    end
+    θ = _optimize(
+        roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+        constraints, iterations, θ
+    )
 
     # Compute final log-likelihood and full Fisher Information Matrix for CRLB
     log_likelihood = zero(T)
@@ -463,18 +466,11 @@ end
         end
 
         # Fisher Information Matrix (for CRLB) - need full matrix here
-        # For IdealCamera: variance = model (Poisson only)
-        # For sCMOS: variance = model + readout_variance
+        # variance = model + readout variance (zero for IdealCamera)
         if model > zero(T)
-            # Compute variance - dispatch based on camera_model Val
-            variance = if camera_model isa Val{false}
-                model  # Poisson only (IdealCamera)
-            else
-                # sCMOS camera - convert ROI-local (i,j) to camera coordinates
-                cam_i = corner_y + i - 1
-                cam_j = corner_x + j - 1
-                model + variance_map[cam_i, cam_j]
-            end
+            variance = model + _readout_variance(
+                camera_model, model, variance_map, corner_x, corner_y, i, j
+            )
 
             # Whole-matrix operations preserve multiply/divide/add order per element.
             H = H + (dudt * dudt') / variance

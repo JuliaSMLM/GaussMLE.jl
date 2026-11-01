@@ -77,7 +77,10 @@ at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt o
 Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
 likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
-background steps are not capped (photons ≥ 1, background ≥ 0.01). Default x/y
+background steps are not capped (photons ≥ 1, background ≥ 0.01). For sCMOS the
+reported log-likelihood and p-value use the Gaussian approximation
+`-(d - μ)²/(2(μ + v))`, not the fitted objective. `iterations` counts
+Levenberg-Marquardt iterations (one pixel pass each). Default x/y
 bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use `z_range`.
 
 # Fields
@@ -185,6 +188,8 @@ _prepare_psf_model(backend, model::SplinePSFModel) = Adapt.adapt(backend, model)
 _psf_table_bytes(model::SplinePSFModel{T}) where {T} =
     sizeof(T) * length(model.pixel_psf.coefficients)
 
+_array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
+
 function _model_for_camera(model::SplinePSFModel, camera)
     px_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     px_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
@@ -236,8 +241,7 @@ end
         T(0.5) + t - T(1.5) * t2,
         t2 / T(2),
     )
-    second = (one(T) - t, T(3) * t - T(2), one(T) - T(3) * t, t)
-    return first, second
+    return first
 end
 
 @inline function _spline_interval(u::T, n::Int) where {T}
@@ -282,52 +286,44 @@ end
     return value
 end
 
-# A single coefficient load feeds all seven accumulators. Differentiate the basis in
+# A single coefficient load feeds all four accumulators. Differentiate the basis in
 # grid coordinates, then convert to derivatives per micron along each physical axis.
 @inline function _spline_value_derivatives(
         table::_PixelIntegratedPSF{T}, dx::T, dy::T, z::T
     ) where {T}
-    zeros7 = (zero(T), zero(T), zero(T), zero(T), zero(T), zero(T), zero(T))
+    zeros4 = (zero(T), zero(T), zero(T), zero(T))
     radius_x, radius_y = table.lateral_radius
-    (abs(dx) > radius_x || abs(dy) > radius_y) && return zeros7
+    (abs(dx) > radius_x || abs(dy) > radius_y) && return zeros4
     ix, iy, iz, tx, ty, tz = _spline_coordinates(table, dx, dy, z)
     wx, wy, wz = _spline_cubic_weights(tx), _spline_cubic_weights(ty),
         _spline_cubic_weights(tz)
-    dwx, d2wx = _spline_cubic_derivatives(tx)
-    dwy, d2wy = _spline_cubic_derivatives(ty)
-    dwz, d2wz = _spline_cubic_derivatives(tz)
+    dwx = _spline_cubic_derivatives(tx)
+    dwy = _spline_cubic_derivatives(ty)
+    dwz = _spline_cubic_derivatives(tz)
     c = table.coefficients
-    value, gx, gy, gz, gxx, gyy, gzz = zeros7
+    value, gx, gy, gz = zeros4
     @inbounds for k in 1:4
         plane, plane_x, plane_y = zero(T), zero(T), zero(T)
-        plane_xx, plane_yy = zero(T), zero(T)
         for j in 1:4
-            row, row_y, row_yy = zero(T), zero(T), zero(T)
+            row, row_y = zero(T), zero(T)
             for i in 1:4
                 coefficient = c[iy + i, ix + j, iz + k]
                 row += wy[i] * coefficient
                 row_y += dwy[i] * coefficient
-                row_yy += d2wy[i] * coefficient
             end
             plane += wx[j] * row
             plane_x += dwx[j] * row
             plane_y += wx[j] * row_y
-            plane_xx += d2wx[j] * row
-            plane_yy += wx[j] * row_yy
         end
         value += wz[k] * plane
         gx += wz[k] * plane_x
         gy += wz[k] * plane_y
         gz += dwz[k] * plane
-        gxx += wz[k] * plane_xx
-        gyy += wz[k] * plane_yy
-        gzz += d2wz[k] * plane
     end
-    value <= zero(T) && return zeros7
+    value <= zero(T) && return zeros4
     h_x, h_y = table.lateral_step
     h_z = table.z_step
-    return value, gx / h_x, gy / h_y, gz / h_z,
-        gxx / (h_x * h_x), gyy / (h_y * h_y), gzz / (h_z * h_z)
+    return value, gx / h_x, gy / h_y, gz / h_z
 end
 
 # At an interior node, c[i-1] + 4c[i] + c[i+1] = 6f[i]. Natural ends give
@@ -521,7 +517,7 @@ end
     dy = (i - y) * px_y
     z_c = clamp(z, model.z_range[1], model.z_range[2])
 
-    value, gx, gy, gz, gxx, gyy, gzz = _spline_value_derivatives(
+    value, gx, gy, gz = _spline_value_derivatives(
         model.pixel_psf, dx, dy, z_c
     )
     f0 = value * scale
@@ -538,15 +534,8 @@ end
         one(T),               # ∂model/∂bg
     ]
 
-    d2udt2 = @SVector [
-        N * px_x^2 * gxx * scale, # ∂²model/∂x²
-        N * px_y^2 * gyy * scale, # ∂²model/∂y²
-        N * gzz * scale,         # ∂²model/∂z²
-        zero(T),                # ∂²model/∂N²
-        zero(T),                # ∂²model/∂bg²
-    ]
-
-    return model_val, dudt, d2udt2
+    # The spline is fitted by Levenberg-Marquardt, which uses no second derivatives.
+    return model_val, dudt, zero(dudt)
 end
 
 @inline function simple_initialize(
@@ -634,10 +623,18 @@ function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y:
     return to_pixel_units(model, (pixel_size_x, pixel_size_y))
 end
 
-# Levenberg-Marquardt on the full Fisher matrix (the kernel's _lm_fit): the per-parameter
-# Newton step stops short on the coupled x, y, z, N and background, and LM needs no cap on
-# the photon and background steps.
-_lm_steps(::SplinePSFModel) = true
+# Levenberg-Marquardt on the full Fisher matrix (the kernel's `_optimize`): the
+# per-parameter Newton step stops short on the coupled x, y, z, N and background, and LM
+# needs no cap on the photon and background steps.
+@inline function _optimize(
+        roi, box_size::Int, psf_model::SplinePSFModel, camera_model, variance_map,
+        corner_x, corner_y, constraints, iterations::Int, θ0
+    )
+    return _lm_fit(
+        roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+        constraints, iterations, θ0
+    )
+end
 
 function default_constraints(model::SplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)
