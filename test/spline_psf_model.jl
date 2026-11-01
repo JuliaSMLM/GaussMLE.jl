@@ -485,4 +485,51 @@ end
         end
     end
 
+    @testset "fit(::Array) fits at the model's pixel size" begin
+        px_x, px_y = 0.13, 0.12
+        box = 13
+        edges_x, edges_y = collect(0:box) .* px_x, collect(0:box) .* px_y
+        x, y, z = 7.2, 6.7, 0.2
+        emitters = [Emitter3D((x - 0.5) * px_x, (y - 0.5) * px_y, z, 2000.0)]
+        roi = MicroscopePSFs.integrate_pixels(
+            astig_spline, edges_x, edges_y, emitters; sampling = 8
+        ) .+ 10
+        data = reshape(Float32.(roi), box, box, 1)
+        direct = SplinePSFModel(astig_spline; pixel_size = (px_x, px_y))
+        smld_a, _ = fit(
+            data, GaussMLEConfig(psf_model = direct, backend = :cpu, iterations = 40)
+        )
+        camera = IdealCamera(64, 64, (px_x, px_y))
+        batch1 = ROIBatch(data, Int32[1], Int32[1], Int32[1], camera)
+        smld_b, _ = fit(batch1; psf_model = direct, backend = :cpu, iterations = 40)
+        ea, eb = only(smld_a.emitters), only(smld_b.emitters)
+        @test ea.z ≈ eb.z rtol = 1.0e-5
+        @test ea.photons ≈ eb.photons rtol = 1.0e-5
+        @test ea.x ≈ (x - 0.5) * px_x atol = 0.001
+        @test ea.y ≈ (y - 0.5) * px_y atol = 0.001
+    end
+
+    @testset "bright emitters converge in the default iterations" begin
+        px, box = 0.1, 13
+        edges = collect(0:box) .* px
+        truth = ((7.2, 6.7, -0.4), (7.1, 7.4, 0.0), (6.8, 7.15, 0.4))
+        n = length(truth)
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth)
+            emitters = [Emitter3D((x - 0.5) * px, (y - 0.5) * px, z, 3.0e5)]
+            data[:, :, k] .= MicroscopePSFs.integrate_pixels(
+                astig_spline, edges, edges, emitters; sampling = 8
+            ) .+ 50
+        end
+        smld, _ = fit(data, GaussMLEConfig(psf_model = gpsf, backend = :cpu))
+        for (k, (x, y, z)) in enumerate(truth)
+            e = smld.emitters[k]
+            @test abs(e.photons / 3.0e5 - 1) <= 0.005
+            @test e.z ≈ z atol = 0.003
+            # fit(::Array) tiles the ROIs horizontally: ROI k starts (k - 1) boxes along x
+            @test e.x ≈ (x - 0.5 + (k - 1) * box) * px atol = 0.001
+            @test e.y ≈ (y - 0.5) * px atol = 0.001
+        end
+    end
+
 end
