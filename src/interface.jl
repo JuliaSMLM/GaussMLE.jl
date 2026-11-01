@@ -584,6 +584,13 @@ function fit(roi::AbstractMatrix{T}, fitter::GaussMLEConfig) where {T}
     return (smld.emitters[1], info)
 end
 
+# Models can specialize camera conversion without changing the ROIBatch fit methods.
+function _model_for_camera(model::PSFModel, camera)
+    _check_pixel_geometry(model, camera)
+    pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
+    return to_pixel_units(model, pixel_size)
+end
+
 # Fit method for ROIBatch - returns (BasicSMLD, GaussMLEFitInfo) with real camera
 # coordinates
 function fit(
@@ -597,10 +604,8 @@ function fit(
     n_params = length(fitter.psf_model)
     box_size = size(roi_batch.data, 1)
 
-    # Get pixel size and convert PSF from microns to pixels
-    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
-    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
-    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+    # Convert the model using its camera pixel geometry.
+    psf_pixels = _model_for_camera(fitter.psf_model, roi_batch.camera)
 
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
@@ -669,10 +674,8 @@ function fit(
     n_params = length(fitter.psf_model)
     box_size = size(data_electrons, 1)
 
-    # Get pixel size and convert PSF from microns to pixels
-    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
-    pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
-    psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
+    # Convert the model using its camera pixel geometry.
+    psf_pixels = _model_for_camera(fitter.psf_model, roi_batch.camera)
 
     # Allocate result arrays
     results = Matrix{Float32}(undef, n_params, n_fits)
