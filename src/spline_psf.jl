@@ -71,9 +71,14 @@ quadrature for both conventions.
 One 4 × 4 × 4 coefficient gather gives the value and analytic first and diagonal second
 derivatives of the cubic interpolant, using each axis's pixel size. Non-positive values
 are clipped to zero with zero derivatives. z is differentiated at its clamped value.
-Initial z comes from a Poisson likelihood scan with spacing at most
-0.1 µm. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
-`z_range`, with a maximum z step of 0.05 µm.
+The start is the centroid for x and y, and the z, N and background of a least-squares
+scan: at each z on a grid with spacing at most 0.1 µm, data ≈ N f(z) + bg is solved in
+closed form for the unit-photon model image f, and the z with the smallest residual wins.
+The model is fitted from this start and its default photon and background steps are not
+capped, so bright beads converge in the default iterations. A step that lowers the
+likelihood is halved toward the last accepted point. Default x/y bounds are `[-1,n+2]` ROI
+pixels for a box of side n; z bounds use `z_range`, with a maximum z step of 0.05 µm
+(maximum x/y step 1 pixel; photons ≥ 1, background ≥ 0.01).
 
 # Fields
 - `spline_psf::S`: the point PSF callable, retained for rebuilding at another pixel size
@@ -573,18 +578,75 @@ end
     x, y = sum_x / total, sum_y / total
 
     # Starting every fit at z = 0 sends ROIs far from focus (|z| 0.4-0.5 µm for the
-    # astigmatic test spline) into a wrong minimum on the other side of focus, so start at
-    # the best z of a coarse likelihood scan instead.
-    return _spline_z_scan(roi, box_size, model, x, y, total, bg)
+    # astigmatic test spline) into a wrong minimum on the other side of focus, and the
+    # edge-mean background and positive-sum photons are far off for a defocused bright bead.
+    # Start at the best z of a coarse least-squares scan, with its photons and background.
+    z, N, bg = _spline_z_scan(roi, box_size, model, x, y, total, bg)
+    return SVector{5, T}(x, y, z, N, bg)
 end
 
 # Grid spacing (µm) of the z start scan. The basin of the true z is several tenths of a µm
 # wide; a 0.2 µm grid already picks a neighbouring basin at |z| 0.3-0.4 µm.
 const SPLINE_Z_SCAN_STEP = 0.1f0
 
-# z on an even grid over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the highest
-# Poisson log-likelihood at the given x, y, N and bg; return all starting parameters.
+# Relative M_ff (centered sum of squares of the model image) below which the 2 x 2
+# least-squares system of the scan is singular: M_ff <= SPLINE_SCAN_SINGULAR * sum(f^2),
+# i.e. the model image is nearly constant over the box.
+const SPLINE_SCAN_SINGULAR = 1.0e-8
+
+# (z, N, bg) of the grid z over z_range (spacing at most SPLINE_Z_SCAN_STEP) with the
+# smallest residual sum of squares of data ~ N * f(z) + bg at the given x, y, where f is the
+# unit-photon, zero-background model image. One pass per z accumulates in T the running means
+# and centered co-moments (Welford) of f and the data; N = M_fd / M_ff and bg = mean_d -
+# N mean_f are clamped to the default lower bounds (1 and 0.01). A z with a singular system
+# is skipped; if every z is singular the start is the Poisson scan with the edge-mean
+# background and positive-sum photons.
 @inline function _spline_z_scan(
+        roi, box_size::Int, model::SplinePSFModel{T}, x, y, N0, bg0
+    ) where {T}
+    zlo, zhi = model.z_range
+    n = max(2, ceil(Int, (zhi - zlo) / SPLINE_Z_SCAN_STEP) + 1)
+    npix = T(box_size * box_size)
+    found = false
+    best_z, best_N, best_bg, best_rss = zero(T), one(T), T(0.01), typemax(T)
+    for k in 0:(n - 1)
+        z = zlo + (zhi - zlo) * T(k) / T(n - 1)
+        θ = SVector{5, T}(x, y, z, one(T), zero(T))
+        mean_f = zero(T)
+        mean_d = zero(T)
+        M_ff = zero(T)
+        M_fd = zero(T)
+        M_dd = zero(T)
+        cnt = zero(T)
+        @inbounds for j in 1:box_size, i in 1:box_size
+            f = evaluate_psf(model, i, j, θ)
+            d = T(roi[i, j])
+            cnt += one(T)
+            df = f - mean_f
+            dd = d - mean_d
+            mean_f += df / cnt
+            mean_d += dd / cnt
+            M_ff += df * (f - mean_f)
+            M_fd += df * (d - mean_d)
+            M_dd += dd * (d - mean_d)
+        end
+        sum_ff = M_ff + npix * mean_f * mean_f
+        M_ff > T(SPLINE_SCAN_SINGULAR) * sum_ff || continue
+        Nk = max(M_fd / M_ff, one(T))
+        bgk = max(mean_d - Nk * mean_f, T(0.01))
+        r = mean_d - Nk * mean_f - bgk
+        rss = M_dd - 2 * Nk * M_fd + Nk * Nk * M_ff + npix * r * r
+        if rss < best_rss
+            found = true
+            best_z, best_N, best_bg, best_rss = z, Nk, bgk, rss
+        end
+    end
+    found && return best_z, best_N, best_bg
+    return _spline_z_scan_poisson(roi, box_size, model, x, y, N0, bg0)
+end
+
+# Fallback start: z with the highest Poisson log-likelihood at the given x, y, N and bg.
+@inline function _spline_z_scan_poisson(
         roi, box_size::Int, model::SplinePSFModel{T}, x, y, N, bg
     ) where {T}
     zlo, zhi = model.z_range
@@ -604,7 +666,7 @@ const SPLINE_Z_SCAN_STEP = 0.1f0
             best_z, best_ll = z, ll
         end
     end
-    return SVector{5, T}(x, y, best_z, N, bg)
+    return best_z, T(N), T(bg)
 end
 
 function to_pixel_units(
@@ -629,12 +691,16 @@ function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y:
     return to_pixel_units(model, (pixel_size_x, pixel_size_y))
 end
 
+# The Newton loop rejects a step that lowers the log-likelihood (halved toward the last
+# accepted point), so the photon and background steps need no cap.
+_monotone_steps(::SplinePSFModel) = true
+
 function default_constraints(model::SplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)
     return ParameterConstraints{5}(
         SVector{5, Float32}(lower, lower, model.z_range[1], 1.0f0, 0.01f0),
         SVector{5, Float32}(upper, upper, model.z_range[2], Inf32, Inf32),
-        SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, 100.0f0, 2.0f0)
+        SVector{5, Float32}(1.0f0, 1.0f0, 0.05f0, Inf32, Inf32)
     )
 end
 
