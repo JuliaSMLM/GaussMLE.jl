@@ -298,14 +298,20 @@ end
 @inline function _fit_objective(
         ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
-    return data * log(model) - model
+    # Deviance form: the same dependence on the model as data * log(model) - model, minus
+    # the saturated term, so each term is of order one and float32 sums resolve the
+    # last iterations' changes (the plain form's terms are about 1e4).
+    data > zero(T) || return -model
+    return data * log(model / data) - (model - data)
 end
 
 @inline function _fit_objective(
         ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
     ) where {T}
     v = variance_map[corner_y + i - 1, corner_x + j - 1]
-    return (data + v) * log(model + v) - (model + v)
+    s = data + v
+    s > zero(T) || return s * log(model + v) - (model + v)
+    return s * log((model + v) / s) - (model + v - s)
 end
 
 # Variance of the fit objective's gradient and Fisher terms: model (Ideal), model + v (sCMOS)
