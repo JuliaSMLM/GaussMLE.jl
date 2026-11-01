@@ -291,6 +291,26 @@ end
     return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
+# Log-likelihood of one pixel for either camera (same functions as the final pass)
+@inline function _dispatch_loglik(
+        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return compute_log_likelihood(data, model, IdealCameraInternal())
+end
+
+@inline function _dispatch_loglik(
+        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return compute_log_likelihood(
+        data, model, variance_map, corner_y + i - 1, corner_x + j - 1
+    )
+end
+
+# Compile-time trait: a model whose Newton loop only accepts steps that do not lower the
+# log-likelihood (a rejected step is halved toward the last accepted point). The Gaussian
+# models keep the plain loop.
+_monotone_steps(::PSFModel) = false
+
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
         results::AbstractArray{T, 2},
@@ -321,12 +341,22 @@ end
     θ = simple_initialize(roi, box_size, psf_model)
     ∇L = MVector{N, T}(undef)
     H_diag = MVector{N, T}(undef)  # Only diagonal elements for Newton-Raphson
+    monotone = _monotone_steps(psf_model)
+    if monotone
+        # The last accepted point must be feasible, so start inside the bounds
+        @inbounds for k in 1:N
+            θ[k] = clamp(θ[k], constraints.lower[k], constraints.upper[k])
+        end
+    end
+    θ_acc = MVector{N, T}(θ)  # last accepted point (monotone loops only)
+    ll_acc = zero(T)
 
     # Newton-Raphson iterations with scalar updates
     for iter in 1:iterations
         # Zero out gradient and diagonal Hessian
         zero_array!(∇L)
         zero_array!(H_diag)
+        ll_cur = zero(T)
 
         # Compute derivatives over all pixels
         @inbounds for j in 1:box_size, i in 1:box_size
@@ -346,6 +376,23 @@ end
                 ∇L[k] += dudt[k] * cf
                 H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
             end
+            if monotone
+                ll_cur += _dispatch_loglik(
+                    camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
+                )
+            end
+        end
+
+        if monotone
+            if iter > 1 && ll_cur < ll_acc - 1.0f-6 * abs(ll_acc)
+                # Reject: halve toward the last accepted point; the iteration is consumed
+                @inbounds for k in 1:N
+                    θ[k] = (θ_acc[k] + θ[k]) / 2
+                end
+                continue
+            end
+            θ_acc = MVector{N, T}(θ)
+            ll_acc = ll_cur
         end
 
         # Scalar Newton-Raphson updates with constraints
@@ -362,6 +409,22 @@ end
         θ_new = apply_constraints!(SVector{N, T}(θ), SVector{N, T}(Δθ), constraints)
         @inbounds for i in 1:N
             θ[i] = θ_new[i]
+        end
+    end
+
+    if monotone && iterations >= 1
+        # The last step may have lowered the likelihood: report the last accepted point
+        ll_end = zero(T)
+        @inbounds for j in 1:box_size, i in 1:box_size
+            model_end = compute_pixel_derivatives(i, j, SVector{N, T}(θ), psf_model)[1]
+            ll_end += _dispatch_loglik(
+                camera_model, roi[i, j], model_end, variance_map, corner_x, corner_y, i, j
+            )
+        end
+        if ll_end < ll_acc - 1.0f-6 * abs(ll_acc)
+            @inbounds for k in 1:N
+                θ[k] = θ_acc[k]
+            end
         end
     end
 
