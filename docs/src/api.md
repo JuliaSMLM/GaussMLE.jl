@@ -25,6 +25,8 @@ GaussianXYNB
 GaussianXYNBS
 GaussianXYNBSXSY
 AstigmaticXYZNB
+SplinePSFModel
+GaussMLE.gpu_compatible
 ```
 
 ### Custom Emitter Types
@@ -43,7 +45,7 @@ Emitter3DFitGaussMLE
 ROI data structures are provided by SMLMData.jl and re-exported for convenience:
 
 - `ROIBatch` - Batch of ROIs with camera and position information
-- `SingleROI` - Single ROI for fitting
+- `SingleROI` - Single ROI; wrap it in `ROIBatch([roi], camera)` before fitting
 
 ### Simulation
 
@@ -55,9 +57,11 @@ generate_roi_batch
 
 Device selection is controlled via the `backend` keyword argument to `GaussMLEConfig`:
 
-- `:auto` or `nothing` - Automatically detect best device (default)
+- `:auto` - Automatically select the backend (default)
 - `:cpu` - Force CPU execution
-- `:gpu` - Require GPU, error if unavailable after timeout
+- `:gpu` - Error immediately without functional CUDA; otherwise wait up to `gpu_timeout`
+
+For CPU-only `SplinePSFModel`, `:auto` selects CPU directly and `:gpu` throws `ArgumentError`.
 
 Example:
 ```julia
@@ -68,6 +72,9 @@ fitter = GaussMLEConfig(backend = :cpu)  # Force CPU
 ### Constraints
 
 Parameter constraints can be configured via the `constraints` keyword argument to `GaussMLEConfig`. Default constraints are automatically generated based on the PSF model and ROI size.
+
+For `SplinePSFModel`, custom z bounds are intersected with `model.z_range`; an empty
+intersection throws `ArgumentError`.
 
 ## Camera Models
 
@@ -80,7 +87,7 @@ See [SMLMData.jl documentation](https://github.com/JuliaSMLM/SMLMData.jl) for ca
 
 ## Output Format
 
-The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing:
+Matrix input returns `(emitter, info)` for one ROI. Stack or `ROIBatch` input returns `(smld, info)` where `smld` is a `SMLMData.BasicSMLD` containing:
 
 - `emitters::Vector{<:AbstractEmitter}` - Fitted emitter objects (type depends on PSF model)
 - `camera::AbstractCamera` - Camera model used
@@ -95,3 +102,4 @@ The `fit()` function returns a tuple `(smld, info)` where `smld` is a `SMLMData.
 | `GaussianXYNBS` | `Emitter2DFitSigma` |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` |

@@ -16,7 +16,7 @@ A cylindrical lens introduces astigmatism, causing the PSF to have different foc
 \sigma_y(z) = \sigma_{y0} \sqrt{\alpha_y(z)} \quad \text{where} \quad \alpha_y(z) = 1 + \left(\frac{z+\gamma}{d}\right)^2 + A_y\left(\frac{z+\gamma}{d}\right)^3 + B_y\left(\frac{z+\gamma}{d}\right)^4
 ```
 
-The key insight: at z=0, both widths are at their minimum. Moving in +z causes σx to increase while σy stays narrow (and vice versa for -z). The fitter uses this ellipticity to determine z.
+The x and y focal minima occur at z=+γ and z=−γ respectively. For the calibration below, negative z gives σx > σy and positive z gives σy > σx; the PSF is approximately circular near zero. The fitter uses this ellipticity to determine z.
 
 ### Parameter Meanings
 
@@ -109,7 +109,7 @@ nothing # hide
 
 ![Astigmatic PSF shapes and widths versus z](astigmatic_psf.png)
 
-At z < 0, the PSF is elongated vertically (σy > σx). At z > 0, it's elongated horizontally (σx > σy). The crossing point near z=0 is where the PSF is most circular. The fitter uses this ellipticity to determine z position.
+For the displayed calibration, at z < 0 the PSF is elongated horizontally (σx > σy). At z > 0, it's elongated vertically (σy > σx). The crossing point near z=0 is where the PSF is most circular. The fitter uses this ellipticity to determine z position.
 
 ## Basic 3D Fitting
 
@@ -151,11 +151,12 @@ The `AstigmaticXYZNB` model returns `Emitter3DFitGaussMLE` emitters with:
 | Field | Description | Units |
 |-------|-------------|-------|
 | `x`, `y`, `z` | 3D position | microns |
-| `photons` | Total photon count | photons |
-| `bg` | Background level | photons/pixel |
+| `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
+| `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_x`, `σ_y`, `σ_z` | Position uncertainties (CRLB) | microns |
 | `σ_xy`, `σ_xz`, `σ_yz` | Position covariances (off-diagonal of Fisher matrix inverse) | microns² |
-| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
+| `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 
 ## Quality Filtering
@@ -215,7 +216,10 @@ psf = AstigmaticXYZNB{Float32}(
 fitter = GaussMLEConfig(psf_model=psf, iterations=30)
 
 for target_z in [-0.3, 0.0, 0.3]
-    batch = generate_roi_batch(camera, psf, n_rois=200, roi_size=13)
+    true_params = repeat(reshape(Float32[7, 7, target_z, 1000, 10], 5, 1), 1, 200)
+    batch = generate_roi_batch(
+        camera, psf, n_rois=200, roi_size=13, true_params=true_params
+    )
     smld, info = fit(batch, fitter)
 
     σ_xy = mean([sqrt(e.σ_x^2 + e.σ_y^2)/sqrt(2) for e in smld.emitters])

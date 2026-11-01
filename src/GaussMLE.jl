@@ -6,8 +6,9 @@ CUDA GPU, with Cramér-Rao lower bound uncertainties. Noise models: Poisson (`Id
 and sCMOS (`SCMOSCamera`, per-pixel readout noise).
 
 Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
-`GaussianXYNBS`, `GaussianXYNBSXSY` and `AstigmaticXYZNB`; `generate_roi_batch` for
-simulated data. Results are `SMLMData.BasicSMLD` with model-specific emitter types.
+`GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` and `SplinePSFModel` (a tabulated 3D
+PSF, CPU only); `generate_roi_batch` for simulated data. Results are `SMLMData.BasicSMLD`
+with model-specific emitter types.
 """
 module GaussMLE
 
@@ -44,6 +45,7 @@ include("psf_derivatives.jl")
 include("constraints.jl")
 include("emitters.jl")  # Custom emitter types with PSF parameters
 include("roi_batch.jl")  # ROI batch data structure
+include("spline_psf.jl")  # Tabulated 3D PSF (CPU only)
 include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
@@ -53,7 +55,7 @@ include("interface.jl")  # User-facing API
 # Camera types come from SMLMData (use SMLMData.SCMOSCamera, etc.)
 # ROIBatch and SingleROI come from SMLMData (ecosystem standard)
 export fit, GaussMLEConfig, GaussMLEFitInfo
-export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
+export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB, SplinePSFModel
 export generate_roi_batch
 
 # Export custom emitter types (subtype AbstractEmitter)
