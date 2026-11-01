@@ -221,6 +221,10 @@ end
     return bg + N * psf_x * psf_y
 end
 
+# GaussMLE does not call `initialize_parameters`; the generic function stays with no methods
+# so packages that extend it still load. It goes in 0.5.
+function initialize_parameters end
+
 # Note: compute_pixel_derivatives is implemented in psf_derivatives.jl for each model type
 
 # Pretty printing for PSF models

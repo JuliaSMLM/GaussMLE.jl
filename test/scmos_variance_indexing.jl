@@ -157,6 +157,22 @@ end
         @test err isa ArgumentError && occursin("ROI $index ", err.msg)
     end
 
+    # fit(::Array; variance_map) tiles ROIs at x = 1, 1 + box, ...: a map one box wide holds
+    # only the first.
+    for backend in (:cpu, :gpu, :auto)
+        err = try
+            fit(
+                batch.data[:, :, 1:2], GaussMLEConfig(; psf_model, backend);
+                variance_map = fill(2.0f0, box, box)
+            )
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test err isa ArgumentError && occursin("ROI 2 ", err.msg)
+    end
+
     # An IdealCamera never indexes calibration by corner and converts corners to microns
     # linearly, so ROIs off its nominal sensor still fit (fit(::Array) tiles ROIs far
     # beyond its stand-in camera this way).
