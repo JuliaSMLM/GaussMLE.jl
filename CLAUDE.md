@@ -254,6 +254,8 @@ GPU kernels cannot use standard library matrix operations, so custom implementat
 All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
 LU uses a relative tolerance (`1e-10 * maximum(abs, A)`) matching SMITE; the Fisher
 matrix uses the same relative scale for diagonal regularization.
+Cholesky checks for positive pivots; the inverse and substitution helpers have
+no corresponding tolerance check.
 
 #### Astigmatic Model Unit Convention
 
@@ -292,6 +294,8 @@ The math is dimensionally consistent:
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
 - `src/gausslib/` - Gaussian math helpers used by CPU and GPU kernels
+- `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), CPU only via the `gpu_compatible` trait
+- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor (weak dependency)
 
 ### SMLMData Ecosystem Integration
 
@@ -300,6 +304,7 @@ The math is dimensionally consistent:
 - `GaussianXYNBS` → `GaussMLE.Emitter2DFitSigma` (custom, includes σ)
 - `GaussianXYNBSXSY` → `GaussMLE.Emitter2DFitSigmaXY` (custom, includes σx/σy)
 - `AstigmaticXYZNB` → `GaussMLE.Emitter3DFitGaussMLE`
+- `SplinePSFModel` → `GaussMLE.Emitter3DFitGaussMLE`
 
 All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
 

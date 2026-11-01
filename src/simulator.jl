@@ -14,6 +14,9 @@ get_default_params(::AstigmaticXYZNB) = Float32[6.0, 6.0, 0.0, 1000.0, 10.0]
 
 Generate synthetic ROI data with camera-appropriate noise.
 
+Supports `GaussianXYNB`, `GaussianXYNBS`, `GaussianXYNBSXSY`, and `AstigmaticXYZNB`.
+`SplinePSFModel` is not supported by `generate_roi_batch`, even with `true_params`.
+
 # Arguments
 - `camera::AbstractCamera`: Camera model (IdealCamera or SCMOSCamera)
 - `psf_model::PSFModel`: PSF model determining parameter structure

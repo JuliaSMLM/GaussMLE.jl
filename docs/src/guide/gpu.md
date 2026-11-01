@@ -39,6 +39,12 @@ If neither vendor is functional, `:gpu` errors immediately and `:auto` uses CPU
 without a warning. Timeouts govern resource waits and retries only after a functional
 vendor is found; a timeout in `:auto` warns before falling back to CPU.
 
+A PSF model the kernel cannot run on a GPU (`GaussMLE.gpu_compatible(model) == false`, currently
+`SplinePSFModel`) is routed to the CPU: `:auto` goes straight to the CPU without polling the GPU,
+and `:gpu` throws `ArgumentError`.
+In this merge, spline fitting uses the CPU path; compatibility with its POCL kernel is
+still pending, so spline fits are not yet runnable on this branch.
+
 ### Timeout Configuration
 
 | Field | Default | Description |
@@ -187,7 +193,7 @@ Tune batch size based on:
 
 ### Benchmarking Your Hardware
 
-Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The GPU test group includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
+Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The performance benchmark covers the four Gaussian models with both cameras on CPU and GPU, reporting fits/second and MLE optimality (std/CRLB ratio). Separate spline Monte Carlo validation runs on CPU with IdealCamera in the Long group; the GPU group checks that spline `:auto` dispatch goes directly to CPU.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 

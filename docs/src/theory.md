@@ -166,6 +166,8 @@ For the Poisson model:
 I_{ij}(\theta) = \sum_{k,l} \frac{1}{\mu_{k,l}} \frac{\partial \mu_{k,l}}{\partial \theta_i} \frac{\partial \mu_{k,l}}{\partial \theta_j}
 ```
 
+The Fisher matrix is positive semidefinite; its off-diagonal entries may have either sign.
+
 ### Cramér-Rao Lower Bound
 
 The CRLB gives the minimum achievable standard deviation:
@@ -187,7 +189,7 @@ The off-diagonal elements of the inverse Fisher matrix provide covariance inform
 Let `C` be the internal inverse Fisher matrix and `pₓ`, `pᵧ` the camera pixel sizes in microns. GaussMLE.jl converts the spatial covariances to microns²:
 
 - **2D models**: `σ_xy = pₓ * pᵧ * C[1,2]`
-- **3D models**: additionally `σ_xz = pₓ * C[1,3]` and `σ_yz = pᵧ * C[2,3]`, since astigmatic z already uses microns
+- **3D models** (`AstigmaticXYZNB` and `SplinePSFModel`): additionally `σ_xz = pₓ * C[1,3]` and `σ_yz = pᵧ * C[2,3]`, since z already uses microns
 
 These covariances capture correlations between position estimates. For example, a non-zero `σ_xy` indicates that the x and y position estimates are correlated, which can arise from asymmetric pixel sampling or off-center emitter positions within the ROI.
 

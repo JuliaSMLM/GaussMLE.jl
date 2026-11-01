@@ -6,10 +6,17 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box, SplinePSFModel (CPU fit, pixel integration, total photons at every z, density guard, dispatch, square pixels) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | Kernel, CPU/GPU agreement, benchmark, routing | CUDA or AMD GPU |
-| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing, CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, SplinePSFModel `:auto` goes to the CPU | CUDA or AMD GPU; spline host check currently requires CUDA |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |
+
+Spline tests treat the callable as a point PSF. A MicroscopePSFs PSF is a normalized photon
+density in µm^-2, so N is total photons and an input stack must have that normalization.
+A plain callable is normalized on the reference plane: N is the photons within the
+`lateral_range` patch at `z_ref`, and its energy must be the same at every z. The Core
+total-photon test and Long spline tests render independently with
+`MicroscopePSFs.integrate_pixels(...; sampling = 8)`.
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
 - `test/test_groups.toml` declares the groups.

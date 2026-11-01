@@ -377,7 +377,7 @@ end
         # covariances[2,idx] = σ_xz (3D only, zero otherwise)
         # covariances[3,idx] = σ_yz (3D only, zero otherwise)
         @inbounds covariances[1, idx] = H_inv[1, 2]
-        if psf_model isa AstigmaticXYZNB
+        if _has_axial_position(typeof(psf_model))
             @inbounds covariances[2, idx] = H_inv[1, 3]
             @inbounds covariances[3, idx] = H_inv[2, 3]
         else
@@ -393,7 +393,7 @@ end
                 uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
             end
             @inbounds covariances[1, idx] = H_inv[1, 2]
-            if psf_model isa AstigmaticXYZNB
+            if _has_axial_position(typeof(psf_model))
                 @inbounds covariances[2, idx] = H_inv[1, 3]
                 @inbounds covariances[3, idx] = H_inv[2, 3]
             else

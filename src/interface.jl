@@ -121,6 +121,9 @@ Camera noise model is determined by the ROIBatch type:
 GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
 AMDGPU (`using AMDGPU`) before `fit`.
 
+GPU polling and timeouts apply to GPU-compatible models. For `SplinePSFModel`, `:auto`
+selects CPU directly without polling or warning, and `:gpu` throws `ArgumentError`.
+
 # Examples
 ```julia
 # Simple usage with auto GPU detection
@@ -273,8 +276,15 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
-    use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && vendor === nothing)
+    # A model the kernel cannot run on a GPU skips GPU polling entirely under :auto
+    model_gpu_compatible = gpu_compatible(psf_pixels)
+    if !model_gpu_compatible && fitter.backend == :gpu
+        throw(ArgumentError("$(nameof(typeof(psf_pixels))) cannot run on a GPU; use \
+            backend = :cpu or :auto"))
+    end
+    vendor = fitter.backend == :cpu || !model_gpu_compatible ? nothing : _gpu_vendor()
+    use_cpu = fitter.backend == :cpu || !model_gpu_compatible ||
+        (fitter.backend != :gpu && vendor === nothing)
 
     if fitter.backend == :gpu && vendor === nothing
         error("No functional GPU found: CUDA is not functional; AMD GPUs require \
@@ -469,6 +479,8 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
   (electrons²) selects the sCMOS path for data already calibrated in electrons
 
 Array input assumes 0.1 μm pixels and synthetic horizontally tiled ROI corners.
+For n ROIs of side b, `variance_map` must cover rows `1:b` and columns `1:b*n`;
+one b×b map is not reused across ROIs.
 Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
@@ -600,6 +612,7 @@ function fit(
     box_size = size(roi_batch.data, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
@@ -671,6 +684,7 @@ function fit(
     box_size = size(data_electrons, 1)
 
     # Get pixel size and convert PSF from microns to pixels
+    _check_pixel_geometry(fitter.psf_model, roi_batch.camera)
     pixel_size = roi_batch.camera.pixel_edges_x[2] - roi_batch.camera.pixel_edges_x[1]
     psf_pixels = to_pixel_units(fitter.psf_model, pixel_size)
 
