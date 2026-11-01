@@ -1,7 +1,7 @@
 # SplinePSFModel (moved from PSFLearning's GaussMLE bridge): its constructors, PSFModel
 # methods, backend dispatch and rectangular pixels. The GPU group checks :auto
 # on a GPU host; the Long group checks bias and CRLB.
-using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays
+using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Random
 
 # Share one Float32-only callable type to cover dispatch and limit Core compilation.
 struct SplineTestPSF
@@ -529,6 +529,66 @@ end
             # fit(::Array) tiles the ROIs horizontally: ROI k starts (k - 1) boxes along x
             @test e.x ≈ (x - 0.5 + (k - 1) * box) * px atol = 0.001
             @test e.y ≈ (y - 0.5) * px atol = 0.001
+        end
+    end
+
+    @testset "sCMOS fits end at a maximum of the fit objective" begin
+        px, box, sensor_size = 0.1, 11, 40
+        edges = collect(0:box) .* px
+        truth = ((6.2, 5.8, -0.3), (5.7, 6.4, 0.2), (6.0, 6.0, 0.35), (6.4, 5.6, -0.1))
+        n = length(truth)
+        x_corners, y_corners = Int32[3, 25, 6, 28], Int32[5, 8, 24, 27]
+        readnoise = [
+            sqrt(1.0f0 + 0.02f0 * (i - 1) + 0.05f0 * (j - 1))
+                for i in 1:sensor_size, j in 1:sensor_size
+        ]
+        camera = SCMOSCamera(
+            sensor_size, sensor_size, Float32(px), readnoise; offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
+        )
+        rng = MersenneTwister(7)
+        data = zeros(Float32, box, box, n)
+        for (k, (x, y, z)) in enumerate(truth)
+            emitters = [Emitter3D((x - 0.5) * px, (y - 0.5) * px, z, 2000.0)]
+            mean_img = MicroscopePSFs.integrate_pixels(
+                astig_spline, edges, edges, emitters; sampling = 8
+            ) .+ 10
+            for j in 1:box, i in 1:box
+                λ = Float64(mean_img[i, j])
+                # Poisson draw by Knuth's product (λ is below 150 here)
+                threshold, count, prod = exp(-λ), 0, rand(rng)
+                while prod > threshold
+                    count += 1
+                    prod *= rand(rng)
+                end
+                data[i, j, k] = count + readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1] *
+                    randn(rng)
+            end
+        end
+        roi_batch = ROIBatch(data, x_corners, y_corners, Int32.(1:n), camera)
+        smld, _ = fit(roi_batch; psf_model = gpsf, backend = :cpu)
+
+        # Poisson-shifted objective of ROI k at θ = (x, y, z, photons, bg)
+        function objective(k, θ)
+            s = 0.0
+            for j in 1:box, i in 1:box
+                μ = Float64(GaussMLE.evaluate_psf(gpsf, i, j, SVector{5, Float32}(θ)))
+                v = Float64(readnoise[y_corners[k] + i - 1, x_corners[k] + j - 1])^2
+                s += (data[i, j, k] + v) * log(μ + v) - (μ + v)
+            end
+            return s
+        end
+        for (k, e) in enumerate(smld.emitters)
+            θ = [
+                e.x / px + 1.5 - x_corners[k], e.y / px + 1.5 - y_corners[k], e.z,
+                e.photons, e.bg,
+            ]
+            scale = [1.0e-3, 1.0e-3, 1.0e-4, 1.0e-3 * θ[4], 1.0e-3 * θ[5]]
+            base = objective(k, θ)
+            for p in 1:5, sgn in (-1, 1)
+                moved = copy(θ)
+                moved[p] += sgn * scale[p]
+                @test objective(k, moved) - base <= 1.0e-3
+            end
         end
     end
 
