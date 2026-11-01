@@ -70,11 +70,21 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             @test gpu_info.backend == :gpu
             @test gpu_info.n_batches == 3
             @test length(cpu.emitters) == length(gpu.emitters) == n
-            for field in parameter_fields
+            # SplinePSFModel is fitted by Levenberg-Marquardt, whose accept/reject test
+            # branches on objective differences at float32 resolution near the optimum, so
+            # CPU and GPU can stop at equally good points along the flat photon-background
+            # direction. Measured on the 4090 they reach the same objective (median
+            # difference 1e-8 log-likelihood) and differ by at most 0.14 CRLB in photons and
+            # 0.01 CRLB in x, y and z. The Gaussian models' fixed-step loop keeps its
+            # rtol 1e-4 test elsewhere, so compare in CRLB units here.
+            for (field, sigma) in zip(parameter_fields, uncertainty_fields)
                 a = [getproperty(e, field) for e in cpu.emitters]
                 b = [getproperty(e, field) for e in gpu.emitters]
+                s = [getproperty(e, sigma) for e in cpu.emitters]
                 @test all(isfinite, a) && all(isfinite, b)
-                @test a ≈ b rtol = 1.0e-4
+                d = abs.(a .- b) ./ s
+                @test maximum(d) <= 0.25
+                @test count(<=(0.01), d) / length(d) >= 0.99
             end
             for field in uncertainty_fields
                 a = [getproperty(e, field) for e in cpu.emitters]
@@ -105,14 +115,18 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 field = parameter_fields[axis]
                 errors = [
                     1000 * (
-                            getproperty(gpu.emitters[k], field) -
-                            (axis == 3 ? truth[k][axis] :
-                                (corner + truth[k][axis] - 1.5) * px)
-                        ) for k in 1:n
+                        getproperty(gpu.emitters[k], field) -
+                            (
+                            axis == 3 ? truth[k][axis] :
+                                (corner + truth[k][axis] - 1.5) * px
+                        )
+                    ) for k in 1:n
                 ]
-                crlb = 1000 * sqrt(mean(
-                    abs2, [getproperty(e, sigma) for e in gpu.emitters]
-                ))
+                crlb = 1000 * sqrt(
+                    mean(
+                        abs2, [getproperty(e, sigma) for e in gpu.emitters]
+                    )
+                )
                 @test abs(mean(errors)) <= tolerance
                 @test isfinite(crlb) && crlb > 0
                 @test abs(1 - std(errors) / crlb) < 0.3
