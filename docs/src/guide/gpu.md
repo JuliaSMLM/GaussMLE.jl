@@ -37,7 +37,9 @@ AMD GPU when AMDGPU is loaded.
 
 If neither vendor is functional, `:gpu` errors immediately and `:auto` uses CPU
 without a warning. Timeouts govern resource waits and retries only after a functional
-vendor is found; a timeout in `:auto` warns before falling back to CPU.
+vendor is found; a timeout in `:auto` warns before falling back to CPU. Only resource
+errors (out of memory, context creation) are retried; any other GPU error rethrows under
+`:gpu` and falls back to the CPU under `:auto`.
 
 All five PSF models, including `SplinePSFModel`, follow these backend rules.
 
@@ -45,7 +47,7 @@ All five PSF models, including `SplinePSFModel`, follow these backend rules.
 
 `SplinePSFModel` builds its pixel-integral coefficient table on the host. Adapt moves
 that table to the selected CUDA or AMD GPU before the first batch. All batches in a fit
-share it; a retry after a GPU failure transfers it again because the device or context
+share it; a retry after a resource error transfers it again because the device or context
 may have changed. GPU memory polling includes the table's storage requirement.
 
 CPU fitting uses the same table through POCL's device-array view. The kernel model
@@ -244,7 +246,7 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 The same unified kernel runs on every device via KernelAbstractions.jl. Agreement between GPU and CPU results depends on the model:
 
 - Gaussian models: differences are float32 rounding (about 1e-6 microns).
-- `SplinePSFModel`: the Levenberg-Marquardt accept/reject test branches on objective differences at float32 resolution near the optimum, so the two devices can stop at slightly different points along flat directions. The differences are a small fraction of the CRLB, not machine precision.
+- `SplinePSFModel`: the Levenberg-Marquardt accept/reject test branches on objective differences at float32 resolution near the optimum, so the two devices can stop at slightly different points along flat directions. CPU and GPU results differ by at most about 0.01 CRLB in any parameter (measured 0.009 on an RTX 4090 over 20,000 values of the GPU test group's design), not machine precision.
 
 ## Troubleshooting
 

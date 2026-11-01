@@ -33,11 +33,11 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             )
         else
             (
+                (AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorOutOfMemory),),
                 (
-                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorOutOfMemory),
+                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorInvalidValue),
                     AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorNotInitialized),
                 ),
-                (AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorInvalidValue),),
             )
         end
         for e in resource

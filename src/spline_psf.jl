@@ -51,7 +51,8 @@ as a `SplinePSF` first.
 
 At fit time, Adapt moves the coefficient array to the selected backend once and drops
 the point callable from the kernel model. All batches share that table; a retry after a
-GPU failure transfers it again. POCL uses the host array through its device-array view.
+GPU resource error transfers it again. POCL uses the host array through its device-array
+view.
 The table occupies `4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about
 5 to 10 MiB for a PSFLearning export, in addition to the ROI and result arrays.
 

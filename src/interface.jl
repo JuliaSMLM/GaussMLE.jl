@@ -4,14 +4,17 @@ High-level API for Gaussian MLE fitting
 
 # Input validation helpers
 
-# Throw ArgumentError for the first ROI of `roi_batch` that does not lie on a sensor of
-# `sensor_size = (rows, columns)`: 1 <= corner and corner + box - 1 <= sensor size on both
-# axes. A device-side lookup outside the sensor is a kernel exception, not a clear error.
-function _validate_roi_corners(roi_batch, sensor_size::Tuple{Int, Int})
-    box = size(roi_batch.data, 1)
+# Throw ArgumentError for the first ROI of box size `box` at `x_corners`, `y_corners` that
+# does not lie on a sensor of `sensor_size = (rows, columns)`: 1 <= corner and
+# corner + box - 1 <= sensor size on both axes. A device-side lookup outside the sensor is
+# a kernel exception, not a clear error.
+function _validate_roi_corners(
+        box::Integer, x_corners::AbstractVector, y_corners::AbstractVector,
+        sensor_size::Tuple{Int, Int}
+    )
     rows, columns = sensor_size
-    for k in eachindex(roi_batch.x_corners)
-        x, y = Int(roi_batch.x_corners[k]), Int(roi_batch.y_corners[k])
+    for k in eachindex(x_corners, y_corners)
+        x, y = Int(x_corners[k]), Int(y_corners[k])
         if x < 1 || y < 1 || x + box - 1 > columns || y + box - 1 > rows
             throw(
                 ArgumentError(
@@ -140,9 +143,11 @@ Camera noise model is determined by the ROIBatch type:
 # Backend Semantics
 - `:cpu` - Always use CPU, no waiting
 - `:gpu` - Error immediately if no functional GPU is found; otherwise wait for resources
-  and retry failures up to `gpu_timeout`, then error
+  and retry resource errors (out of memory, context creation) up to `gpu_timeout`, then
+  error; any other GPU error rethrows
 - `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
-  and retry failures up to `auto_timeout`, then warn and fall back to CPU
+  and retry resource errors (out of memory, context creation) up to `auto_timeout`, then
+  warn and fall back to CPU; any other GPU error warns and falls back to CPU at once
 
 GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
 AMDGPU (`using AMDGPU`) before `fit`.
@@ -259,7 +264,7 @@ const CPU_WORKGROUP_SIZE = 64
 """
     _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
-                     fitter) -> (actual_backend, device_id, actual_batch_size,
+                     fitter; vendor) -> (actual_backend, device_id, actual_batch_size,
                      actual_n_batches)
 
 Internal helper that runs the MLE kernel on CPU or GPU with appropriate batching.
@@ -267,8 +272,11 @@ Handles all backend selection and batch management logic.
 
 # Arguments
 - Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods
-- Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners, y_corners
+- Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners,
+  y_corners
 - fitter: GaussMLEConfig with backend/batching configuration
+- vendor: the GPU vendor (`nothing` for none); defaults to `_gpu_vendor()` unless the
+  backend is `:cpu`. A test passes a fake vendor to drive the retry loop.
 
 # Returns
 Tuple of (actual_backend::Symbol, device_id::Int, actual_batch_size::Int,
@@ -285,11 +293,16 @@ function _run_mle_kernel!(
         variance_map::Matrix{Float32},
         x_corners::AbstractVector{Int32},
         y_corners::AbstractVector{Int32},
-        fitter::GaussMLEConfig
+        fitter::GaussMLEConfig;
+        vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
     )
     n_fits = size(data, 3)
     n_params = size(results, 1)
     box_size = size(data, 1)
+    # Every sCMOS entry point reaches the kernel here, and the kernel indexes the variance
+    # map by corner, so every ROI must lie on the map's sensor.
+    use_scmos isa Val{true} &&
+        _validate_roi_corners(box_size, x_corners, y_corners, size(variance_map))
     constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
 
     # Track for GaussMLEFitInfo
@@ -299,7 +312,6 @@ function _run_mle_kernel!(
     actual_n_batches = 0
 
     # --- CPU fast path ---
-    vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
     use_cpu = fitter.backend == :cpu || (fitter.backend != :gpu && vendor === nothing)
 
     if fitter.backend == :gpu && vendor === nothing
@@ -720,8 +732,11 @@ function fit(
     t0 = time_ns()
 
     variance_map = extract_variance_map(roi_batch.camera, Float32)
-    # The kernel indexes the variance map by corner, so every ROI must lie on the sensor.
-    _validate_roi_corners(roi_batch, size(variance_map))
+    # Checked here too, before to_electrons indexes the calibration at the corners.
+    _validate_roi_corners(
+        size(roi_batch.data, 1), roi_batch.x_corners, roi_batch.y_corners,
+        size(variance_map)
+    )
 
     # Preprocess: ADU → electrons using per-pixel calibration at ROI positions
     data_electrons = to_electrons(

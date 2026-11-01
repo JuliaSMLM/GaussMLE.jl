@@ -78,17 +78,17 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             # SplinePSFModel is fitted by Levenberg-Marquardt, whose accept/reject test
             # branches on objective differences at float32 resolution near the optimum, so
             # CPU and GPU can stop at equally good points along the flat photon-background
-            # direction. Measured on the 4090 they reach the same objective (median
-            # difference 1e-8 log-likelihood) and differ by at most 0.14 CRLB in photons and
-            # 0.01 CRLB in x, y and z. The Gaussian models' fixed-step loop keeps its
-            # rtol 1e-4 test elsewhere, so compare in CRLB units here.
+            # direction. With parameters on a bound held fixed, they differed by at most
+            # 0.009 CRLB in any parameter on the 4090 (20,000 values of this design). The
+            # Gaussian models' fixed-step loop keeps its rtol 1e-4 test elsewhere, so
+            # compare in CRLB units here.
             for (field, sigma) in zip(parameter_fields, uncertainty_fields)
                 a = [getproperty(e, field) for e in cpu.emitters]
                 b = [getproperty(e, field) for e in gpu.emitters]
                 s = [getproperty(e, sigma) for e in cpu.emitters]
                 @test all(isfinite, a) && all(isfinite, b)
                 d = abs.(a .- b) ./ s
-                @test maximum(d) <= 0.25
+                @test maximum(d) <= 0.05
                 @test count(<=(0.01), d) / length(d) >= 0.99
             end
             for field in uncertainty_fields
