@@ -5,11 +5,12 @@ using GaussMLE: GaussMLE
 using MicroscopePSFs: MicroscopePSFs
 
 function GaussMLE._compute_psf_scale(
-        psf::MicroscopePSFs.AbstractPSF, pixel_size::T, lateral_range::T, z_ref::T
+        psf::MicroscopePSFs.AbstractPSF, pixel_size::NTuple{2, T},
+        lateral_range::T, z_ref::T
     ) where {T}
     # MicroscopePSFs supplies photon densities in µm^-2, so only the pixel area is
     # needed to convert the table's averages to fractions of the total photons.
-    pixel_area = pixel_size^2
+    pixel_area = pixel_size[1] * pixel_size[2]
     photon_sum = pixel_area *
         GaussMLE._spline_reference_sum(psf, pixel_size, lateral_range, z_ref)
     (isfinite(photon_sum) && T(0.5) <= photon_sum <= T(1.05)) || throw(
@@ -25,7 +26,7 @@ end
 
 function GaussMLE.SplinePSFModel(
         psf::MicroscopePSFs.SplinePSF;
-        pixel_size::Real,
+        pixel_size::Union{Real, Tuple{Real, Real}},
         z_range = (psf.z_min, psf.z_max),
         lateral_range::Real = 1.5
     )
