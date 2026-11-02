@@ -354,7 +354,10 @@ end
 # is rejected (lambda * 10). The next trial is theta_acc + delta with
 # (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded, with a parameter
 # that sits on a bound and whose gradient points out of the box held fixed; if the
-# factorization fails, delta = 0 and lambda * 10. Returns the last accepted point.
+# factorization fails, delta = 0 and lambda * 10. Returns the last accepted point and the
+# objective there, `(θ_acc, obj_acc)`: the first pass always accepts its start, so
+# iterations = 1 returns the clamped start with its objective. The multi-start `_optimize`
+# of SplinePSFModel compares these objectives.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -429,7 +432,7 @@ end
         step = clamp.(Δ, -constraints.max_step, constraints.max_step)
         θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
     end
-    return θ_acc
+    return θ_acc, obj_acc
 end
 
 # Unified kernel that works on both CPU and GPU

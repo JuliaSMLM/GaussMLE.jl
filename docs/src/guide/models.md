@@ -201,9 +201,22 @@ used. Pixel-size rescaling preserves this plane and recomputes the appropriate s
 A non-finite or non-positive reference sum for a plain callable throws `ArgumentError`.
 Point samples are clipped at zero before quadrature for both conventions.
 
-Fitting starts at the intensity centroid for x and y, the edge-pixel mean for the
+The scan start is the intensity centroid for x and y, the edge-pixel mean for the
 background, the positive in-box sum above it for N, and the z of a Poisson likelihood scan
-at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt on the full
+at those values (grid spacing at most 0.1 µm). One Levenberg-Marquardt fit reaches the
+maximum of the basin it starts in, and the scan start is often in the wrong basin for a
+defocused ROI. By default the fit therefore also starts from several fixed z values, as
+SMAP's fitter does, and keeps the fit with the highest likelihood. The `starts` keyword
+sets the total number of starts (the scan start plus `starts - 1` fixed ones). The default
+is one fixed start per 0.4 µm over the central 80 % of `z_range`: 6 starts for ±1 µm, 5 for
+±0.6 µm and 4 for ±0.5 µm. A single fixed start sits at the center of `z_range`; `m >= 2`
+fixed starts sit at `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`, with `R`
+the width of `z_range`. Each fixed start keeps the scan start's x, y, N and background, and
+each start costs one more Levenberg-Marquardt fit with the full `iterations`.
+`starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
+defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
+one start ended more than 0.05 below the best log-likelihood found in 116 of 400 fits and
+the default in none. The fit is Levenberg-Marquardt on the full
 Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
 likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and

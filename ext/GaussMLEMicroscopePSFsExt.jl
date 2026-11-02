@@ -28,7 +28,8 @@ function GaussMLE.SplinePSFModel(
         psf::MicroscopePSFs.SplinePSF;
         pixel_size::Union{Real, Tuple{Real, Real}},
         z_range = (psf.z_min, psf.z_max),
-        lateral_range::Real = 1.5
+        lateral_range::Real = 1.5,
+        starts::Union{Nothing, Integer} = nothing
     )
     psf.z_range === nothing &&
         throw(ArgumentError("SplinePSFModel needs a 3D SplinePSF; this one is 2D"))
@@ -40,7 +41,7 @@ function GaussMLE.SplinePSFModel(
                 "($(psf.z_min), $(psf.z_max))"
         )
     )
-    return GaussMLE._spline_psf_model(psf, pixel_size, z_range, psf, lateral_range)
+    return GaussMLE._spline_psf_model(psf, pixel_size, z_range, psf, lateral_range, starts)
 end
 
 end # module

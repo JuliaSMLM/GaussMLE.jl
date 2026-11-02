@@ -225,7 +225,12 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
      `_readout_variance`, zero for IdealCamera), with uncapped photon and background steps;
      a parameter on a bound whose gradient points out of the box is held (identity row and
      column, zero gradient) while the rest take the step; `iterations` counts its pixel
-     passes, the last only evaluating, so a fit takes at most `iterations - 1` steps
+     passes, the last only evaluating, so a fit takes at most `iterations - 1` steps;
+     `_lm_fit` returns `(θ_acc, obj_acc)`, and `_optimize` runs it from the scan start and
+     then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N, bg from the scan
+     start; default count `_default_spline_starts`, one fixed start per 0.4 µm over the
+     central 80 % of `z_range`), each with the full `iterations`, keeping the strictly
+     higher objective (the earlier start on a tie). `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
@@ -311,8 +316,9 @@ The math is dimensionally consistent:
 - `src/constraints.jl` - Parameter constraints system
 - `src/gausslib/` - Gaussian math helpers used by CPU and GPU kernels
 - `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), host
-  construction, backend adaptation, and analytic derivatives on CPU and GPU
-- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor (weak dependency)
+  construction, backend adaptation, analytic derivatives, and the multi-start fit
+  (`starts` field) on CPU and GPU
+- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor, with the `starts` keyword (weak dependency)
 
 ### SMLMData Ecosystem Integration
 

@@ -9,6 +9,16 @@ using SMLMSim: poisson_noise
 
 include(joinpath(@__DIR__, "long", "utils", "spline_psf_helpers.jl"))
 
+# An isbits stand-in for a device array: Adapt turns the coefficient Array into one.
+struct PtrArray{T} <: AbstractArray{T, 3}
+    ptr::Ptr{T}
+    dims::NTuple{3, Int}
+end
+Base.size(a::PtrArray) = a.dims
+Base.getindex(a::PtrArray, i::Int) = unsafe_load(a.ptr, i)
+GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
+    PtrArray{T}(pointer(a), size(a))
+
 @testset "SplinePSFModel" begin
 
     # Unaberrated scalar PSF on a coarse grid, as in PSFLearning's bridge tests
@@ -512,6 +522,69 @@ include(joinpath(@__DIR__, "long", "utils", "spline_psf_helpers.jl"))
         # a fit cannot show which index was formed.
         @test GaussMLE._spline_interval(NaN32, 5) == (0, 0.0f0)
         @test GaussMLE._spline_interval(2.5f0, 5) == (2, 0.5f0)
+    end
+
+
+    @testset "starts: default count, validation, fixed start positions" begin
+        # Plain callables keep the construction cheap; only z_range matters here.
+        build(zr; kwargs...) = SplinePSFModel(
+            astig_shape; pixel_size = 0.1, z_range = zr, lateral_range = 0.5, kwargs...
+        )
+        # one fixed start per 0.4 µm over the central 80 % of the range, plus the scan start
+        for (zr, expected) in (((-1, 1), 6), ((-0.6, 0.6), 5), ((-0.5, 0.5), 4))
+            @test build(zr).starts == expected
+            @test GaussMLE._default_spline_starts(build(zr).z_range) == expected
+        end
+        @test model().starts == 4  # from a SplinePSF
+        @test model(; starts = 1).starts == 1
+        @test model(; starts = 7).starts == 7
+        @test_throws ArgumentError build((-0.5, 0.5); starts = 0)
+        @test_throws ArgumentError model(; starts = -2)
+        @test occursin("starts=4", sprint(show, model()))
+
+        # starts survive pixel-size rescaling and Adapt, and the adapted model is isbits
+        m = build((-0.5, 0.5); starts = 3)
+        @test GaussMLE.to_pixel_units(m, 0.11).starts == 3
+        adapted = GaussMLE.Adapt.adapt(PtrArray, m)
+        @test adapted.starts == 3
+        @test isbitstype(typeof(adapted))
+
+        # m = 1 fixed start at the center, else m starts evenly over the central 80 %
+        m1 = build((-0.4, 0.6); starts = 2)
+        @test GaussMLE._spline_start_z(m1, 0, 1) ≈ 0.1f0
+        m4 = build((-1, 1))
+        zs = [GaussMLE._spline_start_z(m4, q, 5) for q in 0:4]
+        @test zs ≈ Float32[-0.8, -0.4, 0, 0.4, 0.8]
+        m3 = build((-0.6, 0.6))
+        @test [GaussMLE._spline_start_z(m3, q, 4) for q in 0:3] ≈
+            Float32[-0.48, -0.16, 0.16, 0.48]
+    end
+
+    @testset "starts: the default objective is never below one start" begin
+        Random.seed!(11)
+        one_start = SplinePSFModel(
+            astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5), starts = 1
+        )
+        multi = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        box = 11
+        cons = GaussMLE.default_constraints(multi, box)
+        vmap = zeros(Float32, box, box)
+        objective(roi, θ) = sum(
+            GaussMLE._fit_objective(
+                roi[i, j], GaussMLE.evaluate_psf(multi, i, j, θ), 0.0f0
+            ) for j in 1:box, i in 1:box
+        )
+        for z in (-0.45f0, -0.2f0, 0.3f0, 0.45f0)
+            roi = Float32.(poisson_noise(roi_at(multi, z; photons = 300)))
+            θ0 = GaussMLE.simple_initialize(roi, box, multi)
+            fits = map((one_start, multi)) do mdl
+                GaussMLE._optimize(
+                    roi, box, mdl, Val(false), vmap, Int32(1), Int32(1), cons, 20, θ0
+                )
+            end
+            # the tolerance covers Float32 summation order: the kernel compares its own sums
+            @test objective(roi, fits[2]) >= objective(roi, fits[1]) - 1.0f-3
+        end
     end
 
 end
