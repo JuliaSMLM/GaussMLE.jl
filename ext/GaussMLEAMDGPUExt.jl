@@ -14,8 +14,16 @@ GaussMLE._reclaim_gpu(::ROCmGPU) = AMDGPU.HIP.reclaim()
 # Zero-based ordinal of the active device, as `_activate_gpu!` takes it (AMDGPU 2.10).
 GaussMLE._active_device_id(::ROCmGPU) = Int(AMDGPU.HIP.device_id(AMDGPU.device()))
 
-function GaussMLE._is_resource_error(::ROCmGPU, e)
+function GaussMLE._is_oom_error(::ROCmGPU, e)
     return e isa AMDGPU.HIP.HIPError && e.code == AMDGPU.HIP.hipErrorOutOfMemory
+end
+
+GaussMLE._is_resource_error(v::ROCmGPU, e) = GaussMLE._is_oom_error(v, e)
+
+# Total bytes of each device (AMDGPU 2.10: `info()` returns (free, total) for the active
+# device, so the scoped switch restores the previous one).
+function GaussMLE._gpu_total_memory(::ROCmGPU)
+    return [Int(AMDGPU.device!(AMDGPU.info, dev)[2]) for dev in AMDGPU.devices()]
 end
 
 function GaussMLE._release_gpu_context(::ROCmGPU, i)
@@ -38,7 +46,7 @@ function GaussMLE._poll_gpu(
     )
     try
         devices = AMDGPU.devices()
-        required_with_margin = required_bytes * 1.5
+        required_with_margin = required_bytes * GaussMLE.GPU_MEMORY_MARGIN
         start = time()
         deadline = start + timeout
         poll = 0.5

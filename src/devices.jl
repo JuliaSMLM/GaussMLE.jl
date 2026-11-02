@@ -19,12 +19,49 @@ _reclaim_gpu(::CUDAGPU) = CUDA.reclaim()
 _active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
 _release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
 
+# Whether `e` is a device out-of-memory error: a smaller batch can clear it at once.
+_is_oom_error(::GPUVendor, e) = false
+function _is_oom_error(::CUDAGPU, e)
+    e isa CUDA.OutOfGPUMemoryError && return true
+    return e isa CUDA.CuError && e.code == CUDA.ERROR_OUT_OF_MEMORY
+end
+
 # Whether `e` is a resource error that waiting can clear (out of memory, a context that
 # cannot be created); the retry loop rethrows or falls back to the CPU for any other.
-function _is_resource_error(::CUDAGPU, e)
-    e isa CUDA.OutOfGPUMemoryError && return true
-    return e isa CUDA.CuError &&
-        e.code in (CUDA.ERROR_OUT_OF_MEMORY, CUDA.ERROR_DEVICE_UNAVAILABLE)
+function _is_resource_error(v::CUDAGPU, e)
+    _is_oom_error(v, e) && return true
+    return e isa CUDA.CuError && e.code == CUDA.ERROR_DEVICE_UNAVAILABLE
+end
+
+# A vendor without a total-memory query skips the one-ROI check.
+_gpu_total_memory(::GPUVendor) = Int[]
+
+# Safety margin on a batch's estimated bytes, for polling and for the total-memory check.
+const GPU_MEMORY_MARGIN = 1.5
+
+"""
+    _exceeds_device_memory(required_bytes, totals) -> Bool
+
+Whether `required_bytes`, with the polling margin, exceeds the total memory of every
+device in `totals`. Such a batch cannot fit however long the fit waits. An empty `totals`
+(a failed query) never exceeds.
+"""
+function _exceeds_device_memory(required_bytes::Real, totals)
+    return !isempty(totals) && all(t -> required_bytes * GPU_MEMORY_MARGIN > t, totals)
+end
+
+# Total bytes of each visible device, through NVML without a context; devices whose NVML
+# query is unsupported (DGX Spark GB10) are asked through CUDA instead.
+function _gpu_total_memory(::CUDAGPU)
+    return map(0:(length(CUDA.devices()) - 1)) do i
+        try
+            Int(CUDA.NVML.memory_info(_nvml_device(i)).total)
+        catch e
+            e isa CUDA.NVML.NVMLError && e.code == CUDA.NVML.NVML_ERROR_NOT_SUPPORTED ||
+                rethrow()
+            Int(CUDA.device!(CUDA.total_memory, i))
+        end
+    end
 end
 
 function _poll_gpu(
@@ -172,7 +209,7 @@ function wait_for_gpu_nvml(
 
     n_devices = length(CUDA.devices())
     my_pid = getpid()
-    required_with_margin = required_bytes * 1.5
+    required_with_margin = required_bytes * GPU_MEMORY_MARGIN
     deadline = time() + timeout
     start = time()
 
