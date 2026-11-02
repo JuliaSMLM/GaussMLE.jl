@@ -14,7 +14,7 @@ if scenario == "launch_failed"
     end
 end
 
-n_rois = scenario == "oom" ? 20_000 : 200
+n_rois = scenario == "oom" ? 200_000 : 200
 roi_size = 15
 psf_model = GaussianXYNB(0.13f0)
 batch = GaussMLE.generate_roi_batch(
