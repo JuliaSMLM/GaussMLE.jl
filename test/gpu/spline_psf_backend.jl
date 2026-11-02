@@ -161,11 +161,13 @@ end
     )
     wide, narrow = model(2.2), model(1.5)
     box, n = 31, 4
+    edges = collect(0:box) .* 0.1
     data = zeros(Float32, box, box, n)
-    for k in 1:n, j in 1:box, i in 1:box
-        data[i, j, k] = GaussMLE.evaluate_psf(
-            wide, i, j, Float32[16 + 0.2k, 16, 0.1, 2000, 10]
-        )
+    for k in 1:n
+        emitters = [Emitter3D((15.5 + 0.2k) * 0.1, 1.55, 0.1, 2000.0)]
+        data[:, :, k] .= MicroscopePSFs.integrate_pixels(
+            spline, edges, edges, emitters; sampling = 4
+        ) .+ 10
     end
     camera = IdealCamera(64, 64, 0.1)
     batch = ROIBatch(data, ones(Int32, n), ones(Int32, n), Int32.(1:n), camera)
