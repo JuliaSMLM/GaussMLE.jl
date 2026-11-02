@@ -50,6 +50,32 @@ function _exceeds_device_memory(required_bytes::Real, totals)
     return !isempty(totals) && all(t -> required_bytes * GPU_MEMORY_MARGIN > t, totals)
 end
 
+"""
+    _never_fits(free, total, required_with_margin, other_process) -> Bool
+
+Whether a device can never satisfy a request, however long the fit waits. True when
+its total memory is below the request, or when it is idle (`other_process === false`)
+and its free memory is below the request: the driver and this process's own context hold
+the difference. With another process present (`true`) or unknown (`nothing`), waiting may
+help, so the answer is false.
+"""
+function _never_fits(free::Real, total::Real, required_with_margin::Real, other_process)
+    total < required_with_margin && return true
+    return other_process === false && free < required_with_margin
+end
+
+# Whether a process other than `my_pid` uses the device: `nothing` when NVML cannot say.
+function _other_process_present(
+        device_idx::Integer; my_pid = getpid(), processes = CUDA.NVML.compute_processes
+    )
+    return try
+        any(p -> p.first != my_pid, processes(_nvml_device(device_idx)))
+    catch e
+        e isa InterruptException && rethrow()
+        nothing
+    end
+end
+
 # Total bytes of each visible device, through NVML without a context; devices whose NVML
 # query is unsupported (DGX Spark GB10) are asked through CUDA instead.
 function _gpu_total_memory(::CUDAGPU)
@@ -139,7 +165,8 @@ function _gpu_contended(
     nvml_dev = _nvml_device(device_idx)
     procs = try
         processes(nvml_dev)
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         # NVML process query can fail on some drivers; skip contention check
         return false
     end
@@ -148,7 +175,8 @@ function _gpu_contended(
     # Other processes present - check if they're actually threatening
     util = try
         utilization(nvml_dev)
-    catch
+    catch e
+        e isa InterruptException && rethrow()
         (; compute = 0.0, memory = 0.0)
     end
     return util.compute > 0.9
@@ -185,7 +213,12 @@ Wait for a GPU with sufficient free memory, preferring NVML without CUDA context
 When NVML memory queries are unsupported, query CUDA memory on that device instead.
 Scans all visible GPUs each iteration - first available wins.
 
-Returns `(device_index, true)` if a GPU became available, `(-1, false)` if timeout reached.
+Returns `(device_index, true, nothing)` if a GPU became available, `(-1, false, nothing)`
+if the timeout was reached, and `(-1, false, best_free)` when no visible device can ever
+hold the request: each has a total below it, or is idle (no other process, per NVML) with
+free memory below it, `best_free` being the largest free bytes seen. Waiting helps only
+while another process holds the memory; where NVML cannot list processes (the CUDA
+fallback path) the wait continues.
 The index is a 0-based CUDA device ordinal, which honors `CUDA_VISIBLE_DEVICES`.
 
 Contention detection runs only when memory came from NVML: a GPU is considered contended
@@ -209,35 +242,48 @@ function wait_for_gpu_nvml(
 
     n_devices = length(CUDA.devices())
     my_pid = getpid()
+    totals = _gpu_total_memory(CUDAGPU())
     required_with_margin = required_bytes * GPU_MEMORY_MARGIN
     deadline = time() + timeout
     start = time()
 
     while true
         # Scan all GPUs - first available wins
+        never_fits = true
+        best_free = 0
         for i in 0:(n_devices - 1)
             free, from_nvml = _gpu_free_memory(i)
+            best_free = max(best_free, free)
 
             # Check if sufficient memory (with fragmentation margin)
-            free < required_with_margin && continue
+            if free < required_with_margin
+                # Waiting helps only if another process holds the memory; the CUDA
+                # fallback cannot list processes, so it keeps waiting.
+                other = from_nvml ? _other_process_present(i; my_pid) : nothing
+                never_fits &= _never_fits(free, totals[i + 1], required_with_margin, other)
+                continue
+            end
+            never_fits = false
 
             # The CUDA fallback cannot rely on NVML contention queries.
-            from_nvml || return (i, true)
+            from_nvml || return (i, true, nothing)
 
             _gpu_contended(i; my_pid) && continue
 
             # GPU i is available: sufficient memory, not contended (or sole user)
-            return (i, true)
+            return (i, true, nothing)
         end
+
+        # No GPU can ever hold the request - waiting is pointless
+        never_fits && return (-1, false, best_free)
 
         # No GPU available this tick - check timeout
         if time() >= deadline
-            return (-1, false)
+            return (-1, false, nothing)
         end
 
         if on_wait !== nothing
             # Report best available memory across all GPUs
-            best_free = maximum(first(_gpu_free_memory(i)) for i in 0:(n_devices - 1))
             on_wait(time() - start, best_free, required_bytes)
         end
 
@@ -250,18 +296,21 @@ end
 """
     _poll_gpu(backend, required_bytes; timeout, on_wait = nothing)
 
-Poll GPU availability, returning `(device_idx, available, failed)`. Interrupts and
-explicit `:gpu` errors propagate; other failures warn once and request CPU fallback.
+Poll GPU availability, returning `(device_idx, available, failed, never_fits)`.
+`never_fits` is `nothing`, or the largest free bytes of any device when the request can
+fit no visible device even when idle (the caller shrinks the batch or gives up).
+Interrupts and explicit `:gpu` errors propagate; other failures warn once and request
+CPU fallback.
 """
 function _poll_gpu(backend::Symbol, required_bytes::Integer; timeout, on_wait = nothing)
     try
-        device_idx, available = wait_for_gpu_nvml(
+        device_idx, available, never_fits = wait_for_gpu_nvml(
             required_bytes; timeout = timeout, on_wait = on_wait
         )
-        return device_idx, available, false
+        return device_idx, available, false, never_fits
     catch e
         (backend == :gpu || e isa InterruptException) && rethrow()
         @warn "GPU availability check failed, using CPU" exception = (e, catch_backtrace())
-        return -1, false, true
+        return -1, false, true, nothing
     end
 end

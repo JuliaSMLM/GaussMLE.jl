@@ -92,7 +92,7 @@ if CUDA.functional()
                         :auto, required_bytes; timeout = 2.0, on_wait = on_wait
                     )
                 end
-                @test result == (-1, false, true)
+                @test result == (-1, false, true, nothing)
             end
 
             @testset "Explicit GPU propagates polling failure" begin

@@ -146,9 +146,19 @@ After the loop: `:auto` falls back to CPU, `:gpu` errors; the message names the 
 size of the last failure. `GaussMLEFitInfo.batch_size` and `n_batches` report the batch
 cap that ran.
 
-Before the loop, if one ROI plus the PSF table (with the 1.5x margin) needs more than the
-total memory of every visible GPU, no wait can help: `:gpu` throws an error saying so and
-`:auto` uses the CPU at once.
+Waiting helps only while another process holds the memory. The poll compares the request
+(the batch plus the PSF table, with the 1.5x margin) with each device's free memory, which
+never reaches its total because the driver and contexts hold some. A device cannot satisfy
+the request when its total memory is below it, or when it is idle (NVML lists no other
+compute process) and its free memory is below it. When no visible device can, the poll
+reports that at once instead of waiting: the loop halves the batch and polls again, and for
+one ROI `:gpu` throws an error naming the request with margin and the largest free memory
+of an idle device, while `:auto` warns once and uses the CPU. Where the process list is
+unavailable (the CUDA fallback path, for example the DGX Spark GB10, and ROCm under WSL)
+only a total below the request is final and the wait continues otherwise. Before the loop,
+the same holds for one ROI plus the PSF table against every device's total memory.
+A Ctrl-C (`InterruptException`) anywhere on the GPU path is rethrown, never counted as a
+GPU fault and never followed by a CPU run.
 
 Cleanup after a failure (CUDA context release, AMD synchronize and reclaim) can itself
 throw on a poisoned context, for example after a sticky fault such as an illegal address.

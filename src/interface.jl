@@ -145,14 +145,17 @@ Camera noise model is determined by the ROIBatch type:
 - `:cpu` - Always use CPU, no waiting
 - `:gpu` - Error immediately if no functional GPU is found; otherwise wait for resources
   and retry resource errors (out of memory, context creation) up to `gpu_timeout`, then
-  error; any other GPU error rethrows. An out-of-memory error halves the batch and retries
-  at once; only a failing one-ROI batch waits. If one ROI plus the PSF table needs more
-  than every GPU's total memory, it errors before waiting.
+  error; any other GPU error rethrows. Waiting happens only while another process holds
+  the memory. A request (batch plus PSF table, with a 1.5x margin) that no idle GPU can
+  hold, because its free memory or its total memory is below the request, halves the
+  batch and polls again at once; for one ROI it errors, naming the request and the largest
+  free memory of an idle GPU. An out-of-memory error also halves the batch and retries at
+  once; only a failing one-ROI batch waits.
 - `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
   and retry resource errors (out of memory, context creation) up to `auto_timeout`, then
   warn and fall back to CPU; any other GPU error warns and falls back to CPU at once.
-  Out-of-memory errors halve the batch as in `:gpu`, and the CPU is used at once when one
-  ROI cannot fit any GPU's total memory
+  Out-of-memory errors and requests no idle GPU can hold halve the batch as in `:gpu`, and
+  the CPU is used at once (with one warning) when one ROI cannot fit any idle GPU
 
 A failure while releasing GPU memory after an error is logged as a warning and never
 replaces the original error, which `:gpu` rethrows and `:auto` handles as above.
@@ -386,11 +389,27 @@ function _run_mle_kernel!(
             required_memory = estimate_batch_memory(batch_cap, box_size, n_params) +
                 psf_bytes
             # Poll the vendor for an available GPU
-            dev_idx, available, failed = _poll_gpu(
+            dev_idx, available, failed, never_fits = _poll_gpu(
                 vendor, fitter.backend, required_memory;
                 timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
             )
             if failed
+                use_cpu = true
+                break
+            end
+            if never_fits !== nothing
+                # No visible device can hold this request even when idle, so waiting
+                # cannot help: shrink the batch, or give up at one ROI.
+                if batch_cap > 1
+                    batch_cap = cld(batch_cap, 2)
+                    continue
+                end
+                msg = "One ROI (box $box_size) plus the PSF table needs about " *
+                    "$(Base.format_bytes(round(Int, required_memory * GPU_MEMORY_MARGIN))) \
+                    with margin (batch of $batch_cap ROI), more than the largest free \
+                    memory of an idle GPU, $(Base.format_bytes(never_fits))"
+                fitter.backend == :gpu && error(msg)
+                @warn "$msg; using CPU"
                 use_cpu = true
                 break
             end
