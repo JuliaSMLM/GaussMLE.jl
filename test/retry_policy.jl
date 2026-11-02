@@ -10,9 +10,14 @@ Base.@kwdef struct FakeVendor <: GaussMLE.GPUVendor
     oom_above::Int = typemax(Int)  # out of memory when a batch exceeds this many ROIs
     cleanup_failure::Any = nothing  # thrown by the cleanup after a failure
     totals::Vector{Int} = Int[]  # the fake devices' total memory
+    # thrown once the context is live (by _ka_gpu_backend), and whether the out-of-memory
+    # check runs there instead of in _activate_gpu!
+    after_activate::Any = nothing
+    oom_after_activate::Bool = false
 end
 const ACTIVATE_CALLS = Ref(0)
 const RELEASE_CALLS = Ref(0)
+const RECLAIM_CALLS = Ref(0)
 const POLLED_BYTES = Ref(0)
 const BOX = 7
 
@@ -24,6 +29,11 @@ end
 function GaussMLE._activate_gpu!(v::FakeVendor, i)
     ACTIVATE_CALLS[] += 1
     v.failure === nothing || throw(v.failure)
+    v.oom_after_activate || check_fake_oom(v)
+    return nothing
+end
+function check_fake_oom(v::FakeVendor)
+    v.oom_above == typemax(Int) && return nothing  # no limit (the estimate would overflow)
     limit = GaussMLE.estimate_batch_memory(v.oom_above, BOX, 4)
     POLLED_BYTES[] > limit && throw(FakeOOMError())
     return nothing
@@ -35,8 +45,16 @@ function GaussMLE._release_gpu_context(v::FakeVendor, i)
 end
 GaussMLE._is_resource_error(::FakeVendor, e) = e isa FakeResourceError || e isa FakeOOMError
 GaussMLE._is_oom_error(::FakeVendor, e) = e isa FakeOOMError
-GaussMLE._ka_gpu_backend(::FakeVendor) = GaussMLE.KernelAbstractions.CPU()
-GaussMLE._reclaim_gpu(::FakeVendor) = nothing
+function GaussMLE._ka_gpu_backend(v::FakeVendor)
+    v.after_activate === nothing || throw(v.after_activate)
+    v.oom_after_activate && check_fake_oom(v)
+    return GaussMLE.KernelAbstractions.CPU()
+end
+function GaussMLE._reclaim_gpu(v::FakeVendor)
+    RECLAIM_CALLS[] += 1
+    v.cleanup_failure === nothing || throw(v.cleanup_failure)
+    return nothing
+end
 GaussMLE._active_device_id(::FakeVendor) = 0
 GaussMLE._gpu_total_memory(v::FakeVendor) = v.totals
 
@@ -57,6 +75,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     log_likelihoods = Vector{Float32}(undef, n_fits)
     ACTIVATE_CALLS[] = 0
     RELEASE_CALLS[] = 0
+    RECLAIM_CALLS[] = 0
     logger = Test.TestLogger()
     outcome = nothing
     n_batches = 0
@@ -78,7 +97,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     warnings = count(r -> r.level == Logging.Warn, logger.logs)
     return (;
         outcome, activations = ACTIVATE_CALLS[], releases = RELEASE_CALLS[],
-        elapsed, warnings, n_batches,
+        reclaims = RECLAIM_CALLS[], elapsed, warnings, n_batches,
     )
 end
 
@@ -176,5 +195,37 @@ end
         @test r.outcome === :cpu
         @test r.releases == 1
         @test r.warnings == 2  # the cleanup failure and the fallback
+    end
+
+    # Once the context is live, a failure keeps it (releasing CUDA's primary context breaks
+    # every later call in the process with CONTEXT_IS_DESTROYED) and only reclaims memory.
+    @testset "a failure after the context is live keeps the context" begin
+        vendor = FakeVendor(; after_activate = ErrorException("launch failed"))
+        r = run_retry_loop(vendor, :auto)
+        @test r.outcome === :cpu
+        @test r.releases == 0
+        @test r.reclaims == 1
+
+        r = run_retry_loop(vendor, :gpu)
+        @test r.outcome isa ErrorException
+        @test r.releases == 0
+
+        vendor = FakeVendor(;
+            after_activate = ErrorException("launch failed"),
+            cleanup_failure = ArgumentError("poisoned context")
+        )
+        r = run_retry_loop(vendor, :gpu)
+        @test r.outcome isa ErrorException
+        @test r.outcome.msg == "launch failed"
+    end
+
+    @testset "out of memory in a live context halves the batch and keeps the context" begin
+        vendor = FakeVendor(; oom_above = 2, oom_after_activate = true)
+        r = run_retry_loop(vendor, :gpu; timeout = 30.0)
+        @test r.outcome === :gpu
+        @test r.n_batches == 2
+        @test r.releases == 0
+        @test r.reclaims == 2  # after the failure and after the fit
+        @test r.elapsed < 10
     end
 end

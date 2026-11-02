@@ -269,6 +269,21 @@ end
 # Measured on kitt: ~34-42% higher XYNB throughput with 16-32 Julia threads.
 const CPU_WORKGROUP_SIZE = 64
 
+# After a failed GPU attempt. A context that could not be created is released, so its
+# reservation cannot block other processes. A live context is kept: releasing CUDA's primary
+# context under CUDA.jl makes every later call in this process fail with
+# CONTEXT_IS_DESTROYED (709), so a retry with a smaller batch could never run. Only the
+# failed attempt's arrays are collected and the pool's memory returned.
+function _cleanup_after_failure(vendor, dev_idx, context_active::Bool)
+    if context_active
+        GC.gc(true)
+        _reclaim_gpu(vendor)
+    else
+        _release_gpu_context(vendor, dev_idx)
+    end
+    return nothing
+end
+
 # Only a tabulated model has a finite lateral extent; SplinePSFModel specializes this.
 _validate_psf_box(::Any, ::Integer) = nothing
 
@@ -383,9 +398,11 @@ function _run_mle_kernel!(
                 break  # Timeout reached
             end
 
+            context_active = false
             try
                 # Acquire GPU context
                 _activate_gpu!(vendor, dev_idx)
+                context_active = true
                 gpu_backend = _ka_gpu_backend(vendor)
                 # Transfer a spline's table once for all batches on this device. A retry
                 # may replace the device/context, so it must adapt the host model again.
@@ -480,7 +497,7 @@ function _run_mle_kernel!(
                         ROIs, releasing resources" exception = (e, catch_backtrace())
                 end
                 try
-                    _release_gpu_context(vendor, dev_idx)
+                    _cleanup_after_failure(vendor, dev_idx, context_active)
                 catch ce
                     ce isa InterruptException && rethrow()
                     @warn "GPU cleanup on device $dev_idx failed; handling the original \
