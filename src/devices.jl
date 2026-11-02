@@ -117,6 +117,9 @@ function _gpu_contended(
     return util.compute > 0.9
 end
 
+# CUDA 6 keeps the driver API wrappers in CUDACore; CUDA 5 defines them in CUDA itself.
+_cuda_driver_module() = isdefined(CUDA, :CUDACore) ? CUDA.CUDACore : CUDA
+
 """
     _release_gpu_context(device_idx)
 
@@ -129,7 +132,7 @@ function _release_gpu_context(device_idx::Integer)
     GC.gc(false)
     return try
         dev = CUDA.CuDevice(device_idx)
-        CUDA.CUDACore.cuDevicePrimaryCtxRelease(dev)
+        _cuda_driver_module().cuDevicePrimaryCtxRelease(dev)
     catch e
         # Best-effort: context may not exist if creation failed early
         e isa CUDA.CuError || rethrow()

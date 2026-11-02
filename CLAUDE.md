@@ -55,7 +55,8 @@ The package uses a unified kernel approach via KernelAbstractions.jl:
   matrix for `SplinePSFModel`
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
 - Spline pixel-integral tables are built on the host and adapted once per backend attempt;
-  CPU (POCL), CUDA and AMDGPU use one kernel, with the point callable removed before launch
+  CPU (POCL under KernelAbstractions 0.10, native under 0.9), CUDA and AMDGPU use one
+  kernel, with the point callable removed before launch
 - Spline values and analytic first derivatives share one 4 × 4 × 4 gather (second derivatives are zero: no fit uses them);
   rectangular pixels use each axis's spacing, and non-positive values have zero derivatives
 - Spline initialization and z scanning use immutable `SVector` parameters; the scan gathers

@@ -11,8 +11,10 @@ The type parameter `NParams` specifies the number of fitting parameters at compi
 enabling type-stable code generation. The type parameter `T` specifies the numeric type.
 
 # Custom models
-Since 0.4.3 the kernel receives every model through `Adapt.adapt_structure`, on the CPU
-(POCL) as on a GPU, so a model defined outside this package must be `isbits` after Adapt:
+Since 0.4.3 the kernel receives every model through `Adapt.adapt_structure`, on GPUs and on
+the CPU backend of KernelAbstractions 0.10 (POCL), so a model defined outside this package
+must be `isbits` after Adapt there (the CPU backend of KernelAbstractions 0.9 does not
+require it):
 numbers, `SVector`s, and arrays that `Adapt.adapt_structure` converts to device arrays, with
 any host-only field (a callable, a heap array) dropped there, as `SplinePSFModel` drops its
 point PSF. `simple_initialize` must return an `SVector`, not an `MVector`. A model that is

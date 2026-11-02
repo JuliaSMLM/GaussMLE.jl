@@ -9,7 +9,7 @@ bridge (PSFLearning b2a2283, `src/interop/gaussmle_bridge.jl`). CPU and GPU.
 
 A 3D PSF model backed by a point PSF `S`: any callable `(x, y, z)` in microns relative to
 the emitter, such as a `MicroscopePSFs.SplinePSF`. GaussMLE integrates this point PSF over
-each camera pixel on the host. CPU (POCL), CUDA and AMDGPU fitting use the same table
+each camera pixel on the host. CPU, CUDA and AMDGPU fitting use the same table
 and kernel; the point callable never reaches a kernel.
 
 # Parameters (in order)
@@ -51,8 +51,8 @@ as a `SplinePSF` first.
 
 At fit time, Adapt moves the coefficient array to the selected backend once and drops
 the point callable from the kernel model. All batches share that table; a retry after a
-GPU resource error transfers it again. POCL uses the host array through its device-array
-view.
+GPU resource error transfers it again. On the CPU, POCL (KernelAbstractions 0.10) uses the
+host array through its device-array view.
 The table occupies `4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about
 5 to 10 MiB for a PSFLearning export, in addition to the ROI and result arrays.
 
@@ -188,7 +188,7 @@ function Adapt.adapt_structure(to, model::SplinePSFModel{T}) where {T}
     )
 end
 
-# Backend adaptation also strips the host-only callable on the POCL CPU path.
+# Backend adaptation also strips the host-only callable on the CPU path.
 _prepare_psf_model(backend, model::SplinePSFModel) = Adapt.adapt(backend, model)
 _psf_table_bytes(model::SplinePSFModel{T}) where {T} =
     sizeof(T) * length(model.pixel_psf.coefficients)

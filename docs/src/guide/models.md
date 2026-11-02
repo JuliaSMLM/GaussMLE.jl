@@ -223,12 +223,13 @@ of the Gaussian models.
 ## Custom PSF Models
 
 A subtype of `GaussMLE.PSFModel` defined outside this package must be `isbits` after
-`Adapt.adapt_structure` to run on any backend, the CPU included, since 0.4.3: the kernel
-receives every model through Adapt. Hold numbers, `SVector`s and arrays that Adapt moves to
-the device, and drop host-only fields (a callable, a heap array) in `adapt_structure`, as
-`SplinePSFModel` does with its point PSF. `simple_initialize` must return an `SVector`, as
-`SplinePSFModel`'s does, not an `MVector`. Otherwise the fit fails with a
-`GPUCompiler.KernelError` ("passing non-bitstype argument").
+`Adapt.adapt_structure` to run on GPUs and on the CPU backend of KernelAbstractions 0.10
+(POCL), which a fresh environment resolves: the kernel receives every model through Adapt.
+The CPU backend of KernelAbstractions 0.9 does not require it. Hold numbers, `SVector`s and
+arrays that Adapt moves to the device, and drop host-only fields (a callable, a heap array)
+in `adapt_structure`, as `SplinePSFModel` does with its point PSF. `simple_initialize` must
+return an `SVector`, as `SplinePSFModel`'s does, not an `MVector`. Otherwise the fit fails
+with a `GPUCompiler.KernelError` ("passing non-bitstype argument").
 
 ## Model Comparison
 
