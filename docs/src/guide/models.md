@@ -159,6 +159,12 @@ or an `(x, y)` tuple for rectangular pixels, for example `(0.1313, 0.1258)` in m
 The model stores both sizes as a Float32 tuple, and `fit(::ROIBatch)` rescales each axis
 to the camera's own spacing. This rectangular-pixel support is specific to `SplinePSFModel`.
 
+`lateral_range` must cover the half-diagonal of the ROI,
+`sqrt((box * pixel_size_x / 2)^2 + (box * pixel_size_y / 2)^2)`. The table ends at
+`lateral_range` plus one pixel and is zero beyond it, so `fit` throws `ArgumentError`
+for a larger ROI instead of fitting a truncated PSF. A 31 px box of 0.1 µm pixels has a
+half-diagonal of 2.19 µm and needs `lateral_range >= 2.19`; the default is 1.5 µm.
+
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
 quadrature with five sub-intervals per lateral axis. The lateral table spacings are
 `pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least

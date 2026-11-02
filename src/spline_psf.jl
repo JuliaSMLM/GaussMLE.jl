@@ -43,7 +43,10 @@ must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it
 
 `pixel_size` is the camera pixel size in microns: a `Real` for square pixels or a tuple
 `(x, y)` for rectangular pixels. `fit` rescales the model to both camera pixel sizes.
-Each component and `lateral_range` must be finite and positive before and after Float32
+`lateral_range` must cover the half-diagonal of the ROI, `sqrt((box * pixel_size_x / 2)^2 +
+(box * pixel_size_y / 2)^2)`: the table ends at `lateral_range` plus one pixel and is zero
+beyond it, so `fit` throws `ArgumentError` for a larger ROI instead of fitting a truncated
+PSF. Each component and `lateral_range` must be finite and positive before and after Float32
 conversion. Construction builds a Float32 table of pixel averages using composite
 two-point Gauss-Legendre quadrature on five sub-intervals per axis. Its lateral nodes have
 spacing `pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least
@@ -110,7 +113,8 @@ step. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds
 - `pixel_psf::P`: the internal table of pixel averages, evaluated in microns
 - `pixel_size::Tuple{T, T}`: camera pixel sizes `(x, y)` in microns
 - `z_range::Tuple{T, T}`: valid axial range in microns
-- `lateral_range::T`: lateral extent in microns used for the reference patch
+- `lateral_range::T`: lateral extent in microns used for the reference patch; `fit`
+  refuses a ROI whose half-diagonal exceeds it
 - `px_scale::T`: pixel area for a photon density, or reference normalization for a callable
 - `z_ref::T`: reference plane nearest zero in the inward-rounded callable range
   (microns), preserved on rescaling
@@ -242,6 +246,27 @@ _psf_table_bytes(model::SplinePSFModel{T}) where {T} =
     sizeof(T) * length(model.pixel_psf.coefficients)
 
 _array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
+
+# The table is zero beyond lateral_range plus one pixel, so a ROI whose half-diagonal
+# exceeds lateral_range would be fitted with a truncated PSF.
+function _validate_psf_box(model::SplinePSFModel, box_size::Integer)
+    shown_x, shown_y = model.pixel_size
+    px_x, px_y = Float64(shown_x), Float64(shown_y)
+    half_diagonal = hypot(box_size * px_x / 2, box_size * px_y / 2)
+    lateral = Float64(model.lateral_range)
+    half_diagonal <= lateral && return nothing
+    hd = round(half_diagonal; digits = 2)
+    throw(
+        ArgumentError(
+            "ROI box of $box_size px ($(shown_x) x $(shown_y) um pixels) has a half-diagonal " *
+                "of $(hd) um, beyond the SplinePSFModel lateral_range of $(model.lateral_range) um; " *
+                "the model is zero beyond its lateral range plus one pixel, so the fit " *
+                "would use a truncated PSF. Build the model with lateral_range >= " *
+                "$(ceil(half_diagonal; digits = 2)) " *
+                "(SplinePSFModel(...; lateral_range = ...)) or use a smaller box."
+        )
+    )
+end
 
 function _model_for_camera(model::SplinePSFModel, camera)
     px_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]

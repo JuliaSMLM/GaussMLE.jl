@@ -261,6 +261,9 @@ end
 # Measured on kitt: ~34-42% higher XYNB throughput with 16-32 Julia threads.
 const CPU_WORKGROUP_SIZE = 64
 
+# Only a tabulated model has a finite lateral extent; SplinePSFModel specializes this.
+_validate_psf_box(::Any, ::Integer) = nothing
+
 """
     _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
@@ -299,6 +302,9 @@ function _run_mle_kernel!(
     n_fits = size(data, 3)
     n_params = size(results, 1)
     box_size = size(data, 1)
+    # Every fit method reaches the kernel here, so a ROI the PSF table cannot cover is
+    # refused before the CPU path and before any GPU poll.
+    _validate_psf_box(psf_pixels, box_size)
     # Every sCMOS entry point reaches the kernel here, and the kernel indexes the variance
     # map by corner, so every ROI must lie on the map's sensor.
     use_scmos isa Val{true} &&

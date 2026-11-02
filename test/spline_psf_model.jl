@@ -587,4 +587,78 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         end
     end
 
+    @testset "fit refuses a ROI beyond the lateral range" begin
+        # The table is zero beyond lateral_range plus one pixel, so a ROI whose
+        # half-diagonal exceeds lateral_range would be fitted with a truncated PSF.
+        n_roi = 2
+        function rois(mdl, box)
+            data = zeros(Float32, box, box, n_roi)
+            c = (box + 1) / 2
+            for k in 1:n_roi, j in 1:box, i in 1:box
+                data[i, j, k] = GaussMLE.evaluate_psf(
+                    mdl, i, j, SVector{5, Float32}(c + 0.3k, c, 0.1, 2000, 10)
+                )
+            end
+            return data
+        end
+        ideal_batch(data, camera) = ROIBatch(
+            data, ones(Int32, n_roi), ones(Int32, n_roi), Int32.(1:n_roi), camera
+        )
+        cpu_fit(b, mdl) = fit(b; psf_model = mdl, backend = :cpu)
+        camera = IdealCamera(64, 64, 0.1)
+        wide = SplinePSFModel(
+            astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 2.2
+        )
+        narrow = SplinePSFModel(
+            astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 1.5
+        )
+
+        # 31 px of 0.1 um pixels: half-diagonal 2.19 um
+        data31 = rois(wide, 31)
+        err = try
+            cpu_fit(ideal_batch(data31, camera), narrow)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        for text in ("31 px", "2.19", "1.5", "lateral_range")
+            @test occursin(text, err.msg)
+        end
+        @test_throws ArgumentError fit(
+            data31, GaussMLEConfig(psf_model = narrow, backend = :cpu)
+        )
+        @test_throws ArgumentError fit(
+            ideal_batch(data31, camera); psf_model = narrow, backend = :auto
+        )
+        # 21 px: half-diagonal 1.48 um
+        @test length(cpu_fit(ideal_batch(rois(narrow, 21), camera), narrow)[1].emitters) ==
+            n_roi
+        # The same box fits once lateral_range covers it
+        smld, _ = cpu_fit(ideal_batch(data31, camera), wide)
+        @test length(smld.emitters) == n_roi
+        smld_a, _ = fit(data31, GaussMLEConfig(psf_model = wide, backend = :cpu))
+        @test length(smld_a.emitters) == n_roi
+
+        # Rectangular pixels: the half-diagonal uses both pixel sizes
+        px = (0.1313, 0.1258)  # 21 px: 1.91 um
+        rect_camera = IdealCamera(64, 64, px)
+        rect(lr) = SplinePSFModel(
+            astig_spline; pixel_size = px, z_range = (-0.5, 0.5), lateral_range = lr
+        )
+        rect_data = rois(rect(2.0), 21)
+        err = try
+            cpu_fit(ideal_batch(rect_data, rect_camera), rect(1.5))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("1.91", err.msg)
+        # A model built at another pixel size is judged at the camera's pixel size
+        @test_throws ArgumentError cpu_fit(ideal_batch(rect_data, rect_camera), narrow)
+        smld, _ = cpu_fit(ideal_batch(rect_data, rect_camera), rect(2.0))
+        @test length(smld.emitters) == n_roi
+    end
+
 end
