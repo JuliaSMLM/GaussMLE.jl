@@ -40,9 +40,11 @@ if CUDA.functional()
         end
 
         @testset "Out-of-memory under a hard limit halves the batch" begin
-            # One 20,000-ROI batch of box 15 cannot fit 70% of its estimate; half can.
-            full = GaussMLE.estimate_batch_memory(20_000, 15, 4)
-            limit = string(round(Int, 0.7 * full))
+            # The ROI array of one 20,000-ROI batch of box 15 (18 MB) cannot fit a limit of
+            # 75% of its size; half the batch, with its outputs, can. (The estimate used for
+            # polling is deliberately larger than what the batch allocates.)
+            data_bytes = 15 * 15 * 20_000 * sizeof(Float32)
+            limit = string(round(Int, 0.75 * data_bytes))
             line = run_child(
                 "oom", :gpu; env = ["JULIA_CUDA_HARD_MEMORY_LIMIT=$limit"],
             )
