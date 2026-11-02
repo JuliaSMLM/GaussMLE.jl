@@ -134,7 +134,8 @@ Camera noise model is determined by the ROIBatch type:
   so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
-- `batch_size = 10_000`: Number of ROIs to process per GPU batch
+- `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
+  error halves it for the rest of the fit
 - `auto_timeout = 300.0`: Seconds to wait for GPU in auto mode before falling back to CPU
 - `gpu_timeout = Inf`: Seconds to wait for GPU in explicit gpu mode
 - `on_wait = nothing`: Callback `(elapsed, available, required) -> nothing` for GPU wait
@@ -144,10 +145,17 @@ Camera noise model is determined by the ROIBatch type:
 - `:cpu` - Always use CPU, no waiting
 - `:gpu` - Error immediately if no functional GPU is found; otherwise wait for resources
   and retry resource errors (out of memory, context creation) up to `gpu_timeout`, then
-  error; any other GPU error rethrows
+  error; any other GPU error rethrows. An out-of-memory error halves the batch and retries
+  at once; only a failing one-ROI batch waits. If one ROI plus the PSF table needs more
+  than every GPU's total memory, it errors before waiting.
 - `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
   and retry resource errors (out of memory, context creation) up to `auto_timeout`, then
-  warn and fall back to CPU; any other GPU error warns and falls back to CPU at once
+  warn and fall back to CPU; any other GPU error warns and falls back to CPU at once.
+  Out-of-memory errors halve the batch as in `:gpu`, and the CPU is used at once when one
+  ROI cannot fit any GPU's total memory
+
+A failure while releasing GPU memory after an error is logged as a warning and never
+replaces the original error, which `:gpu` rethrows and `:auto` handles as above.
 
 GPU modes prefer CUDA. When CUDA is not functional, an AMD GPU can be used by loading
 AMDGPU (`using AMDGPU`) before `fit`.
@@ -328,17 +336,40 @@ function _run_mle_kernel!(
     if !use_cpu
         # --- Unified GPU retry loop ---
         # Handles: (1) no free memory (vendor polls), (2) TOCTOU context creation
-        # race, (3) runtime OOM - all in one loop. On a resource error, release
-        # resources and re-poll; any other error rethrows (:gpu) or falls to the CPU
-        # (:auto) at once. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        # race, (3) runtime OOM - all in one loop. On an out-of-memory error, halve the
+        # batch cap and retry at once; only a failing one-ROI batch (or a device that is
+        # unavailable) waits and re-polls. Any other error rethrows (:gpu) or falls to
+        # the CPU (:auto) at once. Falls to CPU (:auto) or errors (:gpu) on timeout.
+        # The cleanup after a failure runs in its own try: it can throw on a poisoned
+        # context and must never replace the error that sent us here.
         timeout = fitter.backend == :auto ? fitter.auto_timeout : fitter.gpu_timeout
         deadline = time() + timeout
-        actual_batch = min(fitter.batch_size, n_fits)
-        required_memory = estimate_batch_memory(actual_batch, box_size, n_params) +
-            _psf_table_bytes(psf_pixels)
+        batch_cap = max(1, min(fitter.batch_size, n_fits))
+        psf_bytes = _psf_table_bytes(psf_pixels)
+        failed_batch = 0  # the batch cap of the last resource failure
         gpu_succeeded = false
 
-        while !gpu_succeeded && time() < deadline
+        # A single ROI that exceeds every device's total memory can never fit.
+        one_roi_bytes = estimate_batch_memory(1, box_size, n_params) + psf_bytes
+        totals = try
+            _gpu_total_memory(vendor)
+        catch e
+            e isa InterruptException && rethrow()
+            Int[]  # best effort: a failed query skips the check
+        end
+        if _exceeds_device_memory(one_roi_bytes, totals)
+            msg = "One ROI (box $box_size) plus the PSF table needs about " *
+                "$(Base.format_bytes(round(Int, one_roi_bytes * GPU_MEMORY_MARGIN))) " *
+                "with margin, more than the largest GPU's " *
+                "$(Base.format_bytes(maximum(totals))) total memory"
+            fitter.backend == :gpu && error(msg)
+            @warn "$msg; using CPU"
+            use_cpu = true
+        end
+
+        while !gpu_succeeded && !use_cpu && time() < deadline
+            required_memory = estimate_batch_memory(batch_cap, box_size, n_params) +
+                psf_bytes
             # Poll the vendor for an available GPU
             dev_idx, available, failed = _poll_gpu(
                 vendor, fitter.backend, required_memory;
@@ -361,10 +392,10 @@ function _run_mle_kernel!(
                 device_psf = _prepare_psf_model(gpu_backend, psf_pixels)
 
                 # Process all batches on GPU
-                actual_batch_size = min(fitter.batch_size, n_fits)
-                actual_n_batches = cld(n_fits, fitter.batch_size)
-                for batch_start in 1:fitter.batch_size:n_fits
-                    batch_end = min(batch_start + fitter.batch_size - 1, n_fits)
+                actual_batch_size = batch_cap
+                actual_n_batches = cld(n_fits, batch_cap)
+                for batch_start in 1:batch_cap:n_fits
+                    batch_end = min(batch_start + batch_cap - 1, n_fits)
                     batch_size_actual = batch_end - batch_start + 1
 
                     batch_data = data[:, :, batch_start:batch_end]
@@ -421,23 +452,47 @@ function _run_mle_kernel!(
 
                 # All batches succeeded - reclaim pool memory so queries show it as free
                 # for other processes competing for the same GPU
-                _reclaim_gpu(vendor)
+                # (the results are on the host; a failing reclaim must not discard them)
+                try
+                    _reclaim_gpu(vendor)
+                catch re
+                    re isa InterruptException && rethrow()
+                    @warn "GPU memory reclaim failed after the fit" exception = (
+                        re, catch_backtrace(),
+                    )
+                end
                 gpu_succeeded = true
                 actual_backend = :gpu
-                device_id = _active_device_id(vendor)
+                device_id = try
+                    _active_device_id(vendor)
+                catch ie
+                    ie isa InterruptException && rethrow()
+                    dev_idx
+                end
             catch e
                 # Only a resource error (out of memory, context creation) can clear by
                 # waiting. Anything else is deterministic: release the GPU, then rethrow
                 # under :gpu or fall back to the CPU at once under :auto.
                 resource = _is_resource_error(vendor, e)
+                oom = resource && _is_oom_error(vendor, e)
                 if resource
-                    @warn "GPU error on device $dev_idx, releasing resources" exception = (
-                        e, catch_backtrace(),
-                    )
+                    @warn "GPU error on device $dev_idx with a batch of $batch_cap \
+                        ROIs, releasing resources" exception = (e, catch_backtrace())
                 end
-                _release_gpu_context(vendor, dev_idx)
+                try
+                    _release_gpu_context(vendor, dev_idx)
+                catch ce
+                    ce isa InterruptException && rethrow()
+                    @warn "GPU cleanup on device $dev_idx failed; handling the original \
+                        error" cleanup_exception = (ce, catch_backtrace())
+                end
                 if resource
-                    fitter.backend == :gpu && time() >= deadline && rethrow()
+                    failed_batch = batch_cap
+                    if oom && batch_cap > 1
+                        batch_cap = cld(batch_cap, 2)  # smaller batch, retry at once
+                    else
+                        fitter.backend == :gpu && time() >= deadline && rethrow()
+                    end
                 else
                     (fitter.backend == :gpu || e isa InterruptException) && rethrow()
                     @warn "GPU error on device $dev_idx, using CPU" exception = (
@@ -451,11 +506,18 @@ function _run_mle_kernel!(
 
         if !gpu_succeeded
             if fitter.backend == :gpu
-                error("GPU failed after $(timeout)s timeout")
+                error(
+                    "GPU failed after $(timeout)s timeout" *
+                        (failed_batch > 0 ? " (last failure with a batch of \
+                        $failed_batch ROIs)" : "")
+                )
             end
             # :auto falls through to CPU below
             if !use_cpu
-                @warn "GPU unavailable after $(timeout)s, using CPU"
+                @warn "GPU unavailable after $(timeout)s, using CPU" * (
+                    failed_batch > 0 ? " (last failure with a batch of $failed_batch \
+                    ROIs)" : ""
+                )
             end
             use_cpu = true
         end

@@ -133,14 +133,28 @@ while !gpu_succeeded && before deadline:
          reclaim vendor pool       # Return cached memory
          gpu_succeeded = true
     4. Catch:
-         clean up GPU resources    # CUDA: release context; AMD: GC, synchronize, reclaim
-         if a resource error (out of memory, context creation):
+         clean up GPU resources    # in its own try; a failure only warns
+         if an out-of-memory error and the batch cap > 1:
+             halve the batch cap and loop back to step 1 at once
+         else if a resource error (out of memory at one ROI, context creation):
              loop back to step 1   # Re-poll memory for next available GPU
          otherwise:                # a deterministic error, such as a compile error
              :gpu rethrows at once; :auto warns once and falls back to the CPU at once
 ```
 
-After the loop: `:auto` falls back to CPU, `:gpu` errors.
+After the loop: `:auto` falls back to CPU, `:gpu` errors; the message names the batch
+size of the last failure. `GaussMLEFitInfo.batch_size` and `n_batches` report the batch
+cap that ran.
+
+Before the loop, if one ROI plus the PSF table (with the 1.5x margin) needs more than the
+total memory of every visible GPU, no wait can help: `:gpu` throws an error saying so and
+`:auto` uses the CPU at once.
+
+Cleanup after a failure (CUDA context release, AMD synchronize and reclaim) can itself
+throw on a poisoned context, for example after a sticky fault such as an illegal address.
+That failure is logged as a warning and never replaces the original error, which `:gpu`
+rethrows and `:auto` handles as above. The same holds for the reclaim after a successful
+fit.
 
 ### Three Failure Modes
 
@@ -152,8 +166,10 @@ The loop handles three distinct GPU failure scenarios:
    fails because another process acquired it. Resources are cleaned up and memory is
    re-polled.
 
-3. **Runtime OOM** - GPU allocation fails mid-batch. Resources are cleaned up and all
-   batches restart on an available GPU.
+3. **Runtime OOM** - GPU allocation fails mid-batch. Resources are cleaned up, the
+   batch cap is halved, and all batches restart at once with the smaller cap. Only an
+   out-of-memory error at a one-ROI batch goes back to waiting for the device.
+   A device-unavailable error always waits and retries.
 
 Any other error is not retried, since waiting cannot clear it. `fit(::ROIBatch)` also
 checks on the host, before any launch, that every ROI of an sCMOS batch lies on the sensor

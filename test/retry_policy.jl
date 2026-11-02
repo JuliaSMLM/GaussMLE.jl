@@ -4,27 +4,48 @@
 using Test, GaussMLE, SMLMData, Logging
 
 struct FakeResourceError <: Exception end
-struct FakeVendor <: GaussMLE.GPUVendor
-    failure::Any  # thrown by _activate_gpu!, standing in for the failing GPU call
+struct FakeOOMError <: Exception end
+Base.@kwdef struct FakeVendor <: GaussMLE.GPUVendor
+    failure::Any = nothing  # thrown by _activate_gpu!, standing in for the failing GPU call
+    oom_above::Int = typemax(Int)  # out of memory when a batch exceeds this many ROIs
+    cleanup_failure::Any = nothing  # thrown by the cleanup after a failure
+    totals::Vector{Int} = Int[]  # the fake devices' total memory
 end
 const ACTIVATE_CALLS = Ref(0)
 const RELEASE_CALLS = Ref(0)
+const POLLED_BYTES = Ref(0)
+const BOX = 7
 
-GaussMLE._poll_gpu(::FakeVendor, backend, bytes; timeout, on_wait = nothing) =
-    (sleep(0.02); (0, true, false))
+function GaussMLE._poll_gpu(::FakeVendor, backend, bytes; timeout, on_wait = nothing)
+    sleep(0.02)
+    POLLED_BYTES[] = bytes
+    return (0, true, false)
+end
 function GaussMLE._activate_gpu!(v::FakeVendor, i)
     ACTIVATE_CALLS[] += 1
-    throw(v.failure)
+    v.failure === nothing || throw(v.failure)
+    limit = GaussMLE.estimate_batch_memory(v.oom_above, BOX, 4)
+    POLLED_BYTES[] > limit && throw(FakeOOMError())
+    return nothing
 end
-GaussMLE._release_gpu_context(::FakeVendor, i) = (RELEASE_CALLS[] += 1; nothing)
-GaussMLE._is_resource_error(::FakeVendor, e) = e isa FakeResourceError
+function GaussMLE._release_gpu_context(v::FakeVendor, i)
+    RELEASE_CALLS[] += 1
+    v.cleanup_failure === nothing || throw(v.cleanup_failure)
+    return nothing
+end
+GaussMLE._is_resource_error(::FakeVendor, e) = e isa FakeResourceError || e isa FakeOOMError
+GaussMLE._is_oom_error(::FakeVendor, e) = e isa FakeOOMError
+GaussMLE._ka_gpu_backend(::FakeVendor) = GaussMLE.KernelAbstractions.CPU()
+GaussMLE._reclaim_gpu(::FakeVendor) = nothing
+GaussMLE._active_device_id(::FakeVendor) = 0
+GaussMLE._gpu_total_memory(v::FakeVendor) = v.totals
 
-# Run the loop with `failure`; return the thrown exception or the fit's backend, the
-# activate and release counts, the elapsed seconds and the warnings logged.
-function run_retry_loop(failure, backend; timeout = 0.4)
+# Run the loop against `vendor`; return the thrown exception or the fit's backend, the
+# batch count, the activate and release counts, the elapsed seconds and the warnings.
+function run_retry_loop(vendor, backend; timeout = 0.4)
     psf_model = GaussianXYNB(0.13f0)
     batch = GaussMLE.generate_roi_batch(
-        IdealCamera(32, 32, 0.1), psf_model; n_rois = 4, roi_size = 7, seed = 1
+        IdealCamera(32, 32, 0.1), psf_model; n_rois = 4, roi_size = BOX, seed = 1
     )
     fitter = GaussMLEConfig(;
         psf_model, backend, auto_timeout = timeout, gpu_timeout = timeout
@@ -38,15 +59,18 @@ function run_retry_loop(failure, backend; timeout = 0.4)
     RELEASE_CALLS[] = 0
     logger = Test.TestLogger()
     outcome = nothing
+    n_batches = 0
     elapsed = @elapsed with_logger(logger) do
         outcome = try
-            GaussMLE._run_mle_kernel!(
+            out = GaussMLE._run_mle_kernel!(
                 results, uncertainties, covariances, log_likelihoods,
                 convert(Array{Float32, 3}, batch.data),
                 GaussMLE.to_pixel_units(psf_model, 0.1f0), Val(false),
                 zeros(Float32, 7, 7), batch.x_corners, batch.y_corners, fitter;
-                vendor = FakeVendor(failure)
-            )[1]
+                vendor
+            )
+            n_batches = out[4]
+            out[1]
         catch e
             e
         end
@@ -54,13 +78,13 @@ function run_retry_loop(failure, backend; timeout = 0.4)
     warnings = count(r -> r.level == Logging.Warn, logger.logs)
     return (;
         outcome, activations = ACTIVATE_CALLS[], releases = RELEASE_CALLS[],
-        elapsed, warnings,
+        elapsed, warnings, n_batches,
     )
 end
 
 @testset "GPU retry policy" begin
     @testset "deterministic error under :gpu rethrows at once" begin
-        r = run_retry_loop(ErrorException("compile error"), :gpu)
+        r = run_retry_loop(FakeVendor(; failure = ErrorException("compile error")), :gpu)
         @test r.outcome isa ErrorException
         @test r.activations == 1
         @test r.releases == 1
@@ -68,7 +92,7 @@ end
     end
 
     @testset "deterministic error under :auto falls back to the CPU with one warning" begin
-        r = run_retry_loop(ErrorException("compile error"), :auto)
+        r = run_retry_loop(FakeVendor(; failure = ErrorException("compile error")), :auto)
         @test r.outcome === :cpu
         @test r.activations == 1
         @test r.releases == 1
@@ -77,13 +101,13 @@ end
     end
 
     @testset "resource error is retried until the deadline" begin
-        r = run_retry_loop(FakeResourceError(), :gpu)
+        r = run_retry_loop(FakeVendor(; failure = FakeResourceError()), :gpu)
         @test r.outcome isa Exception
         @test r.activations > 1
         @test r.releases == r.activations
         @test r.elapsed >= 0.4
 
-        r = run_retry_loop(FakeResourceError(), :auto)
+        r = run_retry_loop(FakeVendor(; failure = FakeResourceError()), :auto)
         @test r.outcome === :cpu
         @test r.activations > 1
         @test r.elapsed >= 0.4
@@ -91,9 +115,66 @@ end
 
     @testset "InterruptException rethrows in both modes" begin
         for backend in (:gpu, :auto)
-            r = run_retry_loop(InterruptException(), backend)
+            r = run_retry_loop(FakeVendor(; failure = InterruptException()), backend)
             @test r.outcome isa InterruptException
             @test r.activations == 1
         end
+    end
+
+    @testset "out of memory halves the batch and retries at once" begin
+        for backend in (:gpu, :auto)
+            r = run_retry_loop(FakeVendor(; oom_above = 2), backend; timeout = 30.0)
+            @test r.outcome === :gpu
+            @test r.n_batches == 2  # 4 ROIs failed, then 2 ROIs per batch
+            @test r.activations == 2
+            @test r.releases == 1
+            @test r.elapsed < 10  # no wait for the 30 s timeout
+        end
+    end
+
+    @testset "a one-ROI out-of-memory error waits for the deadline" begin
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :gpu)
+        @test r.outcome isa FakeOOMError
+        @test r.elapsed >= 0.4
+        @test r.activations > 3  # 4 -> 2 -> 1 ROIs, then re-polls of the one-ROI batch
+
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :auto)
+        @test r.outcome === :cpu
+        @test r.elapsed >= 0.4
+    end
+
+    @testset "one ROI beyond every device's memory fails or uses the CPU at once" begin
+        @test GaussMLE._exceeds_device_memory(1000, [1000, 1400])
+        @test !GaussMLE._exceeds_device_memory(1000, [1000, 1600])
+        @test !GaussMLE._exceeds_device_memory(1000, Int[])
+
+        vendor = FakeVendor(; totals = [100, 200])
+        r = run_retry_loop(vendor, :gpu; timeout = 30.0)
+        @test r.outcome isa ErrorException
+        @test occursin("total memory", sprint(showerror, r.outcome))
+        @test r.activations == 0
+        @test r.elapsed < 10
+
+        r = run_retry_loop(vendor, :auto; timeout = 30.0)
+        @test r.outcome === :cpu
+        @test r.activations == 0
+        @test r.warnings == 1
+        @test r.elapsed < 10
+    end
+
+    @testset "a failing cleanup never replaces the original error" begin
+        vendor = FakeVendor(;
+            failure = ErrorException("compile error"),
+            cleanup_failure = ArgumentError("poisoned context")
+        )
+        r = run_retry_loop(vendor, :gpu)
+        @test r.outcome isa ErrorException
+        @test r.outcome.msg == "compile error"
+        @test r.releases == 1
+
+        r = run_retry_loop(vendor, :auto)
+        @test r.outcome === :cpu
+        @test r.releases == 1
+        @test r.warnings == 2  # the cleanup failure and the fallback
     end
 end
