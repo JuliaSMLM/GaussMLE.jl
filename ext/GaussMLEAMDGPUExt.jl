@@ -70,7 +70,10 @@ function GaussMLE._poll_gpu(
                 )
             end
 
-            never_fits && return (-1, false, false, best_free)
+            if never_fits
+                on_wait === nothing || on_wait(time() - start, best_free, required_bytes)
+                return (-1, false, false, best_free)
+            end
             time() >= deadline && return (-1, false, false, nothing)
             if on_wait !== nothing
                 on_wait(time() - start, best_free, required_bytes)

@@ -274,8 +274,12 @@ function wait_for_gpu_nvml(
             return (i, true, nothing)
         end
 
-        # No GPU can ever hold the request - waiting is pointless
-        never_fits && return (-1, false, best_free)
+        # No GPU can ever hold the request - waiting is pointless. Report the tick to
+        # on_wait first, as every tick that does not find a device does.
+        if never_fits
+            on_wait === nothing || on_wait(time() - start, best_free, required_bytes)
+            return (-1, false, best_free)
+        end
 
         # No GPU available this tick - check timeout
         if time() >= deadline

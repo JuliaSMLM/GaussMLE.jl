@@ -54,16 +54,50 @@ if CUDA.functional()
             @test parse(Float64, match(r"seconds=([\d.]+)", line)[1]) < 30
         end
 
-        # The request (200,000 ROIs of box 15) exceeds the free memory of an idle device,
-        # which never reaches the total: the poll says so and the batch shrinks at once.
-        # Another process on the device would make the poll wait instead (gpu_timeout 10 s).
-        @testset "A request above an idle device's free memory halves the batch" begin
-            for backend in (:gpu, :auto)
-                line = run_child("idle_full", backend)
-                @test occursin("backend = :gpu", line)
-                @test parse(Int, match(r"n_batches = (\d+)", line)[1]) > 1
-                @test parse(Float64, match(r"seconds=([\d.]+)", line)[1]) < 9
+        # In this process, not a child: a child would see this process's context as
+        # another process on the device and, correctly, wait. A filler leaves about 150 MB
+        # free, so the request for 200,000 ROIs of box 15 exceeds the free memory of an idle
+        # device, which never reaches the total: the poll says so and the batch shrinks at
+        # once. It needs one visible device with no other process on it; another process
+        # makes the poll wait instead, the intended behavior, which is not tested here.
+        idle = length(CUDA.devices()) == 1 && GaussMLE._other_process_present(0) === false
+        if idle
+            @testset "A request above an idle device's free memory halves the batch" begin
+                psf_model = GaussianXYNB(0.13f0)
+                camera = IdealCamera(64, 64, 0.1)
+                warm = GaussMLE.generate_roi_batch(
+                    camera, psf_model; n_rois = 200, roi_size = 15, seed = 1
+                )
+                fit(
+                    convert(Array{Float32, 3}, warm.data),
+                    GaussMLEConfig(; psf_model, backend = :gpu)
+                )
+                n = 200_000
+                batch = GaussMLE.generate_roi_batch(
+                    camera, psf_model; n_rois = n, roi_size = 15, seed = 1
+                )
+                data = convert(Array{Float32, 3}, batch.data)
+                for backend in (:gpu, :auto)
+                    GC.gc(true)
+                    CUDA.reclaim()
+                    filler = CuArray{UInt8}(undef, CUDA.free_memory() - 150 * 1024^2)
+                    CUDA.synchronize()
+                    fitter = GaussMLEConfig(;
+                        psf_model, backend, batch_size = n, gpu_timeout = 10.0,
+                        auto_timeout = 10.0,
+                    )
+                    t = @elapsed smld, info = fit(data, fitter)
+                    CUDA.unsafe_free!(filler)
+                    @test info.backend == :gpu
+                    @test info.n_batches > 1
+                    @test length(smld.emitters) == n
+                    @test t < 9  # a regression waits for the 10 s timeout
+                end
+                CUDA.reclaim()
             end
+        else
+            @info "retry_faults.jl: the idle-device test needs one visible GPU with no " *
+                "other process on it"
         end
     end
 else
