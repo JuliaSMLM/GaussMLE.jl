@@ -58,8 +58,10 @@ using SMLMSim: poisson_noise
     )
     cons = GaussMLE.default_constraints(model, box)
     vmap = zeros(Float32, box, box)
-    lm(roi, θ0, it) = GaussMLE._lm_fit(
-        roi, box, model, Val(false), vmap, Int32(1), Int32(1), cons, it, θ0
+    lm(roi, θ0, it) = first(
+        GaussMLE._lm_fit(
+            roi, box, model, Val(false), vmap, Int32(1), Int32(1), cons, it, θ0
+        )
     )
 
     gap = zeros(n)

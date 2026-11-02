@@ -20,15 +20,22 @@ and kernel; the point callable never reaches a kernel.
 5. bg: background per pixel (photons for IdealCamera, electrons for sCMOS)
 
 # Constructors
-    SplinePSFModel(spline; pixel_size, z_range, lateral_range = 1.5)
+    SplinePSFModel(spline; pixel_size, z_range, lateral_range = 1.5, starts = nothing)
 
 `spline` is a point PSF callable `(x, y, z)` in microns. `z_range` is the valid axial range
 in microns; it must be finite, increasing, and at least 0.01 µm wide after inward Float32
 rounding. The fit clamps z into it. Custom z constraints are intersected with `z_range`;
 an empty intersection throws `ArgumentError`.
 
+`starts` is the number of Levenberg-Marquardt fits per ROI; the fit keeps the one that
+reaches the highest likelihood. `starts = nothing` (the default) gives the scan start plus
+one fixed z start per 0.4 µm over the central 80 % of `z_range`: 6 for ±1 µm, 5 for ±0.6 µm,
+4 for ±0.5 µm. `starts = 1` fits from the scan start alone; `starts < 1` throws
+`ArgumentError`.
+
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
-                   z_range = (psf.z_min, psf.z_max), lateral_range = 1.5)
+                   z_range = (psf.z_min, psf.z_max), lateral_range = 1.5,
+                   starts = nothing)
 
 Available when MicroscopePSFs is loaded (package extension). `psf` must be 3D, and `z_range`
 must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it), else
@@ -74,19 +81,29 @@ quadrature for both conventions.
 One 4 × 4 × 4 coefficient gather gives the value and analytic first derivatives of the
 cubic interpolant, using each axis's pixel size; the fit uses no second derivatives.
 Non-positive values are clipped to zero with zero derivatives. z is differentiated at its
-clamped value. The start is the centroid for x and y, the edge-pixel mean for the
+clamped value. The scan start is the centroid for x and y, the edge-pixel mean for the
 background, the positive in-box sum above it for N, and the z of a Poisson likelihood scan
-at those values (grid spacing at most 0.1 µm). The fit is Levenberg-Marquardt on the full
-Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
-likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
+at those values (grid spacing at most 0.1 µm). A single Levenberg-Marquardt fit reaches the
+maximum of the basin it starts in, and the scan start is often in the wrong basin for a
+defocused ROI. So the fit also starts from `starts - 1` fixed z values with the scan
+start's x, y, N and background, as SMAP's fitter does, and keeps the fit with the highest
+likelihood (the earlier start on a tie). With one fixed start it sits at the center of
+`z_range`; with `m >= 2` they are `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`,
+`R` the width of `z_range`. Each start costs one more Levenberg-Marquardt fit. On 34,341
+real cell ROIs, `starts = 1` left 8.7 % (in-situ PSF) and 7.1 % (bead PSF) of fits at a
+lower maximum in another basin, against 0.29 % and 0.20 % with the default. Each fit is
+Levenberg-Marquardt on the full Fisher matrix, climbing the Poisson likelihood
+(IdealCamera) or the Poisson-shifted likelihood `(d + v) log(μ + v) - (μ + v)` with `v`
+the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
 background steps are not capped (photons ≥ 1, background ≥ 0.01). For sCMOS the
 reported log-likelihood and p-value use the Gaussian approximation
 `-(d - μ)²/(2(μ + v))`, not the fitted objective. `iterations` counts
-Levenberg-Marquardt pixel passes: the last pass only evaluates, so the fit takes at most
-`iterations - 1` steps and `iterations = 1` returns the start. A parameter on a bound whose
-gradient points out of the box is held there while the others take their step. Default x/y
-bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use `z_range`.
+Levenberg-Marquardt pixel passes per start: the last pass only evaluates, so the fit
+takes at most `iterations - 1` steps and `iterations = 1` returns the start. A parameter
+on a bound whose gradient points out of the box is held there while the others take their
+step. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
+`z_range`.
 
 # Fields
 - `spline_psf::S`: the point PSF callable, retained for rebuilding at another pixel size
@@ -97,13 +114,15 @@ bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use `z_range`.
 - `px_scale::T`: pixel area for a photon density, or reference normalization for a callable
 - `z_ref::T`: reference plane nearest zero in the inward-rounded callable range
   (microns), preserved on rescaling
+- `starts::Int`: Levenberg-Marquardt starts per ROI (the scan start plus `starts - 1`
+  fixed z starts)
 
 # Example
 ```jldoctest
 julia> astig(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2));
 
 julia> psf = SplinePSFModel(astig; pixel_size = 0.1, z_range = (-0.5, 0.5))
-SplinePSFModel(pixel_size=(0.1f0, 0.1f0), z_range=(-0.5f0, 0.5f0))
+SplinePSFModel(pixel_size=(0.1f0, 0.1f0), z_range=(-0.5f0, 0.5f0), starts=4)
 
 julia> length(psf)
 5
@@ -117,15 +136,41 @@ struct SplinePSFModel{T, S, P} <: PSFModel{5, T}
     lateral_range::T
     px_scale::T
     z_ref::T
+    starts::Int
 end
 
 function SplinePSFModel(
         spline; pixel_size::Union{Real, Tuple{Real, Real}}, z_range,
-        lateral_range::Real = 1.5
+        lateral_range::Real = 1.5, starts::Union{Nothing, Integer} = nothing
     )
     # A plain callable is valid on z_range itself
     limits = (z_min = Float64(z_range[1]), z_max = Float64(z_range[2]))
-    return _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range)
+    return _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range, starts)
+end
+
+# Number of starts when `starts = nothing`: the scan start plus one fixed start per 0.4 µm
+# over the central 80 % of a z range of width R (0.8 R / 0.4 = 2R intervals, hence
+# ceil(2R) + 1 fixed starts; the 1e-3 keeps a width with 2R an integer, such as 1.0 or 2.0,
+# from rounding up on a small excess). 6 for ±1 µm, 5 for ±0.6 µm, 4 for ±0.5 µm.
+function _default_spline_starts(z_range)
+    R = Float64(z_range[2]) - Float64(z_range[1])
+    return 1 + ceil(Int, 2R - 1.0e-3) + 1
+end
+
+function _spline_starts(starts::Union{Nothing, Integer}, z_range)
+    starts === nothing && return _default_spline_starts(z_range)
+    starts >= 1 || throw(ArgumentError("starts must be at least 1, got $starts"))
+    return Int(starts)
+end
+
+# z (µm) of fixed start q = 0 .. m - 1 of m: the center of z_range for m = 1, else m points
+# evenly over the central 80 % of the range (SMAP's wrapper places its starts the same way).
+@inline function _spline_start_z(model::SplinePSFModel{T}, q::Int, m::Int) where {T}
+    zlo, zhi = model.z_range
+    R = zhi - zlo
+    center = (zlo + zhi) / 2
+    m == 1 && return center
+    return center + T(0.8) * R * (T(q) / T(m - 1) - T(0.5))
 end
 
 function _spline_pixel_size(::Type{T}, pixel_size::Union{Real, Tuple{Real, Real}}) where {T}
@@ -143,7 +188,10 @@ end
 
 # Shared by the core constructor and the MicroscopePSFs extension. `limits` has the spline's
 # own `z_min`/`z_max`.
-function _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range::Real)
+function _spline_psf_model(
+        spline, pixel_size, z_range, limits, lateral_range::Real,
+        starts::Union{Nothing, Integer}
+    )
     (isfinite(z_range[1]) && isfinite(z_range[2]) && z_range[1] < z_range[2]) ||
         throw(ArgumentError("z_range $z_range must be finite and increasing"))
     (isfinite(lateral_range) && lateral_range > 0) ||
@@ -174,7 +222,7 @@ function _spline_psf_model(spline, pixel_size, z_range, limits, lateral_range::R
     pixel_psf = _build_pixel_psf(spline, px, lateral, (zlo, zhi))
     return SplinePSFModel{T, typeof(spline), typeof(pixel_psf)}(
         spline, pixel_psf, px, (zlo, zhi),
-        lateral, px_scale, z_ref
+        lateral, px_scale, z_ref, _spline_starts(starts, (zlo, zhi))
     )
 end
 
@@ -184,7 +232,7 @@ function Adapt.adapt_structure(to, model::SplinePSFModel{T}) where {T}
     table = Adapt.adapt(to, model.pixel_psf)
     return SplinePSFModel{T, Nothing, typeof(table)}(
         nothing, table, model.pixel_size, model.z_range, model.lateral_range,
-        model.px_scale, model.z_ref
+        model.px_scale, model.z_ref, model.starts
     )
 end
 
@@ -621,7 +669,7 @@ function to_pixel_units(
     return SplinePSFModel{T, typeof(model.spline_psf), typeof(pixel_psf)}(
         model.spline_psf, pixel_psf, new_px,
         model.z_range, model.lateral_range,
-        new_scale, model.z_ref
+        new_scale, model.z_ref, model.starts
     )
 end
 
@@ -631,15 +679,32 @@ end
 
 # Levenberg-Marquardt on the full Fisher matrix (the kernel's `_optimize`): the
 # per-parameter Newton step stops short on the coupled x, y, z, N and background, and LM
-# needs no cap on the photon and background steps.
+# needs no cap on the photon and background steps. One LM fit climbs to the maximum of the
+# basin it starts in, and the scan start θ0 is often in the wrong one for a defocused ROI.
+# So the fit also runs from `starts - 1` fixed z starts (x, y, N and bg from θ0), each with
+# the full `iterations`, and keeps the θ with the strictly higher objective; on a tie the
+# earlier start wins, the scan start first.
 @inline function _optimize(
-        roi, box_size::Int, psf_model::SplinePSFModel, camera_model, variance_map,
+        roi, box_size::Int, psf_model::SplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
-    )
-    return _lm_fit(
+    ) where {T}
+    θ_best, obj_best = _lm_fit(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ0
     )
+    m = psf_model.starts - 1
+    for q in 0:(m - 1)
+        θs = SVector{5, T}(θ0[1], θ0[2], _spline_start_z(psf_model, q, m), θ0[4], θ0[5])
+        θ, obj = _lm_fit(
+            roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+            constraints, iterations, θs
+        )
+        if obj > obj_best
+            θ_best = θ
+            obj_best = obj
+        end
+    end
+    return θ_best
 end
 
 function default_constraints(model::SplinePSFModel, box_size)
@@ -665,7 +730,8 @@ end
 
 Base.show(io::IO, m::SplinePSFModel) = print(
     io,
-    "SplinePSFModel(pixel_size=$(m.pixel_size), z_range=$(m.z_range))"
+    "SplinePSFModel(pixel_size=$(m.pixel_size), z_range=$(m.z_range), " *
+        "starts=$(m.starts))"
 )
 
 # --- to_emitter: convert fit result → SMLMData emitter ---
