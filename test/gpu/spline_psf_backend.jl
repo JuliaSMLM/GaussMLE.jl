@@ -148,3 +148,36 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         end
     end
 end
+
+# fit refuses a ROI beyond the lateral range before any launch; a covering model fits it.
+@testset "SplinePSFModel lateral range on the GPU" begin
+    @test gpu_backend() !== nothing
+    spline = SplinePSF(
+        ScalarPSF(1.4, 0.68, 1.518);
+        lateral_range = 1.0, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
+    )
+    model(lateral_range) = SplinePSFModel(
+        spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range
+    )
+    wide, narrow = model(2.2), model(1.5)
+    box, n = 31, 4
+    data = zeros(Float32, box, box, n)
+    for k in 1:n, j in 1:box, i in 1:box
+        data[i, j, k] = GaussMLE.evaluate_psf(
+            wide, i, j, Float32[16 + 0.2k, 16, 0.1, 2000, 10]
+        )
+    end
+    camera = IdealCamera(64, 64, 0.1)
+    batch = ROIBatch(data, ones(Int32, n), ones(Int32, n), Int32.(1:n), camera)
+    err = try
+        fit(batch; psf_model = narrow, backend = :gpu)
+        nothing
+    catch e
+        e
+    end
+    @test err isa ArgumentError
+    @test occursin("lateral_range", err.msg)
+    smld, info = fit(batch; psf_model = wide, backend = :gpu)
+    @test info.backend == :gpu
+    @test length(smld.emitters) == n
+end
