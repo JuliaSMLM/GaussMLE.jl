@@ -50,8 +50,9 @@ that table to the selected CUDA or AMD GPU before the first batch. All batches i
 share it; a retry after a resource error transfers it again because the device or context
 may have changed. GPU memory polling includes the table's storage requirement.
 
-CPU fitting uses the same table through POCL's device-array view. The kernel model
-contains no point callable: fit, derivatives and CRLB all read the same coefficients.
+CPU fitting uses the same table (through POCL's device-array view under
+KernelAbstractions 0.10). The kernel model contains no point callable: fit, derivatives
+and CRLB all read the same coefficients.
 A value/derivative evaluation gathers 4 × 4 × 4 coefficients once; the initial z scan
 uses a value-only gather. Coefficients occupy
 `4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about 5 to 10 MiB for a
@@ -246,6 +247,9 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 The same unified kernel runs on every device via KernelAbstractions.jl. Agreement between GPU and CPU results depends on the model:
 
 - Gaussian models: differences are float32 rounding (about 1e-6 microns).
+- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 differ by
+  1 to 2 ulp, because POCL computes `log`, `pow` and `sqrt` with OpenCL builtins. Under
+  KernelAbstractions 0.9, Gaussian CPU results are bit for bit those of GaussMLE 0.4.2.
 - `SplinePSFModel`: the Levenberg-Marquardt accept/reject test branches on objective differences at float32 resolution near the optimum, so the two devices can stop at slightly different points along flat directions. CPU and GPU results differ by at most about 0.01 CRLB in any parameter (measured 0.009 on an RTX 4090 over 20,000 values of the GPU test group's design), not machine precision.
 
 ## Troubleshooting
@@ -297,9 +301,11 @@ GaussMLE uses KernelAbstractions.jl for portable GPU/CPU code:
 end
 ```
 
-Since KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
+With KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
 runtime. The first CPU fit of each PSF model in a session takes a few seconds longer
-for compilation; subsequent fits reuse the compiled kernel.
+for compilation; subsequent fits reuse the compiled kernel. With KernelAbstractions 0.9,
+which environments with Reactant resolve, the CPU backend is KernelAbstractions' native
+one and needs no POCL.
 The CPU path uses work-groups of 64 fits.
 
 ### Data Flow
