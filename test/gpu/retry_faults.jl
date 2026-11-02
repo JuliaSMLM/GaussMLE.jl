@@ -10,7 +10,7 @@ if CUDA.functional()
         command = addenv(
             `$(Base.julia_cmd()) --project=$(Base.active_project()) $script $scenario
             $backend`,
-            env...
+            env,
         )
         output = IOBuffer()
         run(pipeline(ignorestatus(command); stdout = output, stderr = devnull))
