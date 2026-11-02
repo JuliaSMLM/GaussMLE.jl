@@ -53,6 +53,18 @@ if CUDA.functional()
             @test parse(Int, match(r"n_batches = (\d+)", line)[1]) > 1
             @test parse(Float64, match(r"seconds=([\d.]+)", line)[1]) < 30
         end
+
+        # The request (200,000 ROIs of box 15) exceeds the free memory of an idle device,
+        # which never reaches the total: the poll says so and the batch shrinks at once.
+        # Another process on the device would make the poll wait instead (gpu_timeout 10 s).
+        @testset "A request above an idle device's free memory halves the batch" begin
+            for backend in (:gpu, :auto)
+                line = run_child("idle_full", backend)
+                @test occursin("backend = :gpu", line)
+                @test parse(Int, match(r"n_batches = (\d+)", line)[1]) > 1
+                @test parse(Float64, match(r"seconds=([\d.]+)", line)[1]) < 9
+            end
+        end
     end
 else
     @info "retry_faults.jl covers CUDA only; CUDA is not functional here"

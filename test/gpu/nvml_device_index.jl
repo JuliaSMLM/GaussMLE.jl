@@ -46,7 +46,7 @@ if CUDA.functional()
                     @test from_nvml
                     @test free < cuda_free + chunk ÷ 2
 
-                    device_idx, available, failed = GaussMLE._poll_gpu(
+                    device_idx, available, failed, _ = GaussMLE._poll_gpu(
                         :gpu, cuda_free; timeout = 1.0
                     )
                     @test !failed

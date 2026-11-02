@@ -14,17 +14,27 @@ Base.@kwdef struct FakeVendor <: GaussMLE.GPUVendor
     # check runs there instead of in _activate_gpu!
     after_activate::Any = nothing
     oom_after_activate::Bool = false
+    poll_failure::Any = nothing  # thrown by the poll
+    # the poll reports "cannot fit even idle" for batches above this many ROIs
+    never_fits_above::Int = typemax(Int)
 end
 const ACTIVATE_CALLS = Ref(0)
+const POLL_CALLS = Ref(0)
 const RELEASE_CALLS = Ref(0)
 const RECLAIM_CALLS = Ref(0)
 const POLLED_BYTES = Ref(0)
 const BOX = 7
 
-function GaussMLE._poll_gpu(::FakeVendor, backend, bytes; timeout, on_wait = nothing)
+function GaussMLE._poll_gpu(v::FakeVendor, backend, bytes; timeout, on_wait = nothing)
     sleep(0.02)
+    POLL_CALLS[] += 1
+    v.poll_failure === nothing || throw(v.poll_failure)
     POLLED_BYTES[] = bytes
-    return (0, true, false)
+    if v.never_fits_above != typemax(Int) &&
+            bytes > GaussMLE.estimate_batch_memory(v.never_fits_above, BOX, 4)
+        return (-1, false, false, 1234)
+    end
+    return (0, true, false, nothing)
 end
 function GaussMLE._activate_gpu!(v::FakeVendor, i)
     ACTIVATE_CALLS[] += 1
@@ -74,6 +84,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     covariances = Matrix{Float32}(undef, 3, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
     ACTIVATE_CALLS[] = 0
+    POLL_CALLS[] = 0
     RELEASE_CALLS[] = 0
     RECLAIM_CALLS[] = 0
     logger = Test.TestLogger()
@@ -97,7 +108,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     warnings = count(r -> r.level == Logging.Warn, logger.logs)
     return (;
         outcome, activations = ACTIVATE_CALLS[], releases = RELEASE_CALLS[],
-        reclaims = RECLAIM_CALLS[], elapsed, warnings, n_batches,
+        reclaims = RECLAIM_CALLS[], polls = POLL_CALLS[], elapsed, warnings, n_batches,
     )
 end
 
@@ -138,6 +149,57 @@ end
             @test r.outcome isa InterruptException
             @test r.activations == 1
         end
+    end
+
+    @testset "an interrupt in the poll or the live context rethrows under :auto" begin
+        r = run_retry_loop(FakeVendor(; poll_failure = InterruptException()), :auto)
+        @test r.outcome isa InterruptException  # no CPU fit ran
+        @test r.activations == 0
+
+        vendor = FakeVendor(; after_activate = InterruptException())
+        r = run_retry_loop(vendor, :auto)
+        @test r.outcome isa InterruptException
+        @test r.activations == 1
+        @test r.reclaims == 1
+    end
+
+    @testset "a request no idle device can hold halves the batch without waiting" begin
+        for backend in (:gpu, :auto)
+            r = run_retry_loop(FakeVendor(; never_fits_above = 1), backend; timeout = 30.0)
+            @test r.outcome === :gpu
+            @test r.n_batches == 4  # 4 -> 2 -> 1 ROIs per batch
+            @test r.polls == 3
+            @test r.activations == 1
+            @test r.elapsed < 10  # no wait for the 30 s timeout
+        end
+    end
+
+    @testset "one ROI no idle device can hold errors (:gpu) or uses the CPU (:auto)" begin
+        vendor = FakeVendor(; never_fits_above = 0)
+        r = run_retry_loop(vendor, :gpu; timeout = 30.0)
+        @test r.outcome isa ErrorException
+        msg = sprint(showerror, r.outcome)
+        @test occursin("with margin", msg)
+        @test occursin("idle GPU", msg)
+        @test occursin("batch of 1 ROI", msg)
+        @test r.activations == 0
+        @test r.elapsed < 10
+
+        r = run_retry_loop(vendor, :auto; timeout = 30.0)
+        @test r.outcome === :cpu
+        @test r.activations == 0
+        @test r.warnings == 1
+        @test r.elapsed < 10
+    end
+
+    @testset "the idle-device decision" begin
+        never_fits = GaussMLE._never_fits
+        @test never_fits(900, 1000, 1000, false)  # idle, free below the request
+        @test !never_fits(900, 1000, 1000, true)  # another process may release it
+        @test !never_fits(900, 1000, 1000, nothing)  # unknown: keep waiting
+        @test !never_fits(1000, 1200, 1000, false)  # free covers the request
+        @test never_fits(900, 999, 1000, true)  # total below the request, any process
+        @test never_fits(900, 999, 1000, nothing)
     end
 
     @testset "out of memory halves the batch and retries at once" begin

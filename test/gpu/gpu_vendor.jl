@@ -11,8 +11,11 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
     @testset "Memory polling" begin
         @test GaussMLE._poll_gpu(
             vendor, :auto, typemax(Int) >> 2; timeout = 0.0,
-        ) == (-1, false, false)
-        device_idx, available, failed = GaussMLE._poll_gpu(vendor, :auto, 1; timeout = 0.0)
+        )[1:3] == (-1, false, false)  # beyond every device: never fits, no wait
+        device_idx, available, failed, never_fits = GaussMLE._poll_gpu(
+            vendor, :auto, 1; timeout = 0.0
+        )
+        @test never_fits === nothing
         n_devices = vendor isa GaussMLE.CUDAGPU ?
             length(CUDA.devices()) : length(AMDGPU.devices())
         @test available
@@ -54,7 +57,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
     if vendor isa GaussMLE.ROCmGPU
         @testset "ROCm failure cleanup" begin
             @test GaussMLE._release_gpu_context(vendor, 0) === nothing
-            device_idx, available, failed = GaussMLE._poll_gpu(
+            device_idx, available, failed, _ = GaussMLE._poll_gpu(
                 vendor, :auto, 1; timeout = 0.0,
             )
             @test available

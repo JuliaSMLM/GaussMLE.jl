@@ -1,6 +1,6 @@
 # Child process for retry_faults.jl: one fit under an injected fault, one result line on
 # stdout. Run in its own process so the injected method never touches the group's process.
-# ARGS: scenario ("launch_failed" | "oom"), backend (:auto or :gpu or :cpu).
+# ARGS: scenario ("launch_failed" | "oom" | "idle_full"), backend (:auto or :gpu or :cpu).
 using GaussMLE, CUDA, SMLMData
 
 scenario = ARGS[1]
@@ -14,15 +14,34 @@ if scenario == "launch_failed"
     end
 end
 
-n_rois = scenario == "oom" ? 200_000 : 200
+if scenario == "idle_full"
+    # An idle device whose free memory is below the request (a filler holds all but about
+    # 150 MB): the poll must report that no wait can help, and the loop halve the batch.
+    # Compile the kernel first so the timed fit measures waiting, not compilation.
+    warm_model = GaussianXYNB(0.13f0)
+    warm = GaussMLE.generate_roi_batch(
+        IdealCamera(64, 64, 0.1), warm_model; n_rois = 200, roi_size = 15, seed = 1
+    )
+    fit(
+        convert(Array{Float32, 3}, warm.data),
+        GaussMLEConfig(; psf_model = warm_model, backend = :gpu)
+    )
+    keep = CUDA.free_memory() - 150 * 1024^2
+    filler = keep > 0 ? CuArray{UInt8}(undef, keep) : nothing
+    CUDA.synchronize()
+end
+
+n_rois = scenario in ("oom", "idle_full") ? 200_000 : 200
 roi_size = 15
 psf_model = GaussianXYNB(0.13f0)
 batch = GaussMLE.generate_roi_batch(
     IdealCamera(64, 64, 0.1), psf_model; n_rois, roi_size, seed = 1
 )
 data = convert(Array{Float32, 3}, batch.data)
+# A regression waits for the timeout and fails the seconds check instead of hanging.
+timeout = scenario == "idle_full" ? 10.0 : 20.0
 fitter = GaussMLEConfig(;
-    psf_model, backend, batch_size = n_rois, auto_timeout = 20.0, gpu_timeout = 20.0
+    psf_model, backend, batch_size = n_rois, auto_timeout = timeout, gpu_timeout = timeout
 )
 t = @elapsed result = try
     smld, info = fit(data, fitter)

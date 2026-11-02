@@ -53,19 +53,25 @@ function GaussMLE._poll_gpu(
 
         while true
             best_free = 0
+            never_fits = true
             for (i, dev) in enumerate(devices)
                 # AMDGPU 2.10 exposes HIP free memory as info(), outside Mem.
                 # The scoped device switch restores the previous context on errors too.
-                free, _ = AMDGPU.device!(AMDGPU.info, dev)
+                free, total = AMDGPU.device!(AMDGPU.info, dev)
                 best_free = max(best_free, free)
 
                 # No contention check: ROCm under WSL has no SMI process/utilization data.
                 if free > required_with_margin
-                    return i - 1, true, false
+                    return i - 1, true, false, nothing
                 end
+                # No process list either, so only a total below the request is final.
+                never_fits &= GaussMLE._never_fits(
+                    free, total, required_with_margin, nothing
+                )
             end
 
-            time() >= deadline && return (-1, false, false)
+            never_fits && return (-1, false, false, best_free)
+            time() >= deadline && return (-1, false, false, nothing)
             if on_wait !== nothing
                 on_wait(time() - start, best_free, required_bytes)
             end
@@ -76,7 +82,7 @@ function GaussMLE._poll_gpu(
     catch e
         (backend == :gpu || e isa InterruptException) && rethrow()
         @warn "GPU availability check failed, using CPU" exception = (e, catch_backtrace())
-        return -1, false, true
+        return -1, false, true, nothing
     end
 end
 
