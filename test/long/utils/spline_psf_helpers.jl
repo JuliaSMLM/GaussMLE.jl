@@ -9,11 +9,21 @@ struct SplineTestPSF
     y_shift::Float64
     z_min::Float64
     z_max::Float64
+    basins::Bool
 end
+SplineTestPSF(linear, x_shift, y_shift, z_min, z_max) =
+    SplineTestPSF(linear, x_shift, y_shift, z_min, z_max, false)
 
 function (psf::SplineTestPSF)(x::Float32, y::Float32, z::Float32)
     psf.z_min <= z <= psf.z_max || error("evaluated outside the callable's valid z range")
     dx, dy = x - psf.x_shift * z, y - psf.y_shift * z
+    if psf.basins
+        # Isotropic, with the same energy at every z. The width is 0.2 um except in two
+        # wells: 0.12 um at z = +0.35 and a shallower 0.16 um at z = -0.35, so the
+        # likelihood in z has a maximum in each, and the lower one is a local maximum.
+        w = 0.2 - 0.08 * exp(-((z - 0.35) / 0.1)^2) - 0.04 * exp(-((z + 0.35) / 0.1)^2)
+        return exp(-(dx^2 + dy^2) / (2 * w^2)) / (2 * pi * w^2)
+    end
     if psf.linear
         # An identifiable change that is linear in z and positive over the full grid.
         return exp(-(dx^2 + dy^2) / (2 * 0.13^2)) *
@@ -24,6 +34,7 @@ end
 
 const astig_shape = SplineTestPSF(false, 0.0, 0.0, -Inf, Inf)
 const linear_shape = SplineTestPSF(true, 0.0, 0.0, -Inf, Inf)
+const two_basin_shape = SplineTestPSF(false, 0.0, 0.0, -Inf, Inf, true)
 
 function roi_at(m, z; x = 6, y = 6, box = 11, photons = 1000)
     return [
