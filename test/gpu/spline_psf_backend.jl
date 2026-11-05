@@ -91,12 +91,17 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 @test maximum(d) <= 0.05
                 @test count(<=(0.01), d) / length(d) >= 0.99
             end
+            # Fits on a constraint bound have Inf uncertainties (CLAUDE.md). Both backends
+            # must agree on which, and the covariance scale and bias/SD checks skip them.
             for field in uncertainty_fields
                 a = [getproperty(e, field) for e in cpu.emitters]
                 b = [getproperty(e, field) for e in gpu.emitters]
-                @test all(x -> isfinite(x) && x > 0, a)
-                @test all(x -> isfinite(x) && x > 0, b)
-                @test a ≈ b rtol = 1.0e-3
+                ok = isfinite.(a) .& isfinite.(b)
+                @test isfinite.(a) == isfinite.(b)
+                @test count(!isfinite, a) <= 0.05n
+                @test all(x -> x == Inf || (isfinite(x) && x > 0), a)
+                @test all(x -> x == Inf || (isfinite(x) && x > 0), b)
+                @test a[ok] ≈ b[ok] rtol = 1.0e-3
             end
             # Spatial covariance can be near zero; use its variance scale as in the
             # Gaussian agreement test, including xz and yz for the axial trait paths.
@@ -105,9 +110,10 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 )
                 a = [getproperty(e, field) for e in cpu.emitters]
                 b = [getproperty(e, field) for e in gpu.emitters]
-                scale = maximum(
-                    e -> getproperty(e, sigma_a) * getproperty(e, sigma_b), cpu.emitters
-                )
+                prod_ab = [
+                    getproperty(e, sigma_a) * getproperty(e, sigma_b) for e in cpu.emitters
+                ]
+                scale = maximum(prod_ab[isfinite.(prod_ab)])
                 @test a ≈ b rtol = 1.0e-3 atol = 1.0e-3 * scale
             end
 
@@ -118,6 +124,8 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                     (3, 1.0, 0, :σ_z, 10),
                 )
                 field = parameter_fields[axis]
+                sig = [getproperty(e, sigma) for e in gpu.emitters]
+                ok = findall(isfinite, sig)
                 errors = [
                     1000 * (
                         getproperty(gpu.emitters[k], field) -
@@ -125,13 +133,9 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                             axis == 3 ? truth[k][axis] :
                                 (corner + truth[k][axis] - 1.5) * px
                         )
-                    ) for k in 1:n
+                    ) for k in ok
                 ]
-                crlb = 1000 * sqrt(
-                    mean(
-                        abs2, [getproperty(e, sigma) for e in gpu.emitters]
-                    )
-                )
+                crlb = 1000 * sqrt(mean(abs2, sig[ok]))
                 @test abs(mean(errors)) <= tolerance
                 @test isfinite(crlb) && crlb > 0
                 @test abs(1 - std(errors) / crlb) < 0.3
