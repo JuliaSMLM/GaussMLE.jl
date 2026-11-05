@@ -20,6 +20,9 @@ GaussMLE 0.4.3 supports KernelAbstractions 0.9 and 0.10. Reactant (every version
 and CUDA 5 (5.9 or later). That environment runs the CPU and CUDA paths but not AMD
 GPUs, because AMDGPU 2.10 requires KernelAbstractions 0.10. A fresh environment resolves
 KernelAbstractions 0.10 and CUDA 6.5, which also run AMD GPUs.
+CUDA is supported at 5.9 to 5.x and 6.5 or later. CUDA 6.0 to 6.4 are excluded: 6.5 is
+the first CUDA 6 that allows KernelAbstractions 0.10 (6.0 to 6.4 allow only 0.9, per the
+General registry), and 6.0 to 6.4 are untested with GaussMLE.
 
 ## Quick Start
 
