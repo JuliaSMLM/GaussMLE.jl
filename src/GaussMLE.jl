@@ -20,6 +20,7 @@ using Statistics: Statistics, mean
 using SpecialFunctions: SpecialFunctions
 using SMLMData: SMLMData
 using Random: Random
+using PrecompileTools: @compile_workload, @setup_workload
 using Distributions: Chisq, cdf, Poisson  # Only import what we need
 
 import StatsAPI: fit  # Extend canonical Julia fit function
@@ -50,6 +51,7 @@ include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
 include("interface.jl")  # User-facing API
+include("precompile.jl")  # First-fit compilation at package precompile time
 
 # Main exports - minimal API for common workflows
 # Camera types come from SMLMData (use SMLMData.SCMOSCamera, etc.)

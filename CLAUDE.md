@@ -314,6 +314,7 @@ The math is dimensionally consistent:
 - `src/devices.jl` - Device abstraction (CPU/GPU auto-detection)
 - `src/emitters.jl` - Custom emitter types (Emitter2DFitSigma, Emitter2DFitSigmaXY)
 - `src/results.jl` - Fit metadata and legacy result types
+- `src/precompile.jl` - PrecompileTools workload: a few CPU fits per model and camera (never a GPU context; skipped where KernelAbstractions 0.10's POCL is unavailable)
 - `src/roi_batch.jl` - Localization results and emitter/SMLD conversion
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
