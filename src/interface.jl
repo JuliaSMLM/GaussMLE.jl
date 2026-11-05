@@ -303,6 +303,31 @@ function _cleanup_after_failure(vendor, dev_idx, context_active::Bool)
     return nothing
 end
 
+# A fit whose x or y (and z, for a model with an axial position) ended exactly on a bound
+# of `constraints` did not localize an emitter inside the allowed region: its Fisher matrix
+# says nothing about where the emitter is. Its uncertainties become `Inf` and its
+# covariances zero, the convention of a failed inversion; fitted parameters, log-likelihood
+# and chi2 stay. The clamp returns the bound itself, so equality is exact.
+function _mark_pinned_fits!(
+        uncertainties::Matrix{Float32}, covariances::Matrix{Float32},
+        results::Matrix{Float32}, constraints::ParameterConstraints, psf_model::PSFModel
+    )
+    n_pinned = _has_axial_position(typeof(psf_model)) ? 3 : 2
+    for i in axes(results, 2)
+        pinned = false
+        for k in 1:n_pinned
+            pinned |=
+                results[k, i] == constraints.lower[k] ||
+                results[k, i] == constraints.upper[k]
+        end
+        if pinned
+            uncertainties[:, i] .= Inf32
+            covariances[:, i] .= 0.0f0
+        end
+    end
+    return nothing
+end
+
 # Consecutive one-ROI out-of-memory failures on an available device before the failure is
 # treated as permanent, and the pause between them in seconds.
 const ONE_ROI_OOM_LIMIT = 3
@@ -664,6 +689,7 @@ function _run_mle_kernel!(
         end
     end
 
+    _mark_pinned_fits!(uncertainties, covariances, results, constraints, fitter.psf_model)
     return (actual_backend, device_id, actual_batch_size, actual_n_batches)
 end
 
@@ -696,6 +722,10 @@ Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
+
+A fit with a singular Fisher matrix, or whose x, y (or z) ended exactly on a bound of its
+constraints, reports `Inf` for every uncertainty and zero covariances; its parameters,
+log-likelihood and p-value are as fitted.
 
 # Examples
 ```julia
@@ -994,6 +1024,10 @@ ROI, before any kernel launch.
 
 # Returns
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
+
+A fit with a singular Fisher matrix, or whose x, y (or z) ended exactly on a bound of its
+constraints, reports `Inf` for every uncertainty and zero covariances; its parameters,
+log-likelihood and p-value are as fitted.
 
 # Examples
 Fit 10 simulated ROIs on the CPU:

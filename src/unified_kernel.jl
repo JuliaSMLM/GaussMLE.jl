@@ -138,12 +138,40 @@ end
     return true, A_inv
 end
 
+# Cholesky factor of a Fisher matrix's Jacobi-scaled form G (unit diagonal), `(ok, L)`.
+# Unlike `static_cholesky_decomposition`, which the spline Levenberg-Marquardt step also
+# uses, a pivot (the squared diagonal of the factor, before the square root) below
+# `N * eps(T)` fails: G is then singular to working precision, with smallest eigenvalue
+# below that (condition above about 1e6), and its inverse is rounding. A NaN pivot fails.
+@inline function _fisher_cholesky(A::SMatrix{N, N, T}) where {N, T}
+    tol = N * eps(T)
+    @inbounds for j in 1:N
+        for i in j:N
+            sum_val = A[i, j]
+            for k in 1:(j - 1)
+                sum_val -= A[i, k] * A[j, k]
+            end
+
+            if i == j
+                sum_val > tol || return false, A
+                A = Base.setindex(A, sqrt(sum_val), i, i)
+            else
+                A = Base.setindex(A, sum_val / A[j, j], i, j)
+            end
+        end
+    end
+    return true, A
+end
+
 # Inverse of a Fisher matrix F for the CRLB, `(ok, C)`. The entries span many orders of
 # magnitude (F_xx grows like N, F_NN shrinks like 1/N), so F is inverted in Jacobi-scaled
 # form: with d_k = 1 / sqrt(F_kk) and G = D F D, which has a unit diagonal, G is inverted by
-# Cholesky (LU when that fails) and C = D G^-1 D. Nothing is added to the diagonal, so
-# every uncertainty is the Cramér-Rao bound itself. A diagonal entry that is not positive
-# and finite, or a G that neither factorization inverts, gives `ok = false`.
+# Cholesky and C = D G^-1 D. F is positive semidefinite by construction, so a failed
+# Cholesky (a pivot below N * eps(T), see `_fisher_cholesky`) means F is singular to
+# working precision and there is no fallback. Nothing is added to the diagonal, so every
+# uncertainty is the Cramér-Rao bound itself. `ok = false` for a diagonal entry of F that
+# is not positive and finite, a failed Cholesky, or an inverse diagonal that is not
+# positive and finite.
 @inline function _invert_fisher(F::SMatrix{N, N, T}) where {N, T}
     positive = true
     @inbounds for k in 1:N
@@ -152,15 +180,16 @@ end
     positive || return false, zero(F)
     d = SVector{N, T}(ntuple(k -> one(T) / sqrt(F[k, k]), Val(N)))
     G = (F .* d) .* d'
-    ok, G_chol = static_cholesky_decomposition(G)
-    G_inv = zero(G)
-    if ok
-        ok, G_inv = static_cholesky_inverse(G_chol)
-    else
-        ok, G_inv = static_matrix_inverse(G)
-    end
+    ok, G_chol = _fisher_cholesky(G)
     ok || return false, zero(F)
-    return true, (G_inv .* d) .* d'
+    _, G_inv = static_cholesky_inverse(G_chol)
+    C = (G_inv .* d) .* d'
+    valid = true
+    @inbounds for k in 1:N
+        valid &= C[k, k] > zero(T) && isfinite(C[k, k])
+    end
+    valid || return false, zero(F)
+    return true, C
 end
 
 # Simple GPU-compatible parameter initialization - generic version
@@ -534,16 +563,16 @@ end
         end
     end
 
-    # Invert the Fisher matrix for uncertainties (CRLB); a singular matrix, or a
-    # parameter with no Fisher information, gives infinite uncertainties and zero
-    # covariances.
+    # Invert the Fisher matrix for uncertainties (CRLB); a matrix singular to working
+    # precision, or a parameter with no Fisher information, gives infinite uncertainties
+    # and zero covariances.
     ok, H_inv = _invert_fisher(H)
     # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
     # covariances[3,idx] = σ_yz (3D only, zero otherwise)
     has_z = _has_axial_position(typeof(psf_model))
     @inbounds for k in 1:N
         results[k, idx] = θ[k]
-        uncertainties[k, idx] = ok ? sqrt(max(zero(T), H_inv[k, k])) : T(Inf)
+        uncertainties[k, idx] = ok ? sqrt(H_inv[k, k]) : T(Inf)
     end
     @inbounds covariances[1, idx] = ok ? H_inv[1, 2] : zero(T)
     @inbounds covariances[2, idx] = ok && has_z ? H_inv[1, 3] : zero(T)
