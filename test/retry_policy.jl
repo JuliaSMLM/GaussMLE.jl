@@ -214,13 +214,30 @@ end
         end
     end
 
-    @testset "a one-ROI out-of-memory error waits for the deadline" begin
-        r = run_retry_loop(FakeVendor(; oom_above = 0), :gpu)
+    # A one-ROI failure that no wait clears (a hard memory limit below the table plus one
+    # ROI) ends after three tries in a row on an available device, 0.5 s apart, even with
+    # no timeout; the warning is logged once per batch size (4, 2 and 1 ROIs).
+    @testset "a permanent one-ROI out-of-memory error ends without a timeout" begin
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :gpu; timeout = Inf)
         @test r.outcome isa FakeOOMError
-        @test r.elapsed >= 0.4
-        @test r.activations > 3  # 4 -> 2 -> 1 ROIs, then re-polls of the one-ROI batch
+        @test r.activations == 5  # 4 -> 2 -> 1 ROIs, then two more one-ROI tries
+        @test r.warnings == 3
+        @test 0.9 <= r.elapsed < 10  # two 0.5 s pauses
 
-        r = run_retry_loop(FakeVendor(; oom_above = 0), :auto)
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :auto; timeout = Inf)
+        @test r.outcome === :cpu
+        @test r.activations == 5
+        @test r.warnings == 4  # the three above and the fall back to the CPU
+        @test 0.9 <= r.elapsed < 10 + 1
+    end
+
+    @testset "a one-ROI out-of-memory error stops at the deadline" begin
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :gpu; timeout = 0.4)
+        @test r.outcome isa Exception
+        @test r.elapsed >= 0.4
+        @test r.elapsed < 10
+
+        r = run_retry_loop(FakeVendor(; oom_above = 0), :auto; timeout = 0.4)
         @test r.outcome === :cpu
         @test r.elapsed >= 0.4
     end

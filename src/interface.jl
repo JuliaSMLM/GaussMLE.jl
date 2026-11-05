@@ -222,7 +222,7 @@ function GaussMLEConfig(;
 end
 
 """
-    estimate_batch_memory(batch_size, box_size, n_params)
+    estimate_batch_memory(batch_size, box_size, n_params; map_bytes = box_size^2 * 4)
 
 Estimate GPU memory needed for one batch of MLE fitting.
 
@@ -230,16 +230,24 @@ Memory components:
 - data: batch_size × box_size² × 4 bytes
 - results: batch_size × n_params × 4 bytes
 - uncertainties: batch_size × n_params × 4 bytes
-- variance_map: box_size² × 4 bytes (shared)
+- covariances: batch_size × 3 × 4 bytes
+- log-likelihoods and Pearson statistics: batch_size × 2 × 4 bytes
 - corners: batch_size × 2 × 4 bytes
+- variance map: `map_bytes` (shared; the kernel receives the whole camera map, so pass
+  `4 * length(variance_map)` for a sCMOS fit)
 """
-function estimate_batch_memory(batch_size::Integer, box_size::Integer, n_params::Integer)
+function estimate_batch_memory(
+        batch_size::Integer, box_size::Integer, n_params::Integer;
+        map_bytes::Integer = box_size^2 * 4
+    )
     data_bytes = batch_size * box_size^2 * 4
     results_bytes = batch_size * n_params * 4
     uncertainties_bytes = batch_size * n_params * 4
-    variance_bytes = box_size^2 * 4
+    covariances_bytes = batch_size * 3 * 4
+    statistics_bytes = batch_size * 2 * 4
     corners_bytes = batch_size * 2 * 4
-    return data_bytes + results_bytes + uncertainties_bytes + variance_bytes + corners_bytes
+    return data_bytes + results_bytes + uncertainties_bytes + covariances_bytes +
+        statistics_bytes + corners_bytes + map_bytes
 end
 
 # Goodness-of-fit p-values from the Pearson statistic `chi2` = sum (d - mu)^2 / variance
@@ -294,6 +302,11 @@ function _cleanup_after_failure(vendor, dev_idx, context_active::Bool)
     end
     return nothing
 end
+
+# Consecutive one-ROI out-of-memory failures on an available device before the failure is
+# treated as permanent, and the pause between them in seconds.
+const ONE_ROI_OOM_LIMIT = 3
+const ONE_ROI_OOM_PAUSE = 0.5
 
 # Only a tabulated model has a finite lateral extent; SplinePSFModel specializes this.
 _validate_psf_box(::Any, ::Integer) = nothing
@@ -374,11 +387,19 @@ function _run_mle_kernel!(
         deadline = time() + timeout
         batch_cap = max(1, min(fitter.batch_size, n_fits))
         psf_bytes = _psf_table_bytes(psf_pixels)
+        # The kernel receives the whole variance map, so its real size is counted.
+        map_bytes = sizeof(variance_map)
         failed_batch = 0  # the batch cap of the last resource failure
         gpu_succeeded = false
+        # An out-of-memory error for one ROI while the poll reports the device available
+        # may be a transient clash or permanent (a hard memory limit below the table plus
+        # one ROI): after ONE_ROI_OOM_LIMIT in a row it is treated as permanent.
+        one_roi_ooms = 0
+        warned_batches = Set{Int}()  # batch sizes whose resource warning was logged
 
         # A single ROI that exceeds every device's total memory can never fit.
-        one_roi_bytes = estimate_batch_memory(1, box_size, n_params) + psf_bytes
+        one_roi_bytes = estimate_batch_memory(1, box_size, n_params; map_bytes) +
+            psf_bytes
         totals = try
             _gpu_total_memory(vendor)
         catch e
@@ -396,8 +417,9 @@ function _run_mle_kernel!(
         end
 
         while !gpu_succeeded && !use_cpu && time() < deadline
-            required_memory = estimate_batch_memory(batch_cap, box_size, n_params) +
-                psf_bytes
+            required_memory = estimate_batch_memory(
+                batch_cap, box_size, n_params; map_bytes
+            ) + psf_bytes
             # Poll the vendor for an available GPU
             dev_idx, available, failed, never_fits = _poll_gpu(
                 vendor, fitter.backend, required_memory;
@@ -436,6 +458,11 @@ function _run_mle_kernel!(
                 # Transfer a spline's table once for all batches on this device. A retry
                 # may replace the device/context, so it must adapt the host model again.
                 device_psf = _prepare_psf_model(gpu_backend, psf_pixels)
+                # The variance map is the same for every batch: upload it once per attempt.
+                d_variance_map = KernelAbstractions.allocate(
+                    gpu_backend, Float32, size(variance_map)
+                )
+                copyto!(d_variance_map, variance_map)
 
                 # Process all batches on GPU
                 actual_batch_size = batch_cap
@@ -449,11 +476,6 @@ function _run_mle_kernel!(
                         gpu_backend, Float32, size(batch_data)
                     )
                     copyto!(d_batch_data, batch_data)
-
-                    d_variance_map = KernelAbstractions.allocate(
-                        gpu_backend, Float32, size(variance_map)
-                    )
-                    copyto!(d_variance_map, variance_map)
 
                     batch_x_corners = x_corners[batch_start:batch_end]
                     batch_y_corners = y_corners[batch_start:batch_end]
@@ -525,7 +547,8 @@ function _run_mle_kernel!(
                 # under :gpu or fall back to the CPU at once under :auto.
                 resource = _is_resource_error(vendor, e)
                 oom = resource && _is_oom_error(vendor, e)
-                if resource
+                if resource && !(batch_cap in warned_batches)
+                    push!(warned_batches, batch_cap)
                     @warn "GPU error on device $dev_idx with a batch of $batch_cap \
                         ROIs, releasing resources" exception = (e, catch_backtrace())
                 end
@@ -536,12 +559,27 @@ function _run_mle_kernel!(
                     @warn "GPU cleanup on device $dev_idx failed; handling the original \
                         error" cleanup_exception = (ce, catch_backtrace())
                 end
+                one_roi_oom = oom && batch_cap == 1
+                one_roi_ooms = one_roi_oom ? one_roi_ooms + 1 : 0
                 if resource
                     failed_batch = batch_cap
                     if oom && batch_cap > 1
                         batch_cap = cld(batch_cap, 2)  # smaller batch, retry at once
+                    elseif one_roi_ooms >= ONE_ROI_OOM_LIMIT
+                        # Permanent: waiting does not clear it. Poll returned at once each
+                        # time, so the loop would otherwise spin until the deadline.
+                        fitter.backend == :gpu && rethrow()
+                        @warn "One ROI (box $box_size) plus the PSF table ran out of \
+                            memory $one_roi_ooms times in a row on an available GPU; \
+                            using CPU"
+                        use_cpu = true
+                        break
                     else
                         fitter.backend == :gpu && time() >= deadline && rethrow()
+                        # A transient clash can clear; the poll returns at once while
+                        # free memory is reported, so pause between one-ROI attempts.
+                        one_roi_oom &&
+                            sleep(min(ONE_ROI_OOM_PAUSE, max(0.0, deadline - time())))
                     end
                 else
                     (fitter.backend == :gpu || e isa InterruptException) && rethrow()
@@ -646,8 +684,14 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 Array input assumes 0.1 μm pixels (a `SplinePSFModel` keeps its own `pixel_size`, so
 emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI
 corners.
-For n ROIs of side b, `variance_map` must cover rows `1:b` and columns `1:b*n`;
-one b×b map is not reused across ROIs.
+For n ROIs of side b, `variance_map` is one of
+- a `(b, b)` map, used for every ROI;
+- a `(b, b, n)` array, one map per ROI;
+- a `(b, b*n)` map tiled horizontally like the ROI corners (ROI k reads columns
+  `(k-1)*b+1:k*b`); a larger map that covers rows `1:b` and columns `1:b*n` is also read
+  that way.
+
+Any other shape throws an `ArgumentError`.
 Use `ROIBatch` for real camera calibration and coordinates.
 
 # Returns
@@ -701,7 +745,7 @@ function fit(
     # Determine camera model from variance_map keyword
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
     var_map = isnothing(variance_map) ? zeros(Float32, box_size, box_size) :
-        Float32.(variance_map)
+        _tiled_variance_map(Float32.(variance_map), box_size, n_fits)
 
     # Create dummy corners for fit(Array): [1, 1+roi_size, 1+2*roi_size, ...]
     x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_fits]
@@ -737,8 +781,9 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
-        _psf_table_bytes(psf_pixels)
+    memory_per_batch = estimate_batch_memory(
+        actual_batch_size, box_size, n_params; map_bytes = sizeof(var_map)
+    ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch
@@ -746,6 +791,27 @@ function fit(
 
     # Return tuple (BasicSMLD, GaussMLEFitInfo)
     return (to_smld(loc_result, batch), info)
+end
+
+# The `(box, box * n)` map that fit(Array)'s tiled corners index, from the shapes its
+# `variance_map` keyword accepts: `(box, box)` (one map for every ROI), `(box, box, n)` (one
+# per ROI) or a map that already covers rows `1:box` and columns `1:box * n`.
+function _tiled_variance_map(vm::AbstractArray{Float32}, box::Int, n::Int)
+    sz = size(vm)
+    if ndims(vm) == 2 && sz[1] >= box && sz[2] >= box * n
+        return Matrix(vm)
+    elseif sz == (box, box)
+        return repeat(Matrix(vm), 1, n)
+    elseif sz == (box, box, n)
+        return reshape(Array(vm), box, box * n)  # ROI k fills columns (k-1)*box+1:k*box
+    end
+    throw(
+        ArgumentError(
+            "variance_map of size $sz does not fit $n ROIs of $box×$box pixels: use \
+            ($box, $box) (one map for every ROI), ($box, $box, $n) (one map per ROI) or \
+            ($box, $(box * n)) (the maps tiled horizontally)"
+        )
+    )
 end
 
 # Pixel size (µm) that fit(::Array) uses: 0.1 µm for every model except SplinePSFModel,
@@ -887,8 +953,9 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
-        _psf_table_bytes(psf_pixels)
+    memory_per_batch = estimate_batch_memory(
+        actual_batch_size, box_size, n_params; map_bytes = sizeof(variance_map)
+    ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch
