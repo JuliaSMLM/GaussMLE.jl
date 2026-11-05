@@ -150,12 +150,17 @@ Camera noise model is determined by the ROIBatch type:
   hold, because its free memory or its total memory is below the request, halves the
   batch and polls again at once; for one ROI it errors, naming the request and the largest
   free memory of an idle GPU. An out-of-memory error also halves the batch and retries at
-  once; only a failing one-ROI batch waits.
+  once. A one-ROI out-of-memory failure that follows a poll which returned at once (the
+  device was reported available without waiting) is retried after a 0.5 s pause; the third
+  in a row is permanent and rethrows even at `gpu_timeout = Inf`. A poll that had to wait
+  resets that count. After any other resource failure whose poll returned at once, the
+  loop also pauses 0.5 s before polling again. Each batch size logs one warning.
 - `:auto` - Use CPU silently if no functional GPU is found; otherwise wait for resources
   and retry resource errors (out of memory, context creation) up to `auto_timeout`, then
   warn and fall back to CPU; any other GPU error warns and falls back to CPU at once.
   Out-of-memory errors and requests no idle GPU can hold halve the batch as in `:gpu`, and
-  the CPU is used at once (with one warning) when one ROI cannot fit any idle GPU
+  the CPU is used at once (with one warning) when one ROI cannot fit any idle GPU or when
+  three one-ROI out-of-memory failures in a row follow polls that returned at once
 
 A failure while releasing GPU memory after an error is logged as a warning and never
 replaces the original error, which `:gpu` rethrows and `:auto` handles as above.
@@ -307,7 +312,8 @@ end
 # of `constraints` did not localize an emitter inside the allowed region: its Fisher matrix
 # says nothing about where the emitter is. Its uncertainties become `Inf` and its
 # covariances zero, the convention of a failed inversion; fitted parameters, log-likelihood
-# and chi2 stay. The clamp returns the bound itself, so equality is exact.
+# and chi2 stay. The clamp returns the bound itself, so equality is exact. A parameter
+# the caller holds fixed (equal bounds) is skipped.
 function _mark_pinned_fits!(
         uncertainties::Matrix{Float32}, covariances::Matrix{Float32},
         results::Matrix{Float32}, constraints::ParameterConstraints, psf_model::PSFModel
@@ -316,6 +322,8 @@ function _mark_pinned_fits!(
     for i in axes(results, 2)
         pinned = false
         for k in 1:n_pinned
+            # A parameter the caller holds fixed (lower == upper) is not a bound hit.
+            constraints.lower[k] == constraints.upper[k] && continue
             pinned |=
                 results[k, i] == constraints.lower[k] ||
                 results[k, i] == constraints.upper[k]
@@ -446,9 +454,17 @@ function _run_mle_kernel!(
                 batch_cap, box_size, n_params; map_bytes
             ) + psf_bytes
             # Poll the vendor for an available GPU
+            # Every poll tick that finds no device calls `on_wait` first, so a call
+            # tells whether the poll had to wait.
+            poll_waited = Ref(false)
+            tracked_wait = (elapsed, free, required) -> begin
+                poll_waited[] = true
+                fitter.on_wait === nothing || fitter.on_wait(elapsed, free, required)
+                return nothing
+            end
             dev_idx, available, failed, never_fits = _poll_gpu(
                 vendor, fitter.backend, required_memory;
-                timeout = max(0.0, deadline - time()), on_wait = fitter.on_wait
+                timeout = max(0.0, deadline - time()), on_wait = tracked_wait
             )
             if failed
                 use_cpu = true
@@ -584,15 +600,18 @@ function _run_mle_kernel!(
                     @warn "GPU cleanup on device $dev_idx failed; handling the original \
                         error" cleanup_exception = (ce, catch_backtrace())
                 end
-                one_roi_oom = oom && batch_cap == 1
-                one_roi_ooms = one_roi_oom ? one_roi_ooms + 1 : 0
+                # Only a failure after a poll that returned at once counts toward the
+                # permanent one-ROI out-of-memory error: a poll that waited means the
+                # device was busy, and the failure may clear.
+                one_roi_ooms = oom && batch_cap == 1 && !poll_waited[] ?
+                    one_roi_ooms + 1 : 0
                 if resource
                     failed_batch = batch_cap
                     if oom && batch_cap > 1
                         batch_cap = cld(batch_cap, 2)  # smaller batch, retry at once
                     elseif one_roi_ooms >= ONE_ROI_OOM_LIMIT
-                        # Permanent: waiting does not clear it. Poll returned at once each
-                        # time, so the loop would otherwise spin until the deadline.
+                        # Permanent: waiting does not clear it. The poll returned at once
+                        # each time, so the loop would otherwise spin until the deadline.
                         fitter.backend == :gpu && rethrow()
                         @warn "One ROI (box $box_size) plus the PSF table ran out of \
                             memory $one_roi_ooms times in a row on an available GPU; \
@@ -601,9 +620,10 @@ function _run_mle_kernel!(
                         break
                     else
                         fitter.backend == :gpu && time() >= deadline && rethrow()
-                        # A transient clash can clear; the poll returns at once while
-                        # free memory is reported, so pause between one-ROI attempts.
-                        one_roi_oom &&
+                        # A transient clash can clear. A poll that returned at once found
+                        # the device available, so pause before the next attempt instead
+                        # of spinning; a poll that waited already did.
+                        poll_waited[] ||
                             sleep(min(ONE_ROI_OOM_PAUSE, max(0.0, deadline - time())))
                     end
                 else
@@ -774,12 +794,16 @@ function fit(
 
     # Determine camera model from variance_map keyword
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
-    var_map = isnothing(variance_map) ? zeros(Float32, box_size, box_size) :
-        _tiled_variance_map(Float32.(variance_map), box_size, n_fits)
-
-    # Create dummy corners for fit(Array): [1, 1+roi_size, 1+2*roi_size, ...]
+    # Kernel corners index the map: tiled for a `(box, box * n)` map, 1 for every ROI when
+    # one `(box, box)` map serves all. The output coordinates use `x_corners_smld` below.
     x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_fits]
     y_corners = fill(Int32(1), n_fits)
+    if isnothing(variance_map)
+        var_map = zeros(Float32, box_size, box_size)
+    else
+        var_map, shared = _kernel_variance_map(Float32.(variance_map), box_size, n_fits)
+        shared && fill!(x_corners, Int32(1))
+    end
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
@@ -823,17 +847,19 @@ function fit(
     return (to_smld(loc_result, batch), info)
 end
 
-# The `(box, box * n)` map that fit(Array)'s tiled corners index, from the shapes its
-# `variance_map` keyword accepts: `(box, box)` (one map for every ROI), `(box, box, n)` (one
-# per ROI) or a map that already covers rows `1:box` and columns `1:box * n`.
-function _tiled_variance_map(vm::AbstractArray{Float32}, box::Int, n::Int)
+# The map and the tiling of the kernel corners for fit(Array)'s `variance_map` keyword:
+# `(map, shared)`. A `(box, box)` map serves every ROI as is (`shared`, corners of 1); a
+# `(box, box, n)` map is reshaped to the `(box, box * n)` map that the tiled corners index,
+# and so is a map that already covers rows `1:box` and columns `1:box * n`.
+function _kernel_variance_map(vm::AbstractArray{Float32}, box::Int, n::Int)
     sz = size(vm)
     if ndims(vm) == 2 && sz[1] >= box && sz[2] >= box * n
-        return Matrix(vm)
+        return Matrix(vm), false
     elseif sz == (box, box)
-        return repeat(Matrix(vm), 1, n)
+        return Matrix(vm), true
     elseif sz == (box, box, n)
-        return reshape(Array(vm), box, box * n)  # ROI k fills columns (k-1)*box+1:k*box
+        # ROI k fills columns (k-1)*box+1:k*box
+        return reshape(Array(vm), box, box * n), false
     end
     throw(
         ArgumentError(
@@ -914,8 +940,9 @@ function fit(
 
     # Calculate elapsed time and create GaussMLEFitInfo
     elapsed_s = (time_ns() - t0) / 1.0e9
-    memory_per_batch = estimate_batch_memory(actual_batch_size, box_size, n_params) +
-        _psf_table_bytes(psf_pixels)
+    memory_per_batch = estimate_batch_memory(
+        actual_batch_size, box_size, n_params; map_bytes = sizeof(variance_map)
+    ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
         elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
         actual_n_batches, memory_per_batch

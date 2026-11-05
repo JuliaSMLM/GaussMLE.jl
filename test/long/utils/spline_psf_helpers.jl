@@ -138,6 +138,8 @@ function check_fits_beyond_z_range(spline, source_model, camera_kind)
     smld, _ = fit(roi_batch; psf_model = m, backend = :cpu)
     for (e, (_, _, z)) in zip(smld.emitters, truth)
         @test e.z == (z < 0 ? m.z_range[1] : m.z_range[2])
+        # on its bound, z did not localize the emitter: every uncertainty is Inf
+        @test isinf(e.σ_z) && isinf(e.σ_x)
     end
     check_objective_maximum(smld, m, data, v, x_corners, y_corners, px)
     return nothing

@@ -1,6 +1,6 @@
 # Fits that did not localize an emitter report infinite uncertainties: a fit pinned on a
 # position bound (applied on the host after the kernel) and a Fisher matrix singular to
-# working precision (decided in the kernel by `_invert_fisher`). The ROI below is
+# working precision (decided in the kernel by `_invert_fisher`). The ROIs below are
 # rendered noise-free by SMLMSim: a Gaussian PSF on a 9 x 9 sCMOS camera (0.1 um pixels,
 # gain 1, offset 0, read noise 1 e-) with the emitter outside the box. The first (x 1.3,
 # y 11.4 px, PSF sigma 0.07 um) is fitted with y on its upper bound (11 px) and the PSF
@@ -37,6 +37,40 @@ end
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons) && isfinite(e.pvalue)
     end
 
+    @testset "a ROI with a Fisher matrix singular to accumulation error" begin
+        # The emitter is beyond the top-left corner (x -0.9, y -0.7 px, PSF sigma 0.10 um).
+        # No position ends on a bound, but the Fisher matrix is singular to working
+        # precision: its smallest Cholesky pivot lies above N * eps but at or below
+        # n_pixels * eps, the accumulation error of the Float32 sum over the box's pixels.
+        # With the tolerance N * eps it reported sigma_x = 4.8 um and sigma_y = 4.4 um.
+        roi = sim_roi(-0.9f0, -0.7f0, 4991, 0.9, 0.1)
+        batch = ROIBatch(roi, Int32[1], Int32[1], Int32[1], SIM_CAMERA)
+        smld, _ = fit(batch; psf_model = GaussianXYNBS(), iterations = 20, backend = :cpu)
+        e = only(smld.emitters)
+        @test all(==(Inf32), emitter_sigmas(e))
+        @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons)
+    end
+
+    @testset "parameters the caller holds fixed are not pinned" begin
+        box = 9
+        psf = GaussMLE.to_pixel_units(GaussianXYNB(0.13f0), 0.1f0)
+        theta = GaussMLE.Params{4}(5.0f0, 5.0f0, 2000.0f0, 10.0f0)
+        mu = Float32[GaussMLE.evaluate_psf(psf, i, j, theta) for i in 1:box, j in 1:box]
+        Random.seed!(3)
+        data = reshape(Float32.(poisson_noise(mu)), box, box, 1)
+        batch = ROIBatch(data, Int32[1], Int32[1], Int32[1], IdealCamera(32, 32, 0.1f0))
+        # x and y held at the truth: lower == upper, inside the box
+        constraints = GaussMLE.ParameterConstraints{4}(
+            GaussMLE.Params{4}(5.0f0, 5.0f0, 1.0f0, 0.01f0),
+            GaussMLE.Params{4}(5.0f0, 5.0f0, Inf32, Inf32),
+            GaussMLE.Params{4}(1.0f0, 1.0f0, 100.0f0, 2.0f0),
+        )
+        smld, _ = fit(batch; backend = :cpu, iterations = 50, constraints)
+        e = only(smld.emitters)
+        @test isfinite(e.x) && isfinite(e.y)
+        @test isfinite(e.σ_photons) && isfinite(e.σ_bg)
+    end
+
     @testset "the kernel itself reports Inf, never a zero, for the singular matrix" begin
         # Bypasses the host step: the fit's y sits on its bound, but the kernel alone must
         # not turn the failed inversion into zero precision.
@@ -65,17 +99,18 @@ end
 
     @testset "_invert_fisher fails singular matrices and inverts a good one" begin
         singular = SMatrix{3, 3, Float32}(1, 0, 1, 0, 1, 1, 1, 1, 2)  # row 3 = row 1 + row 2
-        ok, _ = GaussMLE._invert_fisher(singular)
+        ok, _ = GaussMLE._invert_fisher(singular, 81)
         @test !ok
         # Singular to Float32 precision (condition about 1.7e7): the plain Cholesky passes
-        # with pivot 2^-22, below 3 * eps(Float32), and its inverse would be rounding.
+        # with pivot 2^-22, below 81 * eps(Float32), the tolerance of a 9 x 9 box, and its
+        # inverse would be rounding.
         a = 1.0f0 - eps(Float32)
         near = SMatrix{3, 3, Float32}(1, a, 0, a, 1, 0, 0, 0, 1)
         @test first(GaussMLE.static_cholesky_decomposition(near))
-        ok, _ = GaussMLE._invert_fisher(near)
+        ok, _ = GaussMLE._invert_fisher(near, 81)
         @test !ok
         good = SMatrix{3, 3, Float32}(4, 1, 0, 1, 3, 1, 0, 1, 2)
-        ok, inverse = GaussMLE._invert_fisher(good)
+        ok, inverse = GaussMLE._invert_fisher(good, 81)
         @test ok
         @test Matrix{Float64}(inverse) ≈ inv(Matrix{Float64}(good)) rtol = 1.0e-5
     end

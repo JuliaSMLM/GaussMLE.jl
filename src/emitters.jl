@@ -31,6 +31,9 @@ Equivalent localization fields to SMLMData.Emitter2DFit, with an additional `pva
 - `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -91,6 +94,9 @@ end
 - `σ::T`: Fitted PSF width (microns)
 
 ## Uncertainties (CRLB)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -156,6 +162,9 @@ end
 - `σx::T`, `σy::T`: Fitted PSF widths in x and y (microns)
 
 ## Uncertainties (CRLB)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -222,6 +231,9 @@ Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pva
 - `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`, `σ_z::T`: Position uncertainties (microns)
 - `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of
   Fisher matrix inverse
