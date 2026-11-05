@@ -253,8 +253,8 @@ GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson opt
 To ensure numerical stability:
 
 - **Parameter constraints**: Restrict parameter updates with step limits and enforce bounds (positive intensity, bounded position, etc.)
-- **Fisher matrix regularization**: The Fisher Information Matrix is positive semidefinite. Small diagonal regularization ($\epsilon = 10^{-10} \times \max|I|$) attempts to stabilize inversion for CRLB computation; it does not guarantee successful factorization in Float32
-- **Cholesky decomposition**: Cholesky inversion is tried first, with LU as a fallback. If both paths fail, the fitted parameters are retained with infinite uncertainties and zero covariances
+- **Fisher matrix scaling**: The Fisher Information Matrix is positive semidefinite and its entries span many orders of magnitude (the position entries grow like $N$, the photon entry shrinks like $1/N$). It is inverted after Jacobi scaling, $G = D I D$ with $D = \mathrm{diag}(I_{kk}^{-1/2})$, so $G$ has a unit diagonal, and $I^{-1} = D G^{-1} D$. Nothing is added to the diagonal, so the photon uncertainty stays at the Cramér-Rao bound for bright emitters
+- **Cholesky decomposition**: Cholesky inversion of $G$ is tried first, with LU as a fallback. If a diagonal entry of $I$ is not positive and finite, or both paths fail, the fitted parameters are retained with infinite uncertainties and zero covariances
 
 With `constraints=nothing`, defaults are built at fit time from ROI size n, and the config retains `nothing`. Default x and y bounds are `[-1,n+2]` in ROI pixels, extending 1.5 pixels beyond each ROI edge.
 

@@ -138,6 +138,31 @@ end
     return true, A_inv
 end
 
+# Inverse of a Fisher matrix F for the CRLB, `(ok, C)`. The entries span many orders of
+# magnitude (F_xx grows like N, F_NN shrinks like 1/N), so F is inverted in Jacobi-scaled
+# form: with d_k = 1 / sqrt(F_kk) and G = D F D, which has a unit diagonal, G is inverted by
+# Cholesky (LU when that fails) and C = D G^-1 D. Nothing is added to the diagonal, so
+# every uncertainty is the Cramér-Rao bound itself. A diagonal entry that is not positive
+# and finite, or a G that neither factorization inverts, gives `ok = false`.
+@inline function _invert_fisher(F::SMatrix{N, N, T}) where {N, T}
+    positive = true
+    @inbounds for k in 1:N
+        positive &= F[k, k] > zero(T) && isfinite(F[k, k])
+    end
+    positive || return false, zero(F)
+    d = SVector{N, T}(ntuple(k -> one(T) / sqrt(F[k, k]), Val(N)))
+    G = (F .* d) .* d'
+    ok, G_chol = static_cholesky_decomposition(G)
+    G_inv = zero(G)
+    if ok
+        ok, G_inv = static_cholesky_inverse(G_chol)
+    else
+        ok, G_inv = static_matrix_inverse(G)
+    end
+    ok || return false, zero(F)
+    return true, (G_inv .* d) .* d'
+end
+
 # Simple GPU-compatible parameter initialization - generic version
 @inline function simple_initialize_common(roi, box_size::Int, ::Type{T}) where {T}
     # Calculate background (use edges for robustness)
@@ -499,65 +524,20 @@ end
         end
     end
 
-    # Invert Fisher matrix for uncertainties (CRLB)
-    # Fisher matrices should be symmetric positive definite
-    # Add minimal regularization to diagonal for numerical stability
-    # Use very small value to not bias uncertainty estimates
-    reg = T(1.0e-10) * maximum(abs, H)
+    # Invert the Fisher matrix for uncertainties (CRLB); a singular matrix, or a
+    # parameter with no Fisher information, gives infinite uncertainties and zero
+    # covariances.
+    ok, H_inv = _invert_fisher(H)
+    # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
+    # covariances[3,idx] = σ_yz (3D only, zero otherwise)
+    has_z = _has_axial_position(typeof(psf_model))
     @inbounds for k in 1:N
-        H = Base.setindex(H, H[k, k] + reg, k, k)
+        results[k, idx] = θ[k]
+        uncertainties[k, idx] = ok ? sqrt(max(zero(T), H_inv[k, k])) : T(Inf)
     end
-
-    # Try Cholesky decomposition (for symmetric positive definite matrices)
-    ok, H_chol = static_cholesky_decomposition(H)
-    H_inv = zero(H)
-    if ok
-        ok, H_inv = static_cholesky_inverse(H_chol)
-    end
-    if ok
-        @inbounds for k in 1:N
-            results[k, idx] = θ[k]
-            uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
-        end
-        # Extract spatial covariances from Fisher matrix inverse
-        # covariances[1,idx] = σ_xy (all models)
-        # covariances[2,idx] = σ_xz (3D only, zero otherwise)
-        # covariances[3,idx] = σ_yz (3D only, zero otherwise)
-        @inbounds covariances[1, idx] = H_inv[1, 2]
-        if _has_axial_position(typeof(psf_model))
-            @inbounds covariances[2, idx] = H_inv[1, 3]
-            @inbounds covariances[3, idx] = H_inv[2, 3]
-        else
-            @inbounds covariances[2, idx] = zero(T)
-            @inbounds covariances[3, idx] = zero(T)
-        end
-    else
-        # Fallback: use LU decomposition
-        ok, H_inv = static_matrix_inverse(H)
-        if ok
-            @inbounds for k in 1:N
-                results[k, idx] = θ[k]
-                uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
-            end
-            @inbounds covariances[1, idx] = H_inv[1, 2]
-            if _has_axial_position(typeof(psf_model))
-                @inbounds covariances[2, idx] = H_inv[1, 3]
-                @inbounds covariances[3, idx] = H_inv[2, 3]
-            else
-                @inbounds covariances[2, idx] = zero(T)
-                @inbounds covariances[3, idx] = zero(T)
-            end
-        else
-            # Singular matrix - set zero covariances
-            @inbounds for k in 1:N
-                results[k, idx] = θ[k]
-                uncertainties[k, idx] = T(Inf)
-            end
-            @inbounds covariances[1, idx] = zero(T)
-            @inbounds covariances[2, idx] = zero(T)
-            @inbounds covariances[3, idx] = zero(T)
-        end
-    end
+    @inbounds covariances[1, idx] = ok ? H_inv[1, 2] : zero(T)
+    @inbounds covariances[2, idx] = ok && has_z ? H_inv[1, 3] : zero(T)
+    @inbounds covariances[3, idx] = ok && has_z ? H_inv[2, 3] : zero(T)
 
     @inbounds log_likelihoods[idx] = log_likelihood
 end
