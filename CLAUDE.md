@@ -234,8 +234,11 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
-   - Diagonal regularization attempts to stabilize inversion; Cholesky is tried first,
-     then LU. If both inversion paths fail, uncertainties are infinite
+   - `_invert_fisher` inverts the Jacobi-scaled matrix (`G = D F D`, `d_k = 1/sqrt(F_kk)`)
+     and returns `D G⁻¹ D`, with no added regularization: an absolute one swamps the
+     photon entry `F_NN ~ 1/N` against `F_xx ~ N` and collapses `σ_photons` for bright
+     emitters. Cholesky is tried first, then LU. If a `F_kk` is not positive and finite,
+     or both inversion paths fail, uncertainties are infinite
    - Off-diagonal correlations matter for CRLB
 
 **CRITICAL SIGN CONVENTION** (unified_kernel.jl):
@@ -274,7 +277,7 @@ GPU kernels cannot use standard library matrix operations, so custom implementat
 
 All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
 LU uses a relative tolerance (`1e-10 * maximum(abs, A)`) matching SMITE; the Fisher
-matrix uses the same relative scale for diagonal regularization.
+matrix goes through `_invert_fisher`, which scales it to a unit diagonal first.
 Cholesky checks for positive pivots; the inverse and substitution helpers have
 no corresponding tolerance check.
 
