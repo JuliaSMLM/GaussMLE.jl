@@ -242,6 +242,14 @@ function estimate_batch_memory(batch_size::Integer, box_size::Integer, n_params:
     return data_bytes + results_bytes + uncertainties_bytes + variance_bytes + corners_bytes
 end
 
+# Goodness-of-fit p-values from the Pearson statistic `chi2` = sum (d - mu)^2 / variance
+# over a fit's pixels, against chi-squared with `df` degrees of freedom. `ccdf` keeps the
+# upper tail exact where `1 - cdf` rounds to zero in Float32.
+function _gof_pvalues(chi2::AbstractVector{Float32}, df::Integer)
+    dist = Chisq(df)
+    return Float32[Float32(ccdf(dist, Float64(c))) for c in chi2]
+end
+
 """
     compute_cpu_batch_size(n_fits, box_size, n_params; memory_multiplier=4)
 
@@ -291,7 +299,7 @@ end
 _validate_psf_box(::Any, ::Integer) = nothing
 
 """
-    _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods,
+    _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods, chi2,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
                      fitter; vendor) -> (actual_backend, device_id, actual_batch_size,
                      actual_n_batches)
@@ -300,7 +308,8 @@ Internal helper that runs the MLE kernel on CPU or GPU with appropriate batching
 Handles all backend selection and batch management logic.
 
 # Arguments
-- Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods
+- Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods, chi2
+  (the Pearson statistic the p-values come from)
 - Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners,
   y_corners
 - fitter: GaussMLEConfig with backend/batching configuration
@@ -316,6 +325,7 @@ function _run_mle_kernel!(
         uncertainties::Matrix{Float32},
         covariances::Matrix{Float32},
         log_likelihoods::Vector{Float32},
+        chi2::Vector{Float32},
         data::Array{Float32, 3},
         psf_pixels,
         use_scmos::Val,
@@ -468,12 +478,15 @@ function _run_mle_kernel!(
                     d_log_likelihoods = KernelAbstractions.allocate(
                         gpu_backend, Float32, batch_size_actual
                     )
+                    d_chi2 = KernelAbstractions.allocate(
+                        gpu_backend, Float32, batch_size_actual
+                    )
 
                     kernel = unified_gaussian_mle_kernel!(gpu_backend)
                     kernel(
                         d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                        d_batch_data, device_psf, use_scmos, d_variance_map, d_x_corners,
-                        d_y_corners,
+                        d_chi2, d_batch_data, device_psf, use_scmos, d_variance_map,
+                        d_x_corners, d_y_corners,
                         constraints, fitter.iterations,
                         ndrange = batch_size_actual
                     )
@@ -484,6 +497,7 @@ function _run_mle_kernel!(
                     uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
                     covariances[:, batch_start:batch_end] = Array(d_covariances)
                     log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
+                    chi2[batch_start:batch_end] = Array(d_chi2)
                 end
 
                 # All batches succeeded - reclaim pool memory so queries show it as free
@@ -573,7 +587,7 @@ function _run_mle_kernel!(
             actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
             kernel(
-                results, uncertainties, covariances, log_likelihoods,
+                results, uncertainties, covariances, log_likelihoods, chi2,
                 data, cpu_psf, use_scmos, variance_map, x_corners, y_corners,
                 constraints, fitter.iterations,
                 ndrange = n_fits
@@ -594,12 +608,13 @@ function _run_mle_kernel!(
                 batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
                 batch_covariances = @view covariances[:, batch_start:batch_end]
                 batch_llr = @view log_likelihoods[batch_start:batch_end]
+                batch_chi2 = @view chi2[batch_start:batch_end]
 
                 kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
                 kernel(
                     batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                    batch_data, cpu_psf, use_scmos, variance_map, batch_x_corners,
-                    batch_y_corners,
+                    batch_chi2, batch_data, cpu_psf, use_scmos, variance_map,
+                    batch_x_corners, batch_y_corners,
                     constraints, fitter.iterations,
                     ndrange = batch_size_actual
                 )
@@ -681,6 +696,7 @@ function fit(
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
+    chi2 = Vector{Float32}(undef, n_fits)
 
     # Determine camera model from variance_map keyword
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
@@ -693,22 +709,13 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods,
+        results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
         fitter
     )
 
-    # Compute p-values from log-likelihood ratios
-    # χ² = -2×LLR, df = n_pixels - n_params
-    pvalues = Vector{Float32}(undef, n_fits)
-    df = box_size^2 - n_params
-    chi2_dist = Chisq(df)
-
-    for i in 1:n_fits
-        llr = log_likelihoods[i]
-        χ² = -2.0f0 * llr
-        pvalues[i] = 1.0f0 - Float32(cdf(chi2_dist, χ²))
-    end
+    # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
+    pvalues = _gof_pvalues(chi2, box_size^2 - n_params)
 
     # Create minimal ROIBatch for SMLD conversion
     roi_size = size(data_f32, 1)
@@ -782,6 +789,7 @@ function fit(
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
+    chi2 = Vector{Float32}(undef, n_fits)
 
     # IdealCamera: Poisson noise only (no variance map)
     use_scmos = Val(false)
@@ -793,22 +801,14 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods,
+        results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
         fitter
     )
 
-    # Compute p-values from log-likelihood ratios
-    pvalues = Vector{Float32}(undef, n_fits)
-    df = box_size^2 - n_params
-    chi2_dist = Chisq(df)
-
-    for i in 1:n_fits
-        llr = log_likelihoods[i]
-        χ² = -2.0f0 * llr
-        pvalues[i] = 1.0f0 - Float32(cdf(chi2_dist, χ²))
-    end
+    # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
+    pvalues = _gof_pvalues(chi2, box_size^2 - n_params)
 
     # Use real ROIBatch for coordinate conversion (preserves corners!)
     loc_result = create_localization_result(
@@ -859,6 +859,7 @@ function fit(
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
+    chi2 = Vector{Float32}(undef, n_fits)
 
     # SCMOSCamera: Poisson + readnoise variance
     use_scmos = Val(true)
@@ -868,22 +869,14 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods,
+        results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
         fitter
     )
 
-    # Compute p-values from log-likelihood ratios
-    pvalues = Vector{Float32}(undef, n_fits)
-    df = box_size^2 - n_params
-    chi2_dist = Chisq(df)
-
-    for i in 1:n_fits
-        llr = log_likelihoods[i]
-        χ² = -2.0f0 * llr
-        pvalues[i] = 1.0f0 - Float32(cdf(chi2_dist, χ²))
-    end
+    # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
+    pvalues = _gof_pvalues(chi2, box_size^2 - n_params)
 
     # Use original ROIBatch for coordinate conversion (preserves corners and original
     # camera!)

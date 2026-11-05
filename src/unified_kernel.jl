@@ -467,6 +467,8 @@ end
         # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
         covariances::AbstractArray{T, 2},
         log_likelihoods::AbstractArray{T, 1},
+        # Pearson statistic sum (d - mu)^2 / (mu + readout variance), the p-value's input
+        chi2::AbstractArray{T, 1},
         @Const(data::AbstractArray{T, 3}),
         @Const(psf_model::PSFModel{N, T}),
         @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
@@ -493,8 +495,10 @@ end
         constraints, iterations, θ
     )
 
-    # Compute final log-likelihood and full Fisher Information Matrix for CRLB
+    # Compute final log-likelihood ratio, Pearson statistic and full Fisher Information
+    # Matrix for CRLB
     log_likelihood = zero(T)
+    chi2_sum = zero(T)
     H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
 
     @inbounds for j in 1:box_size, i in 1:box_size
@@ -512,13 +516,19 @@ end
             compute_log_likelihood(data_ij, model, variance_map, cam_i, cam_j)
         end
 
-        # Fisher Information Matrix (for CRLB) - need full matrix here
         # variance = model + readout variance (zero for IdealCamera)
-        if model > zero(T)
-            variance = model + _readout_variance(
-                camera_model, model, variance_map, corner_x, corner_y, i, j
-            )
+        variance = model + _readout_variance(
+            camera_model, model, variance_map, corner_x, corner_y, i, j
+        )
 
+        # Pearson statistic (d - mu)^2 / variance, for both cameras; for sCMOS it is
+        # -2 times the log-likelihood ratio above.
+        if variance > zero(T)
+            chi2_sum += (data_ij - model)^2 / variance
+        end
+
+        # Fisher Information Matrix (for CRLB) - need full matrix here
+        if model > zero(T)
             # Whole-matrix operations preserve multiply/divide/add order per element.
             H = H + (dudt * dudt') / variance
         end
@@ -540,4 +550,5 @@ end
     @inbounds covariances[3, idx] = ok && has_z ? H_inv[2, 3] : zero(T)
 
     @inbounds log_likelihoods[idx] = log_likelihood
+    @inbounds chi2[idx] = chi2_sum
 end

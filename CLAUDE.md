@@ -166,6 +166,7 @@ The two camera models have **fundamentally different data flows**:
 | **Corners** | Required for output coordinates | Required for output coordinates and variance-map lookup |
 | **Data units** | Photons (or ADU if gain=1) | Must convert ADU → electrons |
 | **Likelihood** | `cf = data/model - 1`<br>`df = data/model²` | `cf = (data-model)/total_var`<br>`df = 1/total_var` |
+| **p-value statistic** | Pearson `Σ (data-model)²/model` against χ²(df) | Pearson `Σ (data-model)²/total_var` against χ²(df) (`-2×` the log-likelihood ratio) |
 | **Kernel indexing** | `data[i,j]` only | `data[i,j]` and `variance_map[cam_y, cam_x]` |
 
 **Key implementation difference**:

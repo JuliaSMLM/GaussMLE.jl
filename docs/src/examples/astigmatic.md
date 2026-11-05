@@ -157,7 +157,7 @@ The `AstigmaticXYZNB` model returns `Emitter3DFitGaussMLE` emitters with:
 | `σ_xy`, `σ_xz`, `σ_yz` | Position covariances (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 
 ## Quality Filtering
 

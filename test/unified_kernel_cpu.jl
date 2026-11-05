@@ -1,7 +1,7 @@
 # Unified kernel on the CPU backend: GaussianXYNB fits a simple blob batch (the Long group
 # runs the other Gaussian models). The kernels use fit's work-group size, so they share its
 # compiled specializations.
-using Test, GaussMLE, KernelAbstractions, LinearAlgebra
+using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
 
 @testset "Unified Kernel Tests" begin
 
@@ -43,6 +43,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
             uncertainties = Matrix{Float32}(undef, 4, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
+            chi2 = Vector{Float32}(undef, n_test_blobs)
 
             # Run unified kernel on CPU
             backend = KernelAbstractions.CPU()
@@ -56,7 +57,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods,
+                results, uncertainties, covariances, log_likelihoods, chi2,
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -67,6 +68,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
+            @test all(isfinite.(chi2) .& (chi2 .>= 0))
 
             # Check parameters are in expected ranges
             @test all(2 .< results[1, :] .< 6)  # x position
@@ -74,6 +76,59 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
             @test all(100 .< results[3, :] .< 20000)  # photons (integrated Gaussian)
             @test all(0 .< results[4, :] .< 100)  # background
         end
+    end
+
+    @testset "Pearson statistic and p-values" begin
+        kernel = GaussMLE.unified_gaussian_mle_kernel!(
+            KernelAbstractions.CPU(), GaussMLE.CPU_WORKGROUP_SIZE
+        )
+        function run_kernel(psf_model, data, camera, variance_map; iterations)
+            n = size(data, 3)
+            results = zeros(Float32, length(psf_model), n)
+            uncertainties = zeros(Float32, length(psf_model), n)
+            covariances = zeros(Float32, 3, n)
+            log_likelihoods = zeros(Float32, n)
+            chi2 = zeros(Float32, n)
+            kernel(
+                results, uncertainties, covariances, log_likelihoods, chi2,
+                data, psf_model, camera, variance_map,
+                fill(Int32(1), n), fill(Int32(1), n),
+                GaussMLE.default_constraints(psf_model, size(data, 1)), iterations;
+                ndrange = n
+            )
+            return log_likelihoods, chi2
+        end
+
+        # A 3x3 ROI with no iterations, so the model is the initial guess: background the
+        # mean of the 8 edge pixels, 1.5; centered; photons floored at 100 (the
+        # background-subtracted sum, 9.5, is below it); sigma = 1.3 px. The model is
+        # mu = 1.5 + 100 gx gy with gx = (0.22598, 0.29948, 0.22598) the pixel integrals of
+        # the Gaussian, so mu = 6.6067 (corners), 8.2676 (edges), 10.4687 (center). Pearson:
+        # sum (d - mu)^2 / mu = 38.2438. The Poisson deviance of the same ROI is 57.3987.
+        roi = reshape(Float32[1, 2, 1, 2, 9, 2, 1, 2, 1], 3, 3, 1)
+        llr, chi2 = run_kernel(
+            GaussMLE.GaussianXYNB(1.3f0), roi, Val(false), zeros(Float32, 3, 3);
+            iterations = 0
+        )
+        @test chi2[1] ≈ 38.2438 rtol = 1.0e-5
+        @test llr[1] ≈ -57.3987 / 2 rtol = 1.0e-5  # log_likelihoods keeps the deviance
+
+        # For sCMOS the Pearson statistic with variance mu + readnoise^2 is -2 times the
+        # log-likelihood ratio, so its p-values do not change.
+        Random.seed!(3)
+        data = 10 .+ 100 .* rand(Float32, 7, 7, 20)
+        variance_map = 1 .+ 4 .* rand(Float32, 7, 7)
+        llr, chi2 = run_kernel(
+            GaussMLE.GaussianXYNB(1.3f0), data, Val(true), variance_map; iterations = 20
+        )
+        @test chi2 == -2 .* llr
+        @test all(chi2 .> 0)
+
+        # chi-squared with 2 degrees of freedom has survival function exp(-x / 2); `ccdf`
+        # keeps the far tail where 1 - cdf is 0 in Float32.
+        p = GaussMLE._gof_pvalues(Float32[0, 2, 150], 2)
+        @test p isa Vector{Float32}
+        @test p ≈ Float32[1, exp(-1), exp(-75)] rtol = 1.0e-5
     end
 
     @testset "Large sCMOS batch on CPU" begin
@@ -135,11 +190,12 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra
         uncertainties = zeros(Float32, 4, n)
         covariances = zeros(Float32, 3, n)
         log_likelihoods = zeros(Float32, n)
+        chi2 = zeros(Float32, n)
         kernel = GaussMLE.unified_gaussian_mle_kernel!(
             KernelAbstractions.CPU(), GaussMLE.CPU_WORKGROUP_SIZE
         )
         kernel(
-            results, uncertainties, covariances, log_likelihoods,
+            results, uncertainties, covariances, log_likelihoods, chi2,
             data, psf_model, Val(false), zeros(Float32, 512, 512),
             Int32[1 + (k - 1) * roi for k in 1:n], fill(Int32(1), n),
             GaussMLE.default_constraints(psf_model, roi), iterations;

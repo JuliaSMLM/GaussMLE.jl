@@ -100,8 +100,9 @@ Levenberg-Marquardt on the full Fisher matrix, climbing the Poisson likelihood
 the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
 background steps are not capped (photons ≥ 1, background ≥ 0.01). For sCMOS the
-reported log-likelihood and p-value use the Gaussian approximation
-`-(d - μ)²/(2(μ + v))`, not the fitted objective. `iterations` counts
+reported log-likelihood is the Gaussian approximation
+`-(d - μ)²/(2(μ + v))`, not the fitted objective; the p-value is the Pearson statistic
+`(d - μ)²/(μ + v)` as for every model. `iterations` counts
 Levenberg-Marquardt pixel passes per start: the last pass only evaluates, so the fit
 takes at most `iterations - 1` steps and `iterations = 1` returns the start. A parameter
 on a bound whose gradient points out of the box is held there while the others take their

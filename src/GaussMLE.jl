@@ -21,7 +21,7 @@ using SpecialFunctions: SpecialFunctions
 using SMLMData: SMLMData
 using Random: Random
 using PrecompileTools: @compile_workload, @setup_workload
-using Distributions: Chisq, cdf, Poisson  # Only import what we need
+using Distributions: Chisq, ccdf, Poisson  # Only import what we need
 
 import StatsAPI: fit  # Extend canonical Julia fit function
 

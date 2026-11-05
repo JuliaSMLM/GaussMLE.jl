@@ -198,7 +198,7 @@ The base 2D emitter type (`Emitter2DFitGaussMLE`) contains:
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -233,7 +233,7 @@ The Gaussian models are fitted by Newton-Raphson optimization with:
 - **Diagonal Hessian**: For fast parameter updates
 - **Full Fisher Information**: For accurate CRLB uncertainties
 
-`SplinePSFModel` is fitted by Levenberg-Marquardt on the full Fisher matrix instead. The `pvalue` comes from the log-likelihood ratio for both cameras; for sCMOS it is the Gaussian approximation, not the objective the spline fit maximizes.
+`SplinePSFModel` is fitted by Levenberg-Marquardt on the full Fisher matrix instead. The `pvalue` is the Pearson statistic $\sum (d-\mu)^2/(\mu+v)$ against $\chi^2(\mathrm{df})$ for both cameras, not the objective the spline fit maximizes.
 
 ## References
 

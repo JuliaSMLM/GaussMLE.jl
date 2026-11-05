@@ -74,7 +74,7 @@ Where:
 
 The update is zero when $|H_{\mathrm{diag},a}| \leq 10^{-10}$. Each update is clamped to its step limit, then the new parameter is clamped to its bounds. The full Fisher matrix is accumulated and inverted once after optimization for uncertainties.
 
-`SplinePSFModel` is instead fitted by Levenberg-Marquardt on the full Fisher matrix, solving $(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g$ with the per-camera objective: the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood $(d + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS). A parameter that sits on a bound with the objective's gradient pointing out of the box is held there: its row and column of the damped matrix are replaced by the identity and its gradient set to zero, so the solve moves only the free parameters. The fit runs from the scan start and from `starts - 1` fixed z starts (see the model guide), each with the full `iterations`, and keeps the one with the highest objective. The reported log-likelihood ratio and p-value come from the likelihood given above for both cameras; for sCMOS that is the Gaussian approximation $-(d-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the spline fit maximizes.
+`SplinePSFModel` is instead fitted by Levenberg-Marquardt on the full Fisher matrix, solving $(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g$ with the per-camera objective: the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood $(d + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS). A parameter that sits on a bound with the objective's gradient pointing out of the box is held there: its row and column of the damped matrix are replaced by the identity and its gradient set to zero, so the solve moves only the free parameters. The fit runs from the scan start and from `starts - 1` fixed z starts (see the model guide), each with the full `iterations`, and keeps the one with the highest objective. The reported log-likelihood ratio is the one given above for both cameras; for sCMOS that is the Gaussian approximation $-(d-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the spline fit maximizes. The p-value uses the Pearson statistic for every model (see Goodness of Fit).
 
 ## Derivatives
 
@@ -241,6 +241,17 @@ R(\theta) = -\frac{1}{2} \sum_{i,j} \frac{(N_{i,j} - \mu(\theta)_{i,j})^2}{\text
 Its full model-dependent derivatives are not used for optimization. Here the data and model use electrons, and the readout variance uses electrons².
 
 Note that unlike the pure Poisson case, the variance depends on both the model value (signal-dependent) and the camera calibration (pixel-dependent). The readout variance map is extracted from the camera calibration as $\sigma^2_{\text{read}} = \text{readnoise}^2$ and indexed at the correct camera coordinates using the ROI corner positions.
+
+## Goodness of Fit
+
+The `pvalue` of each localization is the upper tail of $\chi^2(\mathrm{df})$ at the Pearson statistic
+
+```math
+X^2 = \sum_{i,j:\,\mathrm{Var}_{i,j} > 0} \frac{(N_{i,j} - \mu(\hat\theta)_{i,j})^2}{\text{Var}_{i,j}},
+\qquad \mathrm{df} = n_{\text{pixels}} - n_{\text{params}}
+```
+
+with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout term is zero for `IdealCamera`), the same statistic for both cameras and every PSF model. For sCMOS it equals $-2$ times the reported log-likelihood ratio. The Poisson deviance, $-2$ times the log-likelihood ratio of `IdealCamera`, is not $\chi^2$-distributed at low counts: at 1 to 2 photons per pixel a 0.05 cut on its p-value rejected 17 to 32 % of correct fits. The Pearson statistic is calibrated there (0.045 to 0.061 of correct fits below 0.05 in the 24 conditions measured on SMLMSim boxes), and rejects wrong-width and two-emitter ROIs as often as a moment-matched deviance. The p-value is computed with `ccdf`, so a poor fit does not round to exactly zero in Float32.
 
 ## Numerical Considerations
 

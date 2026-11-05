@@ -83,6 +83,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     uncertainties = similar(results)
     covariances = Matrix{Float32}(undef, 3, n_fits)
     log_likelihoods = Vector{Float32}(undef, n_fits)
+    chi2 = Vector{Float32}(undef, n_fits)
     ACTIVATE_CALLS[] = 0
     POLL_CALLS[] = 0
     RELEASE_CALLS[] = 0
@@ -93,7 +94,7 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
     elapsed = @elapsed with_logger(logger) do
         outcome = try
             out = GaussMLE._run_mle_kernel!(
-                results, uncertainties, covariances, log_likelihoods,
+                results, uncertainties, covariances, log_likelihoods, chi2,
                 convert(Array{Float32, 3}, batch.data),
                 GaussMLE.to_pixel_units(psf_model, 0.1f0), Val(false),
                 zeros(Float32, 7, 7), batch.x_corners, batch.y_corners, fitter;

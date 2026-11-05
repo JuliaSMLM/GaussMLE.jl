@@ -102,7 +102,7 @@ The `GaussianXYNBS` model returns `Emitter2DFitSigma` emitters with these fields
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_σ` | **PSF width uncertainty** | microns |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 | `frame` | Frame number | integer |
 
 ## Quality Control with PSF Width
