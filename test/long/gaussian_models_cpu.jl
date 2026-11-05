@@ -68,6 +68,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             uncertainties = Matrix{Float32}(undef, 5, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
+            chi2 = Vector{Float32}(undef, n_test_blobs)
 
             backend = KernelAbstractions.CPU()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(
@@ -80,7 +81,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods,
+                results, uncertainties, covariances, log_likelihoods, chi2,
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -90,6 +91,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
+            @test all(isfinite.(chi2) .& (chi2 .>= 0))
         end
 
         @testset "GaussianXYNBSXSY (N=6)" begin
@@ -100,6 +102,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             uncertainties = Matrix{Float32}(undef, 6, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
             log_likelihoods = Vector{Float32}(undef, n_test_blobs)
+            chi2 = Vector{Float32}(undef, n_test_blobs)
 
             backend = KernelAbstractions.CPU()
             kernel = GaussMLE.unified_gaussian_mle_kernel!(
@@ -112,7 +115,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods,
+                results, uncertainties, covariances, log_likelihoods, chi2,
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -122,6 +125,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
             @test all(isfinite.(log_likelihoods))
+            @test all(isfinite.(chi2) .& (chi2 .>= 0))
         end
     end
 

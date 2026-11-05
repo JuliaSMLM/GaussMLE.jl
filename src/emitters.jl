@@ -8,7 +8,7 @@ subtyping AbstractEmitter for full ecosystem compatibility.
 All emitter types include:
 - Position and photometry (standard)
 - CRLB uncertainties (standard)
-- Goodness-of-fit p-value (from χ² test)
+- Goodness-of-fit p-value (Pearson χ² statistic against χ²(df))
 - PSF-specific parameters (σ, σx, σy, z)
 
 IdealCamera photometry uses photons and photons/pixel; sCMOS photometry uses electrons
@@ -38,7 +38,9 @@ Equivalent localization fields to SMLMData.Emitter2DFit, with an additional `pva
   electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -97,7 +99,9 @@ end
 - `σ_σ::T`: PSF width uncertainty (microns)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -160,7 +164,9 @@ end
 - `σ_σx::T`, `σ_σy::T`: PSF width uncertainties (microns)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -224,7 +230,9 @@ Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pva
   electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
