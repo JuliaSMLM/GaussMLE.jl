@@ -157,20 +157,20 @@ end
         @test err isa ArgumentError && occursin("ROI $index ", err.msg)
     end
 
-    # fit(::Array; variance_map) tiles ROIs at x = 1, 1 + box, ...: a map one box wide holds
-    # only the first.
+    # fit(::Array; variance_map) takes a (box, box), (box, box, n) or tiled (box, box * n)
+    # map; any other shape is refused, naming the accepted ones.
     for backend in (:cpu, :gpu, :auto)
         err = try
             fit(
                 batch.data[:, :, 1:2], GaussMLEConfig(; psf_model, backend);
-                variance_map = fill(2.0f0, box, box)
+                variance_map = fill(2.0f0, box, box, 3)
             )
             nothing
         catch e
             e
         end
         @test err isa ArgumentError
-        @test err isa ArgumentError && occursin("ROI 2 ", err.msg)
+        @test err isa ArgumentError && occursin("($box, $box, 2)", err.msg)
     end
 
     # An IdealCamera never indexes calibration by corner and converts corners to microns
@@ -183,4 +183,94 @@ end
     smld, _ = fit(ideal; psf_model, backend = :cpu)
     @test all(e -> isfinite(e.x) && isfinite(e.y), smld.emitters)
     @test smld.emitters[3].x > smld.emitters[2].x > smld.emitters[1].x
+end
+
+# fit(::Array; variance_map) takes one (box, box) map for every ROI, a (box, box, n) array
+# with one map per ROI, or the tiled (box, box * n) map. Each gives the fit of a ROIBatch
+# with an SCMOSCamera of the same read noise (offset 0, gain 1).
+@testset "fit(Array; variance_map) shapes" begin
+    box, n = 9, 3
+    psf_model = GaussianXYNB(0.13f0)
+    config = GaussMLEConfig(; psf_model, backend = :cpu)
+    Random.seed!(5)
+    data = Float32[
+        50 * exp(-((i - 4.5 - 0.2k)^2 + (j - 5.0)^2) / 4) + 10 + randn() for
+            i in 1:box, j in 1:box, k in 1:n
+    ]
+    readnoise = fill(1.5f0, box, box)
+    # one read-noise map per ROI, different for each
+    maps = cat([readnoise .* Float32(k) for k in 1:n]...; dims = 3)
+    variance_maps = maps .^ 2
+    tiled = reshape(variance_maps, box, box * n)
+
+    # The reference: ROIBatch on a sensor holding the maps side by side, corners at 1,
+    # 1 + box, ... as fit(Array) tiles them, and the same read noise.
+    camera = SCMOSCamera(
+        box * n, box, 0.1f0, reshape(maps, box, box * n); offset = 0.0f0, gain = 1.0f0
+    )
+    corners = Int32[1 + (k - 1) * box for k in 1:n]
+    batch = ROIBatch(data, corners, ones(Int32, n), Int32.(1:n), camera)
+    reference, _ = fit(batch, config)
+
+    for (name, vm) in (("tiled", tiled), ("(box, box, n)", variance_maps))
+        smld, _ = fit(data, config; variance_map = vm)
+        @test length(smld.emitters) == n
+        @test all(isfinite, [e.x for e in smld.emitters])
+        # Array input carries its own stand-in camera: compare the fitted values only.
+        for f in (:x, :y, :photons, :bg, :σ_x, :σ_y, :σ_photons, :σ_bg, :pvalue)
+            @test [getfield(e, f) for e in smld.emitters] ==
+                [getfield(e, f) for e in reference.emitters]
+        end
+    end
+
+    # One (box, box) map for every ROI equals the same map tiled and as (box, box, n).
+    one_noise = maps[:, :, 2]
+    one_map = one_noise .^ 2
+    from_one, _ = fit(data, config; variance_map = one_map)
+    from_tiled, _ = fit(data, config; variance_map = repeat(one_map, 1, n))
+    from_cube, _ = fit(
+        data, config; variance_map = repeat(reshape(one_map, box, box, 1), 1, 1, n)
+    )
+    camera_one = SCMOSCamera(
+        box * n, box, 0.1f0, repeat(one_noise, 1, n); offset = 0.0f0, gain = 1.0f0
+    )
+    batch_one = ROIBatch(data, corners, ones(Int32, n), Int32.(1:n), camera_one)
+    reference_one, _ = fit(batch_one, config)
+    for smld in (from_one, from_tiled, from_cube), f in (:x, :y, :photons, :bg, :σ_x, :σ_y)
+        @test [getfield(e, f) for e in smld.emitters] ==
+            [getfield(e, f) for e in reference_one.emitters]
+    end
+
+    wrong = (zeros(Float32, box, box - 1), zeros(Float32, box, box, n + 1), zeros(Float32, box))
+    for bad in wrong
+        err = try
+            fit(data, config; variance_map = bad)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test err isa ArgumentError && occursin("($box, $box, $n)", err.msg)
+    end
+end
+
+# The memory estimate counts the whole camera variance map the kernel receives, and every
+# output the batch allocates.
+@testset "memory estimate counts the variance map" begin
+    sensor, box, n = 2048, 9, 4
+    camera = SCMOSCamera(sensor, sensor, 0.1f0, 1.5f0; offset = 0.0f0, gain = 1.0f0)
+    data = fill(20.0f0, box, box, n)
+    corners = Int32[1, 100, 500, 2000]
+    batch = ROIBatch(data, corners, corners, Int32.(1:n), camera)
+    _, info = fit(batch; backend = :cpu)
+    map_bytes = 4 * sensor^2
+    @test info.memory_per_batch >= map_bytes
+    @test info.memory_per_batch ==
+        GaussMLE.estimate_batch_memory(info.batch_size, box, 4; map_bytes)
+    # The positional form is the box-sized map of before, plus every output.
+    @test GaussMLE.estimate_batch_memory(n, box, 4) ==
+        GaussMLE.estimate_batch_memory(n, box, 4; map_bytes = 4 * box^2)
+    # data, results and uncertainties, covariances, log-likelihood and chi2, corners
+    outputs = 4 * n * (box^2 + 2 * 4 + 3 + 2 + 2)
+    @test GaussMLE.estimate_batch_memory(n, box, 4; map_bytes) == outputs + map_bytes
 end

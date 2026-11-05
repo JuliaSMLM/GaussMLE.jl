@@ -22,6 +22,7 @@ GaussMLE._is_resource_error(v::ROCmGPU, e) = GaussMLE._is_oom_error(v, e)
 
 # Total bytes of each device (AMDGPU 2.10: `info()` returns (free, total) for the active
 # device, so the scoped switch restores the previous one).
+# Note: `AMDGPU.device!(AMDGPU.info, dev)` creates a HIP context on each visible device.
 function GaussMLE._gpu_total_memory(::ROCmGPU)
     return [Int(AMDGPU.device!(AMDGPU.info, dev)[2]) for dev in AMDGPU.devices()]
 end
