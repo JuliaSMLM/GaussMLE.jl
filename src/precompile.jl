@@ -5,6 +5,10 @@
 # A plain function standing in for a tabulated PSF: an astigmatic Gaussian.
 _precompile_psf(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2))
 
+# Set when the workload below completed during precompilation (a Core test checks it
+# whenever the CPU backend is precompilable).
+const PRECOMPILE_WORKLOAD_RAN = Ref(false)
+
 # Whether the CPU backend of the installed KernelAbstractions can launch a kernel while
 # precompiling. Version 0.9 runs kernels on Julia threads. Version 0.10 compiles them
 # through POCL, which is absent on some platforms.
@@ -44,8 +48,8 @@ end
             SVector{5, Float32}(4, 4, 0.1, 500, 5),
         ),
     )
-    if _cpu_backend_precompilable()
-        try
+    try
+        if _cpu_backend_precompilable()
             # PoCL's kernel cache stays out of the user's cache directory, and it starts one
             # thread rather than one per core.
             mktempdir() do cache_dir
@@ -74,11 +78,13 @@ end
                     end
                 end
             end
-        catch err
-            # A broken CPU backend must not keep the package from loading.
-            @debug "Failed to fit during precompilation" exception = (
-                err, catch_backtrace(),
-            )
+            PRECOMPILE_WORKLOAD_RAN[] = true
         end
+    catch err
+        # A broken CPU backend, or a KernelAbstractions whose internals moved, must not
+        # keep the package from loading.
+        @debug "Failed to fit during precompilation" exception = (
+            err, catch_backtrace(),
+        )
     end
 end

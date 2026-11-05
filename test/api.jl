@@ -5,6 +5,13 @@ Consolidated test of new simulator and ROIBatch features. The Long group fits th
 Gaussian models (test/long/gaussian_models_cpu.jl).
 """
 
+@testset "precompile workload" begin
+    # A KernelAbstractions that cannot launch a CPU kernel while precompiling skips it.
+    if GaussMLE._cpu_backend_precompilable()
+        @test GaussMLE.PRECOMPILE_WORKLOAD_RAN[]
+    end
+end
+
 @testset "New Features Tests" begin
 
     @testset "Basic Simulator with IdealCamera" begin

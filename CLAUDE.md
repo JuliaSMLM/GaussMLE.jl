@@ -49,7 +49,7 @@ when CUDA or AMDGPU is functional; otherwise it reports that the comparison is u
 The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
 - Immutable StaticArrays (SVector/SMatrix) for allocation-free CPU and GPU kernels
-- Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
+- Custom GPU-compatible linear algebra (Cholesky decomposition and inverse)
 - **Optimization by dispatch (`_optimize`)**: diagonal Newton-Raphson for the Gaussian
   models (element-wise, not full matrix inverse), Levenberg-Marquardt on the full Fisher
   matrix for `SplinePSFModel`
@@ -238,18 +238,22 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
    - `_invert_fisher` inverts the Jacobi-scaled matrix (`G = D F D`, `d_k = 1/sqrt(F_kk)`)
      and returns `D G⁻¹ D`, with no added regularization: an absolute one swamps the
      photon entry `F_NN ~ 1/N` against `F_xx ~ N` and collapses `σ_photons` for bright
-     emitters. G is factored by Cholesky only (`_fisher_cholesky`): a pivot below
-     `N * eps(T)` means G is singular to working precision (smallest eigenvalue below
-     that, condition above about 1e6), and there is no LU fallback, because F is positive
-     semidefinite by construction and LU there only turns rounding into a number. Failed
-     inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
+     emitters. G is factored by Cholesky only (`static_cholesky_decomposition` with a
+     tolerance): a pivot at or below `n_pixels * eps(T)` (`n_pixels = box_size^2`, passed
+     from the kernel) means F is singular to working precision. The Float32 accumulation
+     over the box's pixels perturbs the entries of G by about that much, so a smaller
+     pivot of a real matrix cannot be told from an exactly singular one (a tolerance of
+     `N * eps(T)` passed one real ROI whose reported σ_x was 77 µm). There is no LU
+     fallback, because F is positive semidefinite by construction and LU there only turns
+     rounding into a number. Failed inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
      diagonal entry that is not positive and finite (no `max(0, ...)` on a variance).
      Failed means every uncertainty is `Inf` and covariances are zero
    - After the kernel, on the host (`_mark_pinned_fits!`, CPU and GPU alike), a fit whose
      x or y (and z for AstigmaticXYZNB and SplinePSFModel) ended exactly on a lower or
      upper bound of the constraints the kernel used did not localize an emitter inside the
      allowed region: its uncertainties are `Inf` and covariances zero too; parameters,
-     log-likelihood and p-value are unchanged
+     log-likelihood and p-value are unchanged. A parameter the caller holds fixed
+     (`lower == upper`) is not a bound hit
    - Off-diagonal correlations matter for CRLB
 
 **CRITICAL SIGN CONVENTION** (unified_kernel.jl):
@@ -280,19 +284,16 @@ Wrong signs cause convergence failure or incorrect CRLB.
 
 GPU kernels cannot use standard library matrix operations, so custom implementations are provided:
 
-- `static_cholesky_decomposition` - Cholesky (preferred for symmetric positive definite)
+- `static_cholesky_decomposition(A, tol = zero(T))` - Cholesky (symmetric positive
+  definite); a pivot at or below `tol` fails
 - `static_cholesky_inverse` - Invert via Cholesky factors
-- `static_lu_decomposition` - LU without pivoting (fallback)
-- `static_back_substitution` - Solve linear systems with immutable vectors
-- `static_matrix_inverse` - Invert via LU factors
 
 All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
-LU uses a relative tolerance (`1e-10 * maximum(abs, A)`) matching SMITE.
-`static_cholesky_decomposition` checks for positive pivots (the spline Levenberg-Marquardt
-step shares it); the inverse and substitution helpers have no tolerance check. The Fisher
-matrix goes through `_invert_fisher`, which scales it to a unit diagonal first and factors
-it with `_fisher_cholesky`: a pivot below `N * eps(T)` fails, with no LU fallback (a
-separate function, so the shared decomposition and spline fits are unchanged).
+The spline Levenberg-Marquardt step calls the decomposition without a tolerance (a
+positive pivot passes, a NaN pivot is not caught there); the inverse helper has no
+tolerance check. The Fisher matrix goes through `_invert_fisher(F, n_pixels)`, which scales
+it to a unit diagonal first and factors it with tolerance `n_pixels * eps(T)`; a NaN pivot
+ends as a failed inversion through the check on the inverse diagonal.
 
 #### Astigmatic Model Unit Convention
 

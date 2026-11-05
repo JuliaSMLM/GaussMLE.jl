@@ -115,7 +115,7 @@ All 2D emitter types include these base fields:
 | `x`, `y` | Fitted position | microns |
 | `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
 | `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB); `Inf` for a fit on a position bound or a Fisher matrix singular to working precision | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |

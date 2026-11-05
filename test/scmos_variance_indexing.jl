@@ -241,6 +241,13 @@ end
             [getfield(e, f) for e in reference_one.emitters]
     end
 
+    # A (box, box) map is used as is, not copied n times: the estimate counts its real size
+    # and differs from the tiled map's by the n - 1 copies.
+    _, info_one = fit(data, config; variance_map = one_map)
+    _, info_tiled = fit(data, config; variance_map = repeat(one_map, 1, n))
+    @test info_tiled.memory_per_batch - info_one.memory_per_batch ==
+        4 * box^2 * (n - 1)
+
     wrong = (zeros(Float32, box, box - 1), zeros(Float32, box, box, n + 1), zeros(Float32, box))
     for bad in wrong
         err = try

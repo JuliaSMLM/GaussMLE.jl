@@ -137,6 +137,10 @@ while !gpu_succeeded && before deadline:
          if an out-of-memory error and the batch cap > 1:
              halve the batch cap and loop back to step 1 at once
          else if a resource error (out of memory at one ROI, context creation):
+             if the third one-ROI out-of-memory failure in a row, each after a poll that
+             returned at once:     # permanent, even with no timeout
+                 :gpu rethrows; :auto warns once and uses the CPU
+             if the poll returned at once: pause 0.5 s (bounded by the deadline)
              loop back to step 1   # Re-poll memory for next available GPU
          otherwise:                # a deterministic error, such as a compile error
              :gpu rethrows at once; :auto warns once and falls back to the CPU at once
@@ -177,9 +181,15 @@ The loop handles three distinct GPU failure scenarios:
    re-polled.
 
 3. **Runtime OOM** - GPU allocation fails mid-batch. Resources are cleaned up, the
-   batch cap is halved, and all batches restart at once with the smaller cap. Only an
-   out-of-memory error at a one-ROI batch goes back to waiting for the device.
-   A device-unavailable error always waits and retries.
+   batch cap is halved, and all batches restart at once with the smaller cap. An
+   out-of-memory error at a one-ROI batch goes back to the poll after a 0.5 s pause. Three
+   of them in a row, each after a poll that returned at once (the device was reported
+   available without waiting), are permanent: `:gpu` rethrows and `:auto` warns and uses
+   the CPU, even at `gpu_timeout = Inf`, because waiting does not clear a limit below one
+   ROI plus the PSF table. A poll that had to wait resets that count. Any other resource
+   failure (context creation, a device-unavailable error) retries until the timeout, with
+   the same 0.5 s pause when its poll returned at once, so it never spins. The retry loop
+   logs one warning per batch size.
 
 Any other error is not retried, since waiting cannot clear it. `fit(::ROIBatch)` also
 checks on the host, before any launch, that every ROI of an sCMOS batch lies on the sensor

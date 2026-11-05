@@ -2,10 +2,15 @@
 Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 """
 
-# GPU-compatible Cholesky decomposition for symmetric positive definite matrices
-# This is more robust than LU for Fisher Information matrices
+# GPU-compatible Cholesky decomposition for symmetric positive definite matrices.
+# A pivot (the squared diagonal of the factor, before the square root) at or below `tol`
+# fails. A NaN pivot does not fail here (`NaN <= tol` is false): the factor carries the
+# NaN and the caller's checks catch it. The spline Levenberg-Marquardt step passes no
+# tolerance.
 # Immutable matrices avoid heap allocation caused by bounds-check error paths.
-@inline function static_cholesky_decomposition(A::SMatrix{N, N, T}) where {N, T}
+@inline function static_cholesky_decomposition(
+        A::SMatrix{N, N, T}, tol::T = zero(T)
+    ) where {N, T}
     # Cholesky: A = L * L^T where L is lower triangular
     @inbounds for j in 1:N
         for i in j:N
@@ -16,8 +21,8 @@ Unified GPU/CPU kernel using StaticArrays and GPU-compatible operations
 
             if i == j
                 # Diagonal element
-                if sum_val <= zero(T)
-                    return false, A  # Not positive definite
+                if sum_val <= tol
+                    return false, A  # Not positive definite (to the tolerance)
                 end
                 A = Base.setindex(A, sqrt(sum_val), i, i)
             else
@@ -61,118 +66,19 @@ end
     return true, A_inv
 end
 
-# GPU-compatible LU decomposition for small static matrices (no pivoting)
-# This matches SMITE's approach with a relative tolerance
-@inline function static_lu_decomposition(A::SMatrix{N, N, T}) where {N, T}
-    # Use relative tolerance based on matrix scale (like SMITE)
-    tol = T(1.0e-10) * maximum(abs, A)
-
-    @inbounds for k in 1:N
-        # Check for near-zero pivot
-        if abs(A[k, k]) < tol
-            return false, A
-        end
-
-        for i in (k + 1):N
-            A = Base.setindex(A, A[i, k] / A[k, k], i, k)
-            for j in (k + 1):N
-                A = Base.setindex(A, A[i, j] - A[i, k] * A[k, j], i, j)
-            end
-        end
-    end
-    return true, A
-end
-
-# GPU-compatible back substitution for solving Ax = b with LU-decomposed A
-@inline function static_back_substitution(
-        A::SMatrix{N, N, T}, b::SVector{N, T}
-    ) where {N, T}
-    # Forward substitution for Ly = b
-    x = b
-    @inbounds for i in 1:N
-        sum_val = b[i]
-        for j in 1:(i - 1)
-            sum_val -= A[i, j] * x[j]
-        end
-        x = Base.setindex(x, sum_val, i)
-    end
-
-    # Backward substitution for Ux = y
-    @inbounds for i in N:-1:1
-        sum_val = x[i]
-        for j in (i + 1):N
-            sum_val -= A[i, j] * x[j]
-        end
-        x = Base.setindex(x, sum_val / A[i, i], i)
-    end
-    return true, x
-end
-
-# GPU-compatible matrix inverse using LU decomposition
-@inline function static_matrix_inverse(A::SMatrix{N, N, T}) where {N, T}
-    # Perform LU decomposition
-    ok, A_lu = static_lu_decomposition(A)
-    A_inv = zero(A)
-    if !ok
-        # Singular matrix - set to infinity
-        @inbounds for i in 1:N
-            A_inv = Base.setindex(A_inv, T(Inf), i, i)
-        end
-        return false, A_inv
-    end
-
-    # Solve for each column of the inverse
-    @inbounds for col in 1:N
-        # Set up unit vector
-        e = SVector{N, T}(ntuple(i -> i == col ? one(T) : zero(T), Val(N)))
-
-        # Solve for this column
-        _, x = static_back_substitution(A_lu, e)
-
-        # Store result
-        for i in 1:N
-            A_inv = Base.setindex(A_inv, x[i], i, col)
-        end
-    end
-
-    return true, A_inv
-end
-
-# Cholesky factor of a Fisher matrix's Jacobi-scaled form G (unit diagonal), `(ok, L)`.
-# Unlike `static_cholesky_decomposition`, which the spline Levenberg-Marquardt step also
-# uses, a pivot (the squared diagonal of the factor, before the square root) below
-# `N * eps(T)` fails: G is then singular to working precision, with smallest eigenvalue
-# below that (condition above about 1e6), and its inverse is rounding. A NaN pivot fails.
-@inline function _fisher_cholesky(A::SMatrix{N, N, T}) where {N, T}
-    tol = N * eps(T)
-    @inbounds for j in 1:N
-        for i in j:N
-            sum_val = A[i, j]
-            for k in 1:(j - 1)
-                sum_val -= A[i, k] * A[j, k]
-            end
-
-            if i == j
-                sum_val > tol || return false, A
-                A = Base.setindex(A, sqrt(sum_val), i, i)
-            else
-                A = Base.setindex(A, sum_val / A[j, j], i, j)
-            end
-        end
-    end
-    return true, A
-end
-
-# Inverse of a Fisher matrix F for the CRLB, `(ok, C)`. The entries span many orders of
-# magnitude (F_xx grows like N, F_NN shrinks like 1/N), so F is inverted in Jacobi-scaled
-# form: with d_k = 1 / sqrt(F_kk) and G = D F D, which has a unit diagonal, G is inverted by
-# Cholesky and C = D G^-1 D. F is positive semidefinite by construction, so a failed
-# Cholesky (a pivot below N * eps(T), see `_fisher_cholesky`) means F is singular to
-# working precision and there is no fallback. Nothing is added to the diagonal, so every
-# uncertainty is the Cramér-Rao bound itself. `ok = false` for a diagonal entry of F that
-# is not positive and finite, a failed Cholesky, or an inverse diagonal that is not
-# positive and finite.
-@inline function _invert_fisher(F::SMatrix{N, N, T}) where {N, T}
+# Inverse of a Fisher matrix F for the CRLB, `(ok, C)`. `n_pixels` is the number of pixels
+# summed into F. The entries span many orders of magnitude (F_xx grows like N, F_NN
+# shrinks like 1/N), so F is inverted in Jacobi-scaled form: with d_k = 1 / sqrt(F_kk) and
+# G = D F D, which has a unit diagonal, G is inverted by Cholesky and C = D G^-1 D. F is
+# positive semidefinite by construction, so a Cholesky pivot at or below
+# `n_pixels * eps(T)` means F is singular to working precision and there is no fallback:
+# the accumulation over the box's pixels perturbs the entries of G by about that much, so
+# a pivot below it is not distinguishable from an exactly singular matrix, whose inverse
+# is rounding. Nothing is added to the diagonal, so every uncertainty is the Cramér-Rao
+# bound itself. `ok = false` for a diagonal entry of F that is not positive and finite, a
+# failed Cholesky, or an inverse diagonal that is not positive and finite (which also
+# catches a NaN pivot).
+@inline function _invert_fisher(F::SMatrix{N, N, T}, n_pixels::Integer) where {N, T}
     positive = true
     @inbounds for k in 1:N
         positive &= F[k, k] > zero(T) && isfinite(F[k, k])
@@ -180,7 +86,7 @@ end
     positive || return false, zero(F)
     d = SVector{N, T}(ntuple(k -> one(T) / sqrt(F[k, k]), Val(N)))
     G = (F .* d) .* d'
-    ok, G_chol = _fisher_cholesky(G)
+    ok, G_chol = static_cholesky_decomposition(G, T(n_pixels) * eps(T))
     ok || return false, zero(F)
     _, G_inv = static_cholesky_inverse(G_chol)
     C = (G_inv .* d) .* d'
@@ -566,7 +472,7 @@ end
     # Invert the Fisher matrix for uncertainties (CRLB); a matrix singular to working
     # precision, or a parameter with no Fisher information, gives infinite uncertainties
     # and zero covariances.
-    ok, H_inv = _invert_fisher(H)
+    ok, H_inv = _invert_fisher(H, box_size * box_size)
     # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
     # covariances[3,idx] = σ_yz (3D only, zero otherwise)
     has_z = _has_axial_position(typeof(psf_model))

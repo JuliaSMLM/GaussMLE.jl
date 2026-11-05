@@ -17,6 +17,8 @@ Base.@kwdef struct FakeVendor <: GaussMLE.GPUVendor
     poll_failure::Any = nothing  # thrown by the poll
     # the poll reports "cannot fit even idle" for batches above this many ROIs
     never_fits_above::Int = typemax(Int)
+    # seconds the poll waits (reporting to on_wait first) before it finds the device
+    poll_wait::Float64 = 0.0
 end
 const ACTIVATE_CALLS = Ref(0)
 const POLL_CALLS = Ref(0)
@@ -27,6 +29,10 @@ const BOX = 7
 
 function GaussMLE._poll_gpu(v::FakeVendor, backend, bytes; timeout, on_wait = nothing)
     sleep(0.02)
+    if v.poll_wait > 0
+        on_wait === nothing || on_wait(0.0, 0, bytes)
+        sleep(v.poll_wait)
+    end
     POLL_CALLS[] += 1
     v.poll_failure === nothing || throw(v.poll_failure)
     POLLED_BYTES[] = bytes
@@ -132,16 +138,38 @@ end
     end
 
     @testset "resource error is retried until the deadline" begin
-        r = run_retry_loop(FakeVendor(; failure = FakeResourceError()), :gpu)
+        vendor = FakeVendor(; failure = FakeResourceError())
+        r = run_retry_loop(vendor, :gpu; timeout = 0.8)
         @test r.outcome isa Exception
         @test r.activations > 1
         @test r.releases == r.activations
-        @test r.elapsed >= 0.4
+        @test r.elapsed >= 0.8
 
-        r = run_retry_loop(FakeVendor(; failure = FakeResourceError()), :auto)
+        r = run_retry_loop(vendor, :auto; timeout = 0.8)
         @test r.outcome === :cpu
         @test r.activations > 1
-        @test r.elapsed >= 0.4
+        @test r.elapsed >= 0.8
+    end
+
+    # A resource error that is not out of memory, on a device the poll reports available at
+    # once, pauses 0.5 s before each new poll instead of spinning; one warning per batch
+    # size.
+    @testset "a non-OOM resource error on an available device pauses between tries" begin
+        r = run_retry_loop(FakeVendor(; failure = FakeResourceError()), :gpu; timeout = 1.3)
+        @test r.outcome isa FakeResourceError || r.outcome isa ErrorException
+        @test 2 <= r.activations <= 4  # about timeout / 0.5
+        @test r.warnings == 1
+        @test r.elapsed >= 1.3
+    end
+
+    # A poll that had to wait means the device was busy: the one-ROI out-of-memory count
+    # restarts and no pause is added, so the fit keeps retrying until the deadline.
+    @testset "a poll that waited resets the one-ROI out-of-memory count" begin
+        vendor = FakeVendor(; oom_above = 0, poll_wait = 0.1)
+        r = run_retry_loop(vendor, :gpu; timeout = 1.0)
+        @test r.outcome isa Exception
+        @test r.activations > 5  # 4 -> 2 -> 1 ROIs, then past three one-ROI failures
+        @test r.elapsed >= 1.0
     end
 
     @testset "InterruptException rethrows in both modes" begin
