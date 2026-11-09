@@ -291,6 +291,146 @@ end
     return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
+# Objective the Levenberg-Marquardt loop climbs, one pixel, either camera. Ideal: the Poisson
+# log-likelihood without constants. sCMOS: the Poisson-shifted likelihood
+# (d + v) log(mu + v) - (mu + v), v the read-noise variance at the pixel's camera position;
+# its gradient (d - mu) / (mu + v) and Fisher 1 / (mu + v) are what the update uses.
+@inline function _fit_objective(
+        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    # Deviance form: the same dependence on the model as data * log(model) - model, minus
+    # the saturated term, so each term is of order one and float32 sums resolve the
+    # last iterations' changes (the plain form's terms are about 1e4).
+    data > zero(T) || return -model
+    return data * log(model / data) - (model - data)
+end
+
+@inline function _fit_objective(
+        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    v = variance_map[corner_y + i - 1, corner_x + j - 1]
+    s = data + v
+    s > zero(T) || return s * log(model + v) - (model + v)
+    return s * log((model + v) / s) - (model + v - s)
+end
+
+# Variance of the fit objective's gradient and Fisher terms: model (Ideal), model + v (sCMOS)
+@inline function _fit_variance(
+        ::Val{false}, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return model
+end
+
+@inline function _fit_variance(
+        ::Val{true}, model::T, variance_map, corner_x, corner_y, i, j
+    ) where {T}
+    return model + variance_map[corner_y + i - 1, corner_x + j - 1]
+end
+
+# Compile-time trait: a model fitted by Levenberg-Marquardt on the full Fisher matrix
+# (_lm_fit) instead of the diagonal Newton loop. The Gaussian models keep the diagonal loop.
+_lm_steps(::PSFModel) = false
+
+# Solve L L' x = b for the Cholesky factor L (lower triangle) of
+# static_cholesky_decomposition!
+@inline function static_cholesky_solve!(
+        x::MVector{N, T}, L::MMatrix{N, N, T}, b::MVector{N, T}
+    ) where {N, T}
+    @inbounds for i in 1:N
+        s = b[i]
+        for k in 1:(i - 1)
+            s -= L[i, k] * x[k]
+        end
+        x[i] = s / L[i, i]
+    end
+    return @inbounds for i in N:-1:1
+        s = x[i]
+        for k in (i + 1):N
+            s -= L[k, i] * x[k]
+        end
+        x[i] = s / L[i, i]
+    end
+end
+
+# Levenberg-Marquardt fit of one ROI on the full Fisher matrix, from the start θ0. Each
+# iteration makes one pixel pass at the trial point: the objective, the gradient
+# g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var. A trial that does not lower
+# the objective is accepted (g and F stored, lambda / 10); otherwise lambda * 10. The next
+# trial is theta_acc + delta with (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped
+# and bounded. Returns the last accepted point. Registers only: no allocation, no throw.
+@inline function _lm_fit(
+        roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0
+    ) where {N, T}
+    θ = MVector{N, T}(undef)
+    @inbounds for k in 1:N
+        θ[k] = clamp(θ0[k], constraints.lower[k], constraints.upper[k])
+    end
+    θ_acc = MVector{N, T}(θ)
+    g_acc = MVector{N, T}(undef)
+    F_acc = MMatrix{N, N, T}(undef)
+    zero_array!(g_acc)
+    zero_array!(F_acc)
+    obj_acc = zero(T)
+    λ = T(1.0e-3)
+    g = MVector{N, T}(undef)
+    F = MMatrix{N, N, T}(undef)
+    A = MMatrix{N, N, T}(undef)
+    Δ = MVector{N, T}(undef)
+
+    for iter in 1:iterations
+        zero_array!(g)
+        zero_array!(F)
+        obj = zero(T)
+        @inbounds for j in 1:box_size, i in 1:box_size
+            model, dudt, _ = compute_pixel_derivatives(i, j, SVector{N, T}(θ), psf_model)
+            d = roi[i, j]
+            var = _fit_variance(camera_model, model, variance_map, corner_x, corner_y, i, j)
+            obj += _fit_objective(
+                camera_model, d, model, variance_map, corner_x, corner_y, i, j
+            )
+            r = (d - model) / var
+            w = one(T) / var
+            for k in 1:N
+                g[k] += dudt[k] * r
+                for l in 1:N
+                    F[k, l] += dudt[k] * dudt[l] * w
+                end
+            end
+        end
+
+        if iter == 1 || obj >= obj_acc
+            @inbounds for k in 1:N
+                θ_acc[k] = θ[k]
+                g_acc[k] = g[k]
+                for l in 1:N
+                    F_acc[k, l] = F[k, l]
+                end
+            end
+            obj_acc = obj
+            if iter > 1
+                λ = max(λ / 10, T(1.0e-7))
+            end
+        else
+            λ = min(λ * 10, T(1.0e7))
+        end
+
+        @inbounds for k in 1:N, l in 1:N
+            A[k, l] = F_acc[k, l] + (k == l ? λ * F_acc[k, k] : zero(T))
+        end
+        if static_cholesky_decomposition!(A)
+            static_cholesky_solve!(Δ, A, g_acc)
+        else
+            zero_array!(Δ)
+        end
+        @inbounds for k in 1:N
+            step = clamp(Δ[k], -constraints.max_step[k], constraints.max_step[k])
+            θ[k] = clamp(θ_acc[k] + step, constraints.lower[k], constraints.upper[k])
+        end
+    end
+    return θ_acc
+end
+
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
         results::AbstractArray{T, 2},
@@ -321,9 +461,18 @@ end
     θ = simple_initialize(roi, box_size, psf_model)
     ∇L = MVector{N, T}(undef)
     H_diag = MVector{N, T}(undef)  # Only diagonal elements for Newton-Raphson
+    newton_iterations = iterations
+    if _lm_steps(psf_model)
+        # Levenberg-Marquardt on the full Fisher matrix; the Newton loop below then runs 0 times
+        θ = _lm_fit(
+            roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+            constraints, iterations, θ
+        )
+        newton_iterations = 0
+    end
 
     # Newton-Raphson iterations with scalar updates
-    for iter in 1:iterations
+    for iter in 1:newton_iterations
         # Zero out gradient and diagonal Hessian
         zero_array!(∇L)
         zero_array!(H_diag)
@@ -434,7 +583,7 @@ end
         # covariances[2,idx] = σ_xz (3D only, zero otherwise)
         # covariances[3,idx] = σ_yz (3D only, zero otherwise)
         @inbounds covariances[1, idx] = H_inv[1, 2]
-        if psf_model isa AstigmaticXYZNB
+        if _has_axial_position(typeof(psf_model))
             @inbounds covariances[2, idx] = H_inv[1, 3]
             @inbounds covariances[3, idx] = H_inv[2, 3]
         else
@@ -449,7 +598,7 @@ end
                 uncertainties[k, idx] = sqrt(max(zero(T), H_inv[k, k]))
             end
             @inbounds covariances[1, idx] = H_inv[1, 2]
-            if psf_model isa AstigmaticXYZNB
+            if _has_axial_position(typeof(psf_model))
                 @inbounds covariances[2, idx] = H_inv[1, 3]
                 @inbounds covariances[3, idx] = H_inv[2, 3]
             else

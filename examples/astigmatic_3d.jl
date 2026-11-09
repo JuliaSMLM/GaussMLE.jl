@@ -3,8 +3,7 @@
 Demonstrates 3D fitting with astigmatic PSF model
 """
 
-using Pkg
-Pkg.activate(@__DIR__)
+# Run from the repository root: julia --project examples/astigmatic_3d.jl
 
 using GaussMLE
 using SMLMData
@@ -33,7 +32,7 @@ fitter = GaussMLEConfig(psf_model = psf_3d, iterations = 30)
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Extract results
 println("\n=== Results ===")

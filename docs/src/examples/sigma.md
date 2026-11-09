@@ -94,12 +94,13 @@ The `GaussianXYNBS` model returns `Emitter2DFitSigma` emitters with these fields
 | Field | Description | Units |
 |-------|-------------|-------|
 | `x`, `y` | Position | microns |
-| `photons` | Total photon count | photons |
-| `bg` | Background level | photons/pixel |
+| `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
+| `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ` | **Fitted PSF width** | microns |
 | `σ_x`, `σ_y` | Position uncertainty | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
-| `σ_photons`, `σ_bg` | Photometry uncertainties | photons |
+| `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
+| `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
 | `σ_σ` | **PSF width uncertainty** | microns |
 | `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
 | `frame` | Frame number | integer |

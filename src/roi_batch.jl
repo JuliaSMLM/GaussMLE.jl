@@ -287,6 +287,18 @@ function to_emitter(
         track_id::Int = 0,
         id::Int = idx
     ) where {T}
+    return _to_emitter_xyznb(result, idx, camera; dataset, track_id, id)
+end
+
+# Shared conversion for models with parameter order [x, y, z, N, bg].
+function _to_emitter_xyznb(
+        result::LocalizationResult{T},
+        idx::Int,
+        camera::SMLMData.AbstractCamera;
+        dataset::Int,
+        track_id::Int,
+        id::Int
+    ) where {T}
     pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
     pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
 
