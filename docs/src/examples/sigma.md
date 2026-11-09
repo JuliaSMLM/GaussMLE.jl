@@ -48,8 +48,7 @@ data = rand(Float32, 11, 11, n_rois)
 
 # Create variable-sigma fitter
 fitter = GaussMLEConfig(
-    psf_model = GaussianXYNBS(),
-    iterations = 25  # More iterations for 5-parameter fit
+    psf_model = GaussianXYNBS()
 )
 
 # Fit the data
@@ -256,11 +255,13 @@ end
 
 ### Slow Convergence
 
+The Gaussian fits stop once converged; `iterations` (default 50) only caps a fit that
+converges slowly. To allow more pixel passes:
+
 ```julia
-# Use more iterations for variable PSF
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
-    iterations = 30  # Default is 20
+    iterations = 100  # Default is 50
 )
 ```
 

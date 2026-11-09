@@ -66,3 +66,44 @@ end
         end
     end
 end
+
+# The Gaussian fits' stop. On a noise-free box the likelihood's maximum is the truth and the
+# observed and expected information agree there, so a fit stopped by g' F⁻¹ g / 2 < 1e-4
+# is within sqrt(2e-4) = 0.0141 CRLB of the truth in every parameter. With the stop off
+# (gain_tol = 0) the fit runs every pass. A noisy box stops before the cap too.
+using SMLMSim: poisson_noise
+@testset "Gaussian fits stop at the maximum" begin
+    px, box = 0.1, 13
+    camera = IdealCamera(box, box, px)
+    astig = AstigmaticXYZNB{Float32}(0.13, 0.13, 0.05, -0.05, 0.01, -0.01, 0.2, 0.5)
+    models = (
+        (GaussianXYNB(0.13f0), N -> [6.2, 6.9, N, N / 100]),
+        (GaussianXYNBS(), N -> [6.2, 6.9, N, N / 100, 1.3]),
+        (GaussianXYNBSXSY(), N -> [6.2, 6.9, N, N / 100, 1.3, 1.5]),
+        (astig, N -> [6.2, 6.9, 0.15, N, N / 100]),
+    )
+    vmap = zeros(Float32, box, box)
+    for (model, truth) in models
+        @testset "$(nameof(typeof(model)))" begin
+            pm = GaussMLE._model_for_camera(model, camera)
+            n = length(truth(1.0))
+            cons = GaussMLE.default_constraints(pm, box)
+            cap = GaussMLE._default_iterations(model)
+            tol = Float32(GaussMLE._LM_GAIN_TOL)
+            lm(roi, gain_tol) = GaussMLE._lm_fit(
+                roi, box, pm, Val(false), vmap, Int32(1), Int32(1), cons, cap,
+                GaussMLE.simple_initialize(roi, box, pm), gain_tol
+            )
+            for N in (1.0e3, 1.0e5, 1.0e6)
+                C, mu = reference_crlb(pm, box, truth(N))
+                θ, _, passes = lm(mu, tol)
+                @test passes < cap
+                @test all(k -> abs(θ[k] - truth(N)[k]) <= 0.015 * sqrt(C[k, k]), 1:n)
+                @test lm(mu, 0.0f0)[3] == cap
+            end
+            _, mu = reference_crlb(pm, box, truth(2000.0))
+            Random.seed!(17)
+            @test lm(Float32.(poisson_noise(mu)), tol)[3] < cap
+        end
+    end
+end

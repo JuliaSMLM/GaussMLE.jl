@@ -28,7 +28,7 @@ data = rand(Float32, 11, 11, 50)
 
 # Create fitter
 println("\nCreating 3D fitter...")
-fitter = GaussMLEConfig(psf_model = psf_3d, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf_3d)
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")

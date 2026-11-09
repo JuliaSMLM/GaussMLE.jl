@@ -77,23 +77,41 @@ and the trial step solves
 (F + \lambda\,\mathrm{diag}\,F)\,\Delta = g, \qquad \theta' = \theta + \Delta
 ```
 
-with each component of $\Delta$ clamped to its step limit and $\theta'$ clamped to the bounds.
-The objective is the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood
+with the step held to its step limits (below) and $\theta'$ clamped to the bounds. Because $F$
+is the expected curvature rather than the observed one, this is the Levenberg-Marquardt form of
+Fisher scoring. The objective is the
+Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood
 $(N + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS); $g$ is its exact
-gradient for both. A trial that raises the objective is kept and $\lambda$ divided by 10; one that
-lowers it is discarded and $\lambda$ multiplied by 10 ($\lambda$ starts at $10^{-3}$). $F$ is the
-expected negative Hessian (below), positive semidefinite, so a small enough step along the damped
-solution raises the likelihood. A parameter that sits on a bound with the gradient pointing out
-of the box is held there: its row and column of the damped matrix are replaced by the identity
-and its gradient set to zero, so the solve moves only the free parameters.
+gradient for both. A trial that raises the objective is kept; one that lowers it is discarded
+and $\lambda$ multiplied by 10 ($\lambda$ starts at $10^{-3}$). $F$ is the expected negative
+Hessian (below), positive semidefinite, so a small enough step along the damped solution raises
+the likelihood. A parameter that sits on a bound with the gradient pointing out of the box is
+held there: its row and column of the damped matrix are replaced by the identity and its
+gradient set to zero, so the solve moves only the free parameters.
 
-The Gaussian models stop once the gain the full Newton step predicts,
-$g^\top F^{-1} g / 2$ over the free parameters, is below $10^{-4}$. $F^{-1}$ is the CRLB
-covariance at $\theta$, so $g^\top F^{-1} g$ is the squared distance from $\theta$ to the maximum
-of the local quadratic model in CRLB units: the fit stops within
-$\sqrt{2 \times 10^{-4}} \approx 0.014$ CRLB of it. `SplinePSFModel` runs every pass from the scan
-start and from `starts - 1` fixed z starts (see the model guide), and keeps the start with the
-highest objective. `iterations` caps the pixel passes of every fit (see Iteration Strategy).
+The Gaussian models run to convergence:
+
+- **Stop.** A fit stops once the gain the undamped Fisher-scoring step predicts,
+  $g^\top F^{-1} g / 2$ over the free parameters, is below $10^{-4}$. $F^{-1}$ is the CRLB
+  covariance at $\theta$, so $g^\top F^{-1} g$ is the squared distance, in CRLB units, from
+  $\theta$ to the maximum of the quadratic model with curvature $F$: the fit stops within
+  $\sqrt{2 \times 10^{-4}} \approx 0.014$ CRLB of it. The likelihood's own maximum sits where
+  the observed curvature puts it, which differs from $F$ on noisy data; on simulated ROIs of
+  every Gaussian model, stopped fits were within 0.1 CRLB of their own maximum.
+- **Damping.** On a kept trial, $\lambda$ follows the ratio $\rho$ of the actual to the
+  predicted gain of the step: $\rho < 1/4$ sets $\lambda$ to $\max(10\lambda, 0.1)$,
+  $\rho > 3/4$ divides it by 10, and otherwise it is kept. Where the observed curvature
+  exceeds $F$, as for z at low counts, the undamped step overshoots, and this damps it.
+- **Ties.** A trial whose objective is within the Float32 rounding of the sum is a tie: it is
+  kept with $\lambda$ unchanged and the stop is tested there. A bright emitter otherwise
+  stalls on gains its objective cannot resolve.
+- **Step limits.** The whole step is scaled so that no parameter exceeds its step limit,
+  which keeps its direction; clamping one component alone breaks the coupled step.
+
+`SplinePSFModel` keeps the fixed schedule: a kept trial divides $\lambda$ by 10, each
+component is clamped to its step limit, and every pass runs from the scan start and from
+`starts - 1` fixed z starts (see the model guide), keeping the start with the highest
+objective. `iterations` caps the pixel passes of every fit (see Iteration Strategy).
 
 The full Fisher matrix at the final $\theta$ is inverted once for uncertainties. The reported
 log-likelihood ratio is the one given above for both cameras; for sCMOS that is the Gaussian
@@ -270,7 +288,8 @@ with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout te
 
 ### Iteration Strategy
 
-`iterations` (default 20) caps the Levenberg-Marquardt pixel passes of a fit. Each pass
+`iterations` caps the Levenberg-Marquardt pixel passes of a fit: by default 50 for the
+Gaussian models, which converge in fewer for most fits, and 20 for `SplinePSFModel`. Each pass
 evaluates the objective, gradient and Fisher matrix at one trial point; the first evaluates the
 start and the last only evaluates, so a fit takes at most `iterations - 1` steps and
 `iterations = 1` returns the start. The Gaussian models stop before the cap once converged (see

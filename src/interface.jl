@@ -130,10 +130,11 @@ Camera noise model is determined by the ROIBatch type:
 # Keyword Arguments
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `iterations = 20`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
+- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
   start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
-  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
-  stop earlier once converged
+  `iterations - 1` steps and `iterations = 1` returns the start. Default 50 for the
+  Gaussian models, which stop earlier once converged, and 20 for `SplinePSFModel`, which
+  runs every pass
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
@@ -178,10 +179,10 @@ fitter = GaussMLEConfig()
 # Force CPU execution
 cpu_fitter = GaussMLEConfig(backend = :cpu)
 
-# Variable sigma model with more iterations
+# Variable sigma model with a higher cap on pixel passes (default 50)
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
-    iterations = 30
+    iterations = 100
 )
 
 # Explicit GPU with custom timeout
@@ -199,7 +200,7 @@ function GaussMLEConfig(;
         psf_model = GaussianXYNB(0.13f0),
         backend::Symbol = :auto,
         device = nothing,  # deprecated, use backend
-        iterations = 20,
+        iterations = _default_iterations(psf_model),
         constraints = nothing,
         batch_size = 10_000,
         auto_timeout = 300.0,
@@ -1024,7 +1025,7 @@ function fit(
 end
 
 """
-    fit(batch::ROIBatch; psf_model=GaussianXYNB(0.13f0), iterations=20,
+    fit(batch::ROIBatch; psf_model=GaussianXYNB(0.13f0), iterations,
         backend=:auto, ...) -> (BasicSMLD, GaussMLEFitInfo)
 
 Convenience form of fit() that creates a GaussMLEConfig from keyword arguments.
@@ -1035,10 +1036,11 @@ Kwargs match GaussMLEConfig fields exactly.
 
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
-- `iterations=20`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
+- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
   start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
-  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
-  stop earlier once converged
+  `iterations - 1` steps and `iterations = 1` returns the start. Default 50 for the
+  Gaussian models, which stop earlier once converged, and 20 for `SplinePSFModel`, which
+  runs every pass
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time
@@ -1077,7 +1079,7 @@ With the default `backend = :auto`, which uses a GPU when one is available:
 smld, info = fit(batch)
 
 # Custom model and iterations
-smld, info = fit(batch; psf_model=GaussianXYNBS(), iterations=30)
+smld, info = fit(batch; psf_model=GaussianXYNBS(), iterations=100)
 ```
 
 # See also
@@ -1086,7 +1088,7 @@ smld, info = fit(batch; psf_model=GaussianXYNBS(), iterations=30)
 function fit(
         batch::ROIBatch;
         psf_model = GaussianXYNB(0.13f0),
-        iterations = 20,
+        iterations = _default_iterations(psf_model),
         backend = :auto,
         constraints = nothing,
         batch_size = 10_000,

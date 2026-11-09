@@ -54,6 +54,13 @@ function default_constraints(::AstigmaticXYZNB, box_size)
     )
 end
 
+# Default cap on the Levenberg-Marquardt pixel passes of a fit. The Gaussian fits stop once
+# converged, most within 10 passes, so the cap binds only on a slow fit: Fisher scoring
+# converges linearly where the observed curvature differs from F, as for z at low counts.
+# On simulated astigmatic ROIs at 500 photons, 20 passes left up to 5 % of the fits capped,
+# 50 none. SplinePSFModel runs every pass from each start (its own method).
+_default_iterations(::PSFModel) = 50
+
 _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = constraints
 
 function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)

@@ -67,8 +67,7 @@ println("  Variance map range: $(round(minimum(variance_map), digits = 2)) - \
 # Fit WITHOUT sCMOS model (ignores pixel-dependent variance)
 println("\n--- Fit 1: Ideal Camera (Poisson noise only) ---")
 fitter_ideal = GaussMLEConfig(
-    psf_model = GaussianXYNB(0.13f0),
-    iterations = 25
+    psf_model = GaussianXYNB(0.13f0)
 )
 ideal_camera = IdealCamera(sensor_size, sensor_size, 0.1f0)
 ideal_batch = ROIBatch(data, x_corners, y_corners, frame_indices, ideal_camera)
@@ -81,8 +80,7 @@ println("  Mean precision: $(round(mean(σ_ideal) * 1000, digits = 1)) nm")
 # Fit WITH sCMOS model (accounts for pixel-dependent variance)
 println("\n--- Fit 2: sCMOS Camera (pixel-dependent noise) ---")
 fitter_scmos = GaussMLEConfig(
-    psf_model = GaussianXYNB(0.13f0),
-    iterations = 25
+    psf_model = GaussianXYNB(0.13f0)
 )
 
 # Camera readnoise supplies the full-sensor variance map at each ROI's corners.

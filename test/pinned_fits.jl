@@ -30,7 +30,7 @@ end
     emitter_sigmas(e) = (e.σ_x, e.σ_y, e.σ_photons, e.σ_bg, e.σ_σ)
 
     @testset "a fit pinned on its y bound reports Inf" begin
-        smld, _ = fit(zp_batch; psf_model = GaussianXYNBS(), iterations = 20, backend = :cpu)
+        smld, _ = fit(zp_batch; psf_model = GaussianXYNBS(), backend = :cpu)
         e = only(smld.emitters)
         @test e.y ≈ (11 - 0.5) * 0.1 atol = 1.0e-6  # the upper bound, 11 px, in microns
         @test all(==(Inf32), emitter_sigmas(e))
@@ -39,15 +39,17 @@ end
     end
 
     @testset "a ROI with a Fisher matrix singular to accumulation error" begin
-        # The emitter is at the top-left corner (x 0.3, y 0.4 px, PSF sigma 0.05 um, 2270
-        # photons, background 3.5). No position ends on a bound, but the Fisher matrix is
-        # singular to working precision: its smallest Cholesky pivot, about 20 eps, lies
-        # above N * eps but at or below n_pixels * eps, the accumulation error of the Float32
-        # sum over the box's pixels. With the tolerance N * eps it reports sigma_x = 3.0 um
-        # and sigma_y = 2.8 um.
-        roi = sim_roi(0.3f0, 0.4f0, 2270, 3.5, 0.05)
+        # The emitter is beyond the left edge (x -0.6, y 5.5 px, PSF sigma 0.05 um, 5163
+        # photons, background 261). No position ends on a bound, but the Fisher matrix is
+        # singular to working precision. On the POCL CPU path (KernelAbstractions 0.10) its
+        # smallest Cholesky pivot is about 21 eps: above N * eps, where that tolerance reports
+        # sigma_x = 6.5 um and sigma_y = 29 nm (finite, and plausible), and at or below n_pixels * eps, the
+        # accumulation error of the Float32 sum over the box's pixels. The pivot is rounding
+        # noise and moves with the platform; the constructed matrix in the `_invert_fisher`
+        # test below holds that band on every path.
+        roi = sim_roi(-0.6f0, 5.5f0, 5163, 261.1, 0.05)
         batch = ROIBatch(roi, Int32[1], Int32[1], Int32[1], SIM_CAMERA)
-        smld, _ = fit(batch; psf_model = GaussianXYNBS(), iterations = 20, backend = :cpu)
+        smld, _ = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu)
         e = only(smld.emitters)
         lo, hi = (-1 - 0.5) * 0.1, (11 - 0.5) * 0.1  # the x and y bounds in microns
         @test lo + 1.0e-3 < e.x < hi - 1.0e-3 && lo + 1.0e-3 < e.y < hi - 1.0e-3
@@ -76,16 +78,16 @@ end
     end
 
     @testset "the kernel itself reports Inf, never a zero, for a singular matrix" begin
-        # Bypasses the host step. The emitter is beyond the bottom-left corner (x -0.5,
-        # y 10.1 px, PSF sigma 0.06 um, 13625 photons, background 8); the fit ends inside
-        # the box with a Fisher matrix whose Jacobi-scaled Cholesky meets a negative pivot
-        # (singular in Float32), and the kernel alone must not turn the failed inversion
-        # into a number.
+        # Bypasses the host step. The emitter is beyond the bottom-left corner (x -1.3,
+        # y 10.4 px, PSF sigma 0.06 um, 9911 photons, background 20.5); the fit ends inside
+        # its bounds (just outside the box) with a Fisher matrix whose Jacobi-scaled
+        # Cholesky meets a negative pivot (singular in Float32), and the kernel alone must
+        # not turn the failed inversion into a number.
         psf = GaussMLE._model_for_camera(GaussianXYNBS(), SIM_CAMERA)
         variance_map = GaussMLE.extract_variance_map(SIM_CAMERA, Float32)
         data = Float32.(
             GaussMLE.to_electrons(
-                sim_roi(-0.5f0, 10.1f0, 13625, 8.0, 0.06), SIM_CAMERA, Int32[1], Int32[1]
+                sim_roi(-1.3f0, 10.4f0, 9911, 20.5, 0.06), SIM_CAMERA, Int32[1], Int32[1]
             )
         )
         results = zeros(Float32, 5, 1)
@@ -98,7 +100,7 @@ end
         kernel = GaussMLE.unified_gaussian_mle_kernel!(ka.CPU(), 64)
         kernel(
             results, uncertainties, covariances, llr, chi2, data, psf, Val(true),
-            variance_map, Int32[1], Int32[1], constraints, 20; ndrange = 1
+            variance_map, Int32[1], Int32[1], constraints, GaussMLE._default_iterations(psf); ndrange = 1
         )
         ka.synchronize(ka.CPU())
         @test all(k -> constraints.lower[k] < results[k, 1] < constraints.upper[k], 1:2)
@@ -117,6 +119,14 @@ end
         near = SMatrix{3, 3, Float32}(1, a, 0, a, 1, 0, 0, 0, 1)
         @test first(GaussMLE.static_cholesky_decomposition(near))
         ok, _ = GaussMLE._invert_fisher(near, 81)
+        @test !ok
+        # Pivot 1 - b^2 of about 20 eps: above N * eps (N = 3 parameters), so a tolerance of
+        # N * eps passes it, and at or below 81 * eps, the accumulation error of a 9 x 9 box.
+        b = sqrt(1.0f0 - 20 * eps(Float32))
+        band = SMatrix{3, 3, Float32}(1, b, 0, b, 1, 0, 0, 0, 1)
+        @test 3 * eps(Float32) < 1 - b^2 <= 81 * eps(Float32)
+        @test first(GaussMLE.static_cholesky_decomposition(band, 3 * eps(Float32)))
+        ok, _ = GaussMLE._invert_fisher(band, 81)
         @test !ok
         good = SMatrix{3, 3, Float32}(4, 1, 0, 1, 3, 1, 0, 1, 2)
         ok, inverse = GaussMLE._invert_fisher(good, 81)

@@ -36,7 +36,7 @@ batch = ROIBatch(data, x_corners, y_corners, frames, camera)
 smld, info = fit(batch, GaussMLEConfig(
     psf_model    = GaussianXYNB(0.13f0),  # fixed-σ Gaussian, σ in μm
     backend      = :auto,                  # :cpu, :gpu, or :auto (GPU w/ CPU fallback)
-    iterations   = 20,                     # at most 20 Levenberg-Marquardt pixel passes
+    iterations   = 50,                     # cap on Levenberg-Marquardt pixel passes (default; 20 for SplinePSFModel)
     batch_size   = 10_000,                 # ROIs per GPU kernel launch
 ))
 
@@ -88,7 +88,7 @@ For IdealCamera fits, `photons` and `σ_photons` use photons, and `bg` and `σ_b
 | `backend` | `:cpu` or `:gpu` (never `:auto`) |
 | `device_id` | GPU index (0-based) or -1 for CPU |
 | `n_fits` | Number of ROIs processed |
-| `n_converged` | Number converged (currently = n_fits) |
+| `n_converged` | Equals `n_fits` (convergence is not tracked per fit) |
 | `batch_size` | Actual batch size used |
 | `n_batches` | Number of batches |
 | `memory_per_batch` | Estimated bytes per batch |

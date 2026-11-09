@@ -246,10 +246,12 @@ end
     return x
 end
 
-# Log-likelihood gain below which a Gaussian fit stops: the gain the full Newton step
-# predicts, g' F⁻¹ g / 2 over the free parameters. F⁻¹ is the CRLB covariance at θ, so
-# g' F⁻¹ g is the squared distance to the maximum of the local quadratic model in CRLB
-# units (Mahalanobis); a gain of 1e-4 is a distance of sqrt(2e-4) = 0.014 CRLB.
+# Log-likelihood gain below which a Gaussian fit stops: the gain the undamped
+# Fisher-scoring step predicts, g' F⁻¹ g / 2 over the free parameters. F⁻¹ is the CRLB
+# covariance at θ, so g' F⁻¹ g is the squared distance, in CRLB units (Mahalanobis), to the
+# maximum of the quadratic model with curvature F; a gain of 1e-4 is a distance of
+# sqrt(2e-4) = 0.014 CRLB from it. The likelihood's own maximum is where the observed
+# curvature puts it, which differs from F on noisy data.
 const _LM_GAIN_TOL = 1.0e-4
 
 # Fit one ROI from the start θ0 and return θ: Levenberg-Marquardt on the full Fisher
@@ -274,9 +276,16 @@ end
 # is rejected (lambda * 10). The next trial is theta_acc + delta with
 # (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded, with a parameter
 # that sits on a bound and whose gradient points out of the box held fixed; if the
-# factorization fails, delta = 0 and lambda * 10. With `gain_tol > 0` the fit stops after
-# an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free parameters (undamped
-# F_acc, held parameters removed) is below `gain_tol`; `gain_tol = 0` runs every pass.
+# factorization fails, delta = 0 and lambda * 10. `gain_tol = 0` (SplinePSFModel) runs
+# every pass on that schedule. `gain_tol > 0` (the Gaussian models) runs to convergence:
+# - it stops after an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free
+#   parameters (undamped F_acc, held parameters removed) is below `gain_tol`;
+# - an accepted pass sets lambda from rho, the actual over the predicted gain of the step
+#   taken: rho < 1/4 gives max(10 lambda, 0.1), rho > 3/4 gives lambda / 10, otherwise
+#   lambda is kept (Fisher scoring overshoots where the observed curvature exceeds F);
+# - a trial within the objective's Float32 rounding of the accepted one is a tie, accepted
+#   with lambda kept (bright emitters otherwise stall on unresolvable gains);
+# - the whole step is scaled to the step limits instead of clamping each component.
 # Returns the last accepted point, the objective there and the pixel passes made,
 # `(θ_acc, obj_acc, passes)`: the first pass always accepts its start, so
 # iterations = 1 returns the clamped start with its objective. The multi-start `_optimize`
@@ -287,12 +296,14 @@ end
         corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0,
         gain_tol::T = zero(T)
     ) where {N, T}
+    adaptive = gain_tol > zero(T)
     θ = clamp.(θ0, constraints.lower, constraints.upper)
     θ_acc = θ
     g_acc = zero(SVector{N, T})
     F_acc = zero(SMatrix{N, N, T})
     obj_acc = zero(T)
     λ = T(1.0e-3)
+    pred = zero(T)
     passes = 0
 
     for iter in 1:iterations
@@ -300,6 +311,7 @@ end
         g = zero(SVector{N, T})
         F = zero(SMatrix{N, N, T})
         obj = zero(T)
+        rounding = zero(T)
         @inbounds for j in 1:box_size, i in 1:box_size
             model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
             d = roi[i, j]
@@ -307,7 +319,12 @@ end
                 camera_model, model, variance_map, corner_x, corner_y, i, j
             )
             var = model + v
-            obj += _fit_objective(d, model, v)
+            term = _fit_objective(d, model, v)
+            obj += term
+            if adaptive
+                # The term's Float32 error is about eps * |model - d| (deviance form)
+                rounding += abs(term) + abs(model - d)
+            end
             if var > zero(T) && isfinite(var)
                 g = g + dudt * ((d - model) / var)
                 F = F + (dudt * dudt') * (one(T) / var)
@@ -315,15 +332,26 @@ end
         end
 
         accepted = true
-        if iter == 1 || obj > obj_acc
+        gain = obj - obj_acc
+        # With adaptive steps, a change within the objective's rounding is a tie: the fit
+        # cannot tell the trial from the accepted point, so it moves there and tests again.
+        tie = adaptive ? abs(gain) <= eps(T) * rounding : obj == obj_acc
+        if iter == 1 || (obj > obj_acc && !tie)
             θ_acc = θ
             g_acc = g
             F_acc = F
             obj_acc = obj
             if iter > 1
-                λ = max(λ / 10, T(1.0e-7))
+                if adaptive
+                    # Damping from the ratio of the actual to the predicted gain
+                    ρ = pred > zero(T) ? gain / pred : T(0.5)
+                    λ = ρ < T(0.25) ? max(λ * 10, T(0.1)) :
+                        (ρ > T(0.75) ? max(λ / 10, T(1.0e-7)) : λ)
+                else
+                    λ = max(λ / 10, T(1.0e-7))
+                end
             end
-        elseif obj == obj_acc
+        elseif tie
             θ_acc = θ
             g_acc = g
             F_acc = F
@@ -358,19 +386,45 @@ end
         # Stop test. The damped gain g' A⁻¹ g never exceeds the full Newton gain g' F⁻¹ g
         # (A ⪰ F), so it is a necessary condition, and the undamped matrix is factored
         # only when it holds: the stop is exactly the full Newton gain below gain_tol.
-        if accepted && ok && gain_tol > zero(T) && sum(g_free .* Δ) < 2 * gain_tol &&
+        if accepted && ok && adaptive && sum(g_free .* Δ) < 2 * gain_tol &&
                 _newton_gain(F_acc, held, g_free) < gain_tol
             break
         end
-        step = clamp.(Δ, -constraints.max_step, constraints.max_step)
-        θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
+        if adaptive
+            θ, pred = _adaptive_trial(Δ, θ_acc, g_acc, F_acc, constraints)
+        else
+            step = clamp.(Δ, -constraints.max_step, constraints.max_step)
+            θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
+        end
     end
     return θ_acc, obj_acc, passes
 end
 
-# The two factorizations of an LM pass are separate, non-inlined functions: with both
-# inlined into the kernel, the POCL CPU kernel (KernelAbstractions 0.10) ran Gaussian fits
-# about 8 times slower than with them as calls. Results are the same either way.
+# Next trial of an adaptive (Gaussian) fit, `(θ, pred)`. The whole step is scaled so that no
+# parameter exceeds its step limit, which keeps its direction: clamping one component alone
+# breaks the coupled step (photons and background assume z moves the full amount) and the
+# trial fails. `pred` is the gain the quadratic model predicts for the step taken.
+@noinline function _adaptive_trial(
+        Δ::SVector{N, T}, θ_acc::SVector{N, T}, g_acc::SVector{N, T},
+        F_acc::SMatrix{N, N, T}, constraints::ParameterConstraints{N}
+    ) where {N, T}
+    scale = one(T)
+    @inbounds for k in 1:N
+        lim = T(constraints.max_step[k])
+        if lim > zero(T) && abs(Δ[k]) > lim
+            scale = min(scale, lim / abs(Δ[k]))
+        end
+    end
+    step = clamp.(Δ * scale, -constraints.max_step, constraints.max_step)
+    θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
+    s = θ - θ_acc
+    return θ, sum(g_acc .* s) - sum(s .* (F_acc * s)) / 2
+end
+
+# The two factorizations of an LM pass and the adaptive trial step are separate,
+# non-inlined functions: inlined into the kernel, the POCL CPU kernel (KernelAbstractions
+# 0.10) ran Gaussian fits up to 8 times slower than with them as calls. Results are the
+# same either way.
 
 # Damped step: solve (A with held rows and columns set to the identity's) Δ = g, `(ok, Δ)`;
 # Δ = 0 when the factorization fails.

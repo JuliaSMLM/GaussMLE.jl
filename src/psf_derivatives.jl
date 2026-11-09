@@ -4,8 +4,7 @@ Analytical derivatives for PSF models using GaussLib functions
 
 # Each method returns the expected count of pixel (i, j) and its first derivatives with
 # respect to the parameters, `(model, dudt)`: the Levenberg-Marquardt fit and the Fisher
-# matrix use no second derivatives. The GaussLib helpers also return a second derivative,
-# which is discarded.
+# matrix use no second derivatives.
 
 # Fixed sigma model derivatives
 @inline function compute_pixel_derivatives(i, j, θ::Params{4}, psf::GaussianXYNB)
@@ -16,8 +15,8 @@ Analytical derivatives for PSF models using GaussLib functions
     psf_y = integral_gaussian_1d(i, y, psf.σ)
 
     # Get derivatives using GaussLib functions
-    dudt_x, _ = derivative_integral_gaussian_1d(j, x, psf.σ, N, psf_y)
-    dudt_y, _ = derivative_integral_gaussian_1d(i, y, psf.σ, N, psf_x)
+    dudt_x = derivative_integral_gaussian_1d(j, x, psf.σ, N, psf_y)
+    dudt_y = derivative_integral_gaussian_1d(i, y, psf.σ, N, psf_x)
 
     # Model value
     model = bg + N * psf_x * psf_y
@@ -42,9 +41,9 @@ end
     psf_y = integral_gaussian_1d(i, y, σ)
 
     # Get derivatives using GaussLib functions
-    dudt_x, _ = derivative_integral_gaussian_1d(j, x, σ, N, psf_y)
-    dudt_y, _ = derivative_integral_gaussian_1d(i, y, σ, N, psf_x)
-    dudt_s, _ = derivative_integral_gaussian_2d_sigma(i, j, x, y, σ, N, psf_x, psf_y)
+    dudt_x = derivative_integral_gaussian_1d(j, x, σ, N, psf_y)
+    dudt_y = derivative_integral_gaussian_1d(i, y, σ, N, psf_x)
+    dudt_s = derivative_integral_gaussian_2d_sigma(i, j, x, y, σ, N, psf_x, psf_y)
 
     # Model value
     model = bg + N * psf_x * psf_y
@@ -69,10 +68,10 @@ end
     psf_y = integral_gaussian_1d(i, y, σy)
 
     # Get derivatives using GaussLib functions
-    dudt_x, _ = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
-    dudt_y, _ = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
-    dudt_sx, _ = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
-    dudt_sy, _ = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
+    dudt_x = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
+    dudt_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
+    dudt_sx = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
+    dudt_sy = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
 
     # Model value
     model = bg + N * psf_x * psf_y
@@ -114,13 +113,13 @@ end
     psf_y = integral_gaussian_1d(i, y, σy)
 
     # Get x, y derivatives (same as GaussianXYNBSXSY but with z-dependent sigmas)
-    dudt_x, _ = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
-    dudt_y, _ = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
+    dudt_x = derivative_integral_gaussian_1d(j, x, σx, N, psf_y)
+    dudt_y = derivative_integral_gaussian_1d(i, y, σy, N, psf_x)
 
     # Compute z derivatives via chain rule: dmodel/dz = dmodel/dσx * dσx/dz + dmodel/dσy *
     # dσy/dz
-    dudt_sx, _ = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
-    dudt_sy, _ = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
+    dudt_sx = derivative_integral_gaussian_1d_sigma(j, x, σx, N, psf_y)
+    dudt_sy = derivative_integral_gaussian_1d_sigma(i, y, σy, N, psf_x)
 
     # dσ/dα = σ₀/(2√α), dα/dz for astigmatic model
     dαx_dz = (2 * z_d_x + 3 * psf.Ax * z_d_x^2 + 4 * psf.Bx * z_d_x^3) / psf.d

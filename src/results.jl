@@ -12,8 +12,9 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
 - `backend::Symbol`: Actual execution backend (`:cpu` or `:gpu`, never `:auto`)
 - `device_id::Int`: GPU device index (0-based) or -1 for CPU
 - `n_fits::Int`: Number of ROIs attempted
-- `n_converged::Int`: Number of ROIs that converged (currently equals n_fits since all
-  iterations run)
+- `n_converged::Int`: Equals `n_fits`: convergence is not tracked per fit. A Gaussian fit
+  stops on its convergence test or, rarely, at the `iterations` cap, and a fit that
+  reaches the cap is not flagged; SplinePSFModel runs every pass
 - `batch_size::Int`: Actual batch size used for processing
 - `n_batches::Int`: Number of batches processed (1 if all-at-once)
 - `memory_per_batch::Int`: Estimated memory bytes per batch, including a SplinePSFModel's

@@ -27,14 +27,14 @@ using Statistics
 # Create fitter with default settings
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
 # - Auto backend selection (GPU if available)
-# - Levenberg-Marquardt fits of at most 20 pixel passes
+# - Levenberg-Marquardt fits that stop once converged (at most 50 pixel passes)
 fitter = GaussMLEConfig()
 
 # Or with explicit configuration
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
     backend = :cpu,                      # Force CPU
-    iterations = 20
+    iterations = 50                      # cap on pixel passes (the default)
 )
 ```
 

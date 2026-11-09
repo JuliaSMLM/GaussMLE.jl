@@ -732,6 +732,9 @@ end
     return θ_best
 end
 
+# Every pass runs from each start (no convergence stop), so the cap is the pass count.
+_default_iterations(::SplinePSFModel) = 20
+
 function default_constraints(model::SplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)
     return ParameterConstraints{5}(

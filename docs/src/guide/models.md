@@ -117,7 +117,7 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Use in fitter
-fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Access z-position from emitters
@@ -364,7 +364,7 @@ psf = AstigmaticXYZNB{Float32}(
     0.10f0           # d
 )
 
-fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Extract 3D positions

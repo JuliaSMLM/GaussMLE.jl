@@ -217,17 +217,24 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
    - One pixel pass per iteration at the trial point: objective (`_fit_objective`, read-noise
      variance from `_readout_variance`, zero for IdealCamera), gradient
      `g = Σ dudt (d - μ)/var` and Fisher `F = Σ dudt dudt'/var`; no second derivatives
-   - Step: `(F_acc + λ diag F_acc) Δ = g_acc`, clamped to `max_step` and the bounds; a
-     higher objective is accepted (λ/10), a lower one rejected (λ×10)
+   - Step: `(F_acc + λ diag F_acc) Δ = g_acc` (Fisher scoring: F is the expected curvature),
+     held to `max_step` and the bounds; a higher objective is accepted, a lower one rejected
+     (λ×10); factorizations in the `@noinline` `_lm_solve` and `_newton_gain` (POCL speed)
    - A parameter on a bound whose gradient points out of the box is held (identity row and
      column via `_hold_rows`, zero gradient) while the rest take the step
    - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
    - `iterations` caps the pixel passes, the last only evaluating, so a fit takes at most
-     `iterations - 1` steps; `_lm_fit` returns `(θ_acc, obj_acc, passes)`
-   - Gaussian models (`_optimize` for `PSFModel`): stop after an accepted pass whose
-     predicted gain `g' F⁻¹ g / 2` over the free parameters (undamped `F_acc`) is below
-     `_LM_GAIN_TOL = 1e-4`, i.e. within `sqrt(2e-4) = 0.014` CRLB of the local maximum
-   - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`), from
+     `iterations - 1` steps; default `_default_iterations`: 50 for the Gaussian models, 20 for
+     SplinePSFModel; `_lm_fit` returns `(θ_acc, obj_acc, passes)`
+   - Gaussian models (`_optimize` for `PSFModel`, `gain_tol = _LM_GAIN_TOL = 1e-4`, adaptive):
+     stop after an accepted pass whose predicted gain `g' F⁻¹ g / 2` over the free parameters
+     (undamped `F_acc`) is below 1e-4, i.e. within 0.014 CRLB of the maximum of the quadratic
+     model with curvature F (measured within 0.1 CRLB of the likelihood's own maximum on
+     simulated ROIs); λ from the gain ratio ρ on accepted passes (ρ < 1/4: max(10λ, 0.1);
+     ρ > 3/4: λ/10); a change within the objective's Float32 rounding is a tie (accepted, λ
+     kept); the whole step is scaled to `max_step` instead of clamping each component
+   - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`: λ/10 on
+     accept, per-component clamp, no stop, bit for bit as before the Gaussian change), from
      the scan start and then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N,
      bg from the scan start; default count `_default_spline_starts`, one fixed start per
      0.4 µm over the central 80 % of `z_range`), each with the full `iterations`, keeping
@@ -244,7 +251,7 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      from the kernel) means F is singular to working precision. The Float32 accumulation
      over the box's pixels perturbs the entries of G by about that much, so a smaller
      pivot of a real matrix cannot be told from an exactly singular one (a tolerance of
-     `N * eps(T)` passes a simulated ROI, which then reports σ_x = 3.0 µm). There is no LU
+     `N * eps(T)` passes a simulated ROI, which then reports σ_y = 29 nm). There is no LU
      fallback, because F is positive semidefinite by construction and LU there only turns
      rounding into a number. Failed inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
      diagonal entry that is not positive and finite (no `max(0, ...)` on a variance).
