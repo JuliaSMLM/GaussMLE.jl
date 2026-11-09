@@ -58,11 +58,12 @@ end
 # converged, most within 10 passes, so the cap binds only on a slow fit: Fisher scoring
 # converges linearly where the observed curvature differs from F, as for z at low counts.
 # A fit capped before it converges keeps its CRLB and is left out of `n_converged`. In
-# simulations of every Gaussian model (2,000 to 20,000 Poisson ROIs per condition), up to
-# 5 % of low-count astigmatic fits (300 to 500 photons) needed more than 20 passes; at 100,
-# up to 0.3 % still had not stopped: PSFs at 1e6 photons or more, narrow PSFs, and
-# low-count astigmatic fits with 5 e- read noise, about half of them within 0.1 CRLB of
-# their maximum. SplinePSFModel runs every pass from each start (its own method).
+# simulations of every Gaussian model (2,000 to 20,000 ROIs per condition, Poisson noise
+# with sCMOS read noise of 0 to 5 e-), up to 5 % of low-count astigmatic fits (300 to 500
+# photons) needed more than 20 passes. At 100, up to 0.3 % of emitters inside the z range
+# had not stopped (PSFs at 1e6 photons or more, narrow PSFs, low-count astigmatic fits
+# with 5 e- read noise), about half of them within 0.1 CRLB of their maximum; near the
+# ends of the z range up to 8.5 % had not. SplinePSFModel runs every pass from each start (its own method).
 _default_iterations(::PSFModel) = 100
 
 _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = constraints

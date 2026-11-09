@@ -250,9 +250,10 @@ end
     @testset "a fit whose next step rounds away ends early" begin
         # SMLMSim ROI of a narrow PSF (sigma 0.31 px, near its 0.3 px bound; 1e5 photons,
         # background 5; 11 px box). Near the maximum the Float32 objective's noise exceeds
-        # the remaining gain, every trial is rejected until the step rounds to the accepted
-        # point, and from there each pass would repeat the last: the fit ends at once,
-        # without meeting the stop test, with the result a longer cap gives. 1 in 4,000 of
+        # the remaining gain, every trial is rejected until, with the damping at its cap,
+        # the step rounds to the accepted point; each later pass would make the same trial,
+        # so the fit ends there without meeting the stop test, with the result a longer cap
+        # gives. 1 in 4,000 of
         # these ROIs (simulated positions within 1 px of the center) ends this way.
         b11 = 11
         cam11 = IdealCamera(b11, b11, 0.1)

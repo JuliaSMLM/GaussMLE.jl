@@ -293,8 +293,8 @@ end
 #   multiplies lambda by nu and doubles nu (Fisher scoring overshoots where the observed
 #   curvature exceeds F, and this damps it without toggling);
 # - the whole step is scaled to the step limits instead of clamping each component;
-# - a trial that rounds to the accepted point ends the fit (every later pass would repeat
-#   it).
+# - a trial that rounds to the accepted point with lambda at its cap ends the fit (every
+#   later pass would make the same trial).
 # Returns the last accepted point, the objective there, the pixel passes made and whether
 # the stop test ended the fit,
 # `(θ_acc, obj_acc, passes, stopped)`: the first pass always accepts its start, so
@@ -420,10 +420,11 @@ end
         end
         if adaptive
             θ, pred = _adaptive_trial(Δ, θ_acc, g_acc, F_acc, constraints)
-            # A trial that rounds to the accepted point in Float32 is a fixed point: it is
-            # rejected, the larger lambda shrinks the step further, and every later pass
-            # repeats it. The fit ends here with the result the cap would give.
-            ok && θ == θ_acc && break
+            # At the largest damping a trial that rounds to the accepted point in Float32 is
+            # a fixed point: it is rejected, lambda stays at its cap, and every later pass
+            # makes the same trial. The fit ends here with the result the cap would give.
+            # (Below the cap a larger lambda gives a new step, which can differ.)
+            ok && λ >= T(1.0e7) && θ == θ_acc && break
         else
             step = clamp.(Δ, -constraints.max_step, constraints.max_step)
             θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)

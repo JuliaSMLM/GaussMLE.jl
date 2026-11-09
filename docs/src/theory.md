@@ -102,7 +102,7 @@ The Gaussian models run to convergence:
   one maximum (an emitter beyond the z range), a fit can stop farther from it: in
   simulations of every Gaussian model that include such cases (156,000 fits), 103 stopped
   more than 0.1 CRLB from the likelihood's maximum, nearly all at low counts or beyond the
-  z range, about as often as the earlier Newton-Raphson fit did.
+  z range.
 - **Damping.** On a kept trial, $\lambda$ follows the ratio $\rho$ of the actual to the
   predicted gain of the step (Nielsen's rule): it is multiplied by
   $\max(1/3,\ 1 - (2\rho - 1)^3)$. A discarded trial multiplies $\lambda$ by $\nu$, which
@@ -120,7 +120,7 @@ The Gaussian models run to convergence:
 - **Fits that end unconverged.** A fit ends without meeting the stop test when it reaches
   the `iterations` cap, or when its next step rounds to its current point in Float32 (the
   objective's rounding then exceeds the remaining gain, as for very bright or very narrow
-  PSFs; every later pass would repeat that step). Its uncertainties stay the CRLB at its end
+  PSFs; once the damping reaches its cap every later pass makes that same step). Its uncertainties stay the CRLB at its end
   point, and `GaussMLEFitInfo.n_converged` does not count it. The stop test measures distance
   with $F$, so such a fit is often at its maximum all the same: in the simulations above
   about half of the capped fits were within 0.1 CRLB of it.

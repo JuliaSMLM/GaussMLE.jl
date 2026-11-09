@@ -237,8 +237,8 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      10× its Float32 rounding (its sign decides: added to `obj_acc` it rounds away for a
      mismatched bright fit, |obj| ~ 1e4 to 1e5); a non-finite objective is rejected; the whole step is scaled to `max_step` instead of
      clamping each component (`@noinline _adaptive_trial`, which skips non-finite
-     components); a trial that rounds to `θ_acc` ends the fit (a fixed point: every later
-     pass repeats it); a fit that ends without the stop test gets `converged = false`,
+     components); a trial that rounds to `θ_acc` with λ at its 1e7 cap ends the fit (a
+     fixed point: every later pass makes the same trial); a fit that ends without the stop test gets `converged = false`,
      which the kernel writes to its `converged` output (`UInt8`, after `chi2`) and
      `GaussMLEFitInfo.n_converged` counts; its uncertainties stay the CRLB
    - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`: λ/10 on

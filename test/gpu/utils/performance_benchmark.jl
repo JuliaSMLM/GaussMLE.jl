@@ -193,7 +193,7 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
 
         # Benchmark run with timing
         t_start = time()
-        smld, _info = GaussMLE.fit(benchmark_batch, fitter)
+        smld, info = GaussMLE.fit(benchmark_batch, fitter)
         t_elapsed = time() - t_start
 
         fits_per_second = benchmark / t_elapsed
@@ -286,9 +286,8 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
             param_stats[name] = ParameterStats(ratio, bias, empirical_std, mean_crlb)
         end
 
-        # Calculate convergence rate
-        n_converged = sum(isfinite.(uncertainties[1, :]))
-        convergence_rate = n_converged / benchmark
+        # Convergence rate: the fits that met their convergence test
+        convergence_rate = info.n_converged / benchmark
 
         return BenchmarkResult(config, fits_per_second, convergence_rate, param_stats)
 
