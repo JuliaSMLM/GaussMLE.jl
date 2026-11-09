@@ -259,10 +259,10 @@ band. Independent spline Monte Carlo validation remains in the Long group on CPU
 
 `SplinePSFModel` fits each ROI from several z starts by default (six for a ±1 µm
 `z_range`), so a spline fit costs several Levenberg-Marquardt fits; `starts = 1` fits from
-the scan start alone. On kitt's CPU (8 threads, load average about 11 from other users),
+the scan start alone. On kitt's CPU (8 threads, load average about 27 from other users),
 10,000 simulated ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of
-an astigmatic Gaussian PSF and `z_range = (-1, 1)`, ran at 10,500 fits/s with `starts = 1`
-and 2,300 fits/s with the default six starts (4.6 times the time), against 54,600 fits/s
+an astigmatic Gaussian PSF and `z_range = (-1, 1)`, ran at 8,300 fits/s with `starts = 1`
+and 1,760 fits/s with the default six starts (4.7 times the time), against 47,600 fits/s
 for `AstigmaticXYZNB`, whose fit stops once converged. The multi-start cost is a ratio on one machine and was not measured on a
 GPU.
 
