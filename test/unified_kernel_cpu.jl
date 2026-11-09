@@ -35,7 +35,9 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
 
         # Test with different PSF models
         @testset "GaussianXYNB (N=4)" begin
-            psf_model = GaussMLE.GaussianXYNB(0.13f0)
+            # The kernel takes the PSF width in pixels (fit converts it from microns): the
+            # blobs are 1.3 px wide.
+            psf_model = GaussMLE.GaussianXYNB(1.3f0)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
 
             # Allocate output arrays

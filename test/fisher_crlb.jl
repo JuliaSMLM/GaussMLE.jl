@@ -15,7 +15,7 @@ function reference_crlb(model, box, θ)
     mu = zeros(Float32, box, box)
     F = zeros(n, n)
     for j in 1:box, i in 1:box
-        m, dudt, _ = GaussMLE.compute_pixel_derivatives(i, j, θ32, model)
+        m, dudt = GaussMLE.compute_pixel_derivatives(i, j, θ32, model)
         mu[i, j] = m
         F .+= Float64.(dudt) * Float64.(dudt)' ./ Float64(m)
     end

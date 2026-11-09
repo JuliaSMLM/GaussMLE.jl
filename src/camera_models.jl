@@ -15,53 +15,6 @@ struct SCMOSCameraInternal{T}
     variance_map::T  # Pixel-wise readout noise variance (e⁻²)
 end
 
-# Noise model interface for likelihood calculations
-@inline function compute_likelihood_terms(
-        data::T, model::T, ::IdealCameraInternal
-    ) where {T}
-    # Poisson noise only
-    # Cap values to prevent numerical instability (following SMITE)
-    # Note: SMITE uses 10e-3 = 0.01, not 1e-3 = 0.001
-    if model > T(0.01)
-        cf = data / model - one(T)
-        df = data / (model * model)
-        # Cap at 10^4 to prevent instability
-        cf = min(cf, T(1.0e4))
-        df = min(df, T(1.0e4))
-    else
-        cf = zero(T)
-        df = zero(T)
-    end
-    return cf, df
-end
-
-@inline function compute_likelihood_terms(
-        data::T, model::T, variance_map::AbstractArray, i, j
-    ) where {T}
-    # Total variance = Poisson variance + readout variance
-    total_var = model + variance_map[i, j]
-    cf = (data - model) / total_var
-    # Corrected: ∂²L/∂model² = -1/variance, but we need positive for Hessian
-    df = one(T) / total_var
-    return cf, df
-end
-
-# Scalar variance (uniform sCMOS readnoise)
-@inline function compute_likelihood_terms(data::T, model::T, variance::T, i, j) where {T}
-    # Total variance = Poisson variance + uniform readout variance
-    total_var = model + variance
-    cf = (data - model) / total_var
-    df = one(T) / total_var
-    return cf, df
-end
-
-# Legacy compatibility: accept SCMOSCameraInternal (for backward compatibility)
-@inline function compute_likelihood_terms(
-        data::T, model::T, camera::SCMOSCameraInternal, i, j
-    ) where {T}
-    return compute_likelihood_terms(data, model, camera.variance_map, i, j)
-end
-
 # Log-likelihood ratio (LLR) computation: log L(fitted) - log L(saturated)
 # For goodness-of-fit testing via χ² = -2×LLR ~ χ²(df)
 @inline function compute_log_likelihood(data::T, model::T, ::IdealCameraInternal) where {T}

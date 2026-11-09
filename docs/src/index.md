@@ -229,11 +229,7 @@ The Gaussian expectation model for pixel (i,j) is:
 \frac{1}{2\pi \sigma_x \sigma_y} \exp\left(-\frac{(x-\theta_x)^2}{2\sigma_x^2} - \frac{(y-\theta_y)^2}{2\sigma_y^2}\right) dx \, dy
 ```
 
-The Gaussian models are fitted by Newton-Raphson optimization with:
-- **Diagonal Hessian**: For fast parameter updates
-- **Full Fisher Information**: For accurate CRLB uncertainties
-
-`SplinePSFModel` is fitted by Levenberg-Marquardt on the full Fisher matrix instead. The `pvalue` is the Pearson statistic $\sum (d-\mu)^2/(\mu+v)$ against $\chi^2(\mathrm{df})$ for both cameras, not the objective the spline fit maximizes.
+Every model is fitted by Levenberg-Marquardt on the full Fisher Information matrix, which also gives the CRLB uncertainties at the fitted point; the Gaussian models stop once converged. The `pvalue` is the Pearson statistic $\sum (d-\mu)^2/(\mu+v)$ against $\chi^2(\mathrm{df})$ for both cameras, not the objective the fit maximizes.
 
 ## References
 

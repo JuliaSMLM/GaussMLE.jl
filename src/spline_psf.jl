@@ -614,8 +614,7 @@ end
         one(T),               # ∂model/∂bg
     ]
 
-    # The spline is fitted by Levenberg-Marquardt, which uses no second derivatives.
-    return model_val, dudt, zero(dudt)
+    return model_val, dudt
 end
 
 @inline function simple_initialize(
@@ -703,10 +702,10 @@ function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y:
     return to_pixel_units(model, (pixel_size_x, pixel_size_y))
 end
 
-# Levenberg-Marquardt on the full Fisher matrix (the kernel's `_optimize`): the
-# per-parameter Newton step stops short on the coupled x, y, z, N and background, and LM
-# needs no cap on the photon and background steps. One LM fit climbs to the maximum of the
-# basin it starts in, and the scan start θ0 is often in the wrong one for a defocused ROI.
+# Levenberg-Marquardt on the full Fisher matrix (the kernel's `_lm_fit`), as for every
+# model, with every pass run (no convergence stop) and no cap on the photon and background
+# steps. One LM fit climbs to the maximum of the basin it starts in, and the scan start θ0
+# is often in the wrong one for a defocused ROI.
 # So the fit also runs from `starts - 1` fixed z starts (x, y, N and bg from θ0), each with
 # the full `iterations`, and keeps the θ with the strictly higher objective; on a tie the
 # earlier start wins, the scan start first.
@@ -714,14 +713,14 @@ end
         roi, box_size::Int, psf_model::SplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {T}
-    θ_best, obj_best = _lm_fit(
+    θ_best, obj_best, _ = _lm_fit(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ0
     )
     m = psf_model.starts - 1
     for q in 0:(m - 1)
         θs = SVector{5, T}(θ0[1], θ0[2], _spline_start_z(psf_model, q, m), θ0[4], θ0[5])
-        θ, obj = _lm_fit(
+        θ, obj, _ = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )

@@ -44,7 +44,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         data = generate_simple_test_data(n_test_blobs, box_size)
 
         @testset "GaussianXYNB GPU" begin
-            psf_model = GaussMLE.GaussianXYNB(0.13f0)
+            psf_model = GaussMLE.GaussianXYNB(1.3f0)  # kernel units: pixels (the blobs are 1.3 px wide)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
 
             # Move data to GPU
@@ -98,7 +98,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         end
 
         @testset "CPU vs GPU Consistency" begin
-            psf_model = GaussMLE.GaussianXYNB(0.13f0)
+            psf_model = GaussMLE.GaussianXYNB(1.3f0)  # kernel units: pixels (the blobs are 1.3 px wide)
             constraints = GaussMLE.default_constraints(psf_model, box_size)
 
             # Create dummy corners and variance for new kernel signature

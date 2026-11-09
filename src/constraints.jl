@@ -22,7 +22,7 @@ function default_constraints(::GaussianXYNB, box_size)
     return ParameterConstraints{4}(
         Params{4}(lower, lower, 1.0f0, 0.01f0), # lower bounds
         Params{4}(upper, upper, Inf32, Inf32),  # upper bounds
-        Params{4}(1.0f0, 1.0f0, 100.0f0, 2.0f0) # max step
+        Params{4}(1.0f0, 1.0f0, Inf32, Inf32)   # max step
     )
 end
 
@@ -31,7 +31,7 @@ function default_constraints(::GaussianXYNBS, box_size)
     return ParameterConstraints{5}(
         Params{5}(lower, lower, 1.0f0, 0.01f0, 0.3f0), # lower bounds
         Params{5}(upper, upper, Inf32, Inf32, 5.0f0),  # upper bounds
-        Params{5}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0) # max step
+        Params{5}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0)   # max step
     )
 end
 
@@ -40,7 +40,7 @@ function default_constraints(::GaussianXYNBSXSY, box_size)
     return ParameterConstraints{6}(
         Params{6}(lower, lower, 1.0f0, 0.01f0, 0.3f0, 0.3f0), # lower bounds
         Params{6}(upper, upper, Inf32, Inf32, 5.0f0, 5.0f0),  # upper bounds
-        Params{6}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0, 0.5f0) # max step
+        Params{6}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0, 0.5f0)   # max step
     )
 end
 
@@ -50,7 +50,7 @@ function default_constraints(::AstigmaticXYZNB, box_size)
     return ParameterConstraints{5}(
         Params{5}(lower, lower, -1.0f0, 1.0f0, 0.01f0), # lower: z = -1μm
         Params{5}(upper, upper, 1.0f0, Inf32, Inf32),   # upper: z = +1μm
-        Params{5}(1.0f0, 1.0f0, 0.1f0, 100.0f0, 2.0f0)  # max_step: z = 0.1μm
+        Params{5}(1.0f0, 1.0f0, 0.1f0, Inf32, Inf32)   # max_step: z = 0.1μm
     )
 end
 
@@ -58,13 +58,4 @@ _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = 
 
 function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)
     return default_constraints(psf_model, box_size)
-end
-
-@inline function apply_constraints!(
-        θ::Params{N}, Δθ::Params{N},
-        constraints::ParameterConstraints{N}
-    ) where {N}
-    # Apply step size limits and bounds
-    θ_new = θ - clamp.(Δθ, -constraints.max_step, constraints.max_step)
-    return clamp.(θ_new, constraints.lower, constraints.upper)
 end

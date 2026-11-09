@@ -91,9 +91,10 @@ functional.
 # Fields
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
-- `iterations::Int`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
-  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
+- `iterations::Int`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
+  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
+  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
+  stop earlier once converged
 - `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
   `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
@@ -129,9 +130,10 @@ Camera noise model is determined by the ROIBatch type:
 # Keyword Arguments
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `iterations = 20`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
-  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
+- `iterations = 20`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
+  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
+  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
+  stop earlier once converged
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
@@ -1033,9 +1035,10 @@ Kwargs match GaussMLEConfig fields exactly.
 
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
-- `iterations=20`: Newton-Raphson iterations for the Gaussian models;
-  Levenberg-Marquardt pixel passes for `SplinePSFModel`, whose last pass only evaluates,
-  so it takes at most `iterations - 1` steps and `iterations = 1` returns the start
+- `iterations=20`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
+  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
+  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
+  stop earlier once converged
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time

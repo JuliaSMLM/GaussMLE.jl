@@ -53,7 +53,7 @@ The log-likelihood simplifies to:
 
 The constant term $\log(N_{i,j}!)$ can be dropped for optimization.
 
-### Newton-Raphson Optimization
+### Levenberg-Marquardt Optimization
 
 The MLE estimate is found by solving:
 
@@ -61,20 +61,44 @@ The MLE estimate is found by solving:
 \frac{\partial \ell(\theta)}{\partial \theta} = 0
 ```
 
-The Gaussian models use diagonal Newton-Raphson updates for each parameter $a$:
+Every model is fitted by Levenberg-Marquardt on the full Fisher matrix. At the current
+point $\theta$, with $\mathrm{Var}_{i,j} = \mu_{i,j}$ (IdealCamera) or
+$\mu_{i,j} + \sigma^2_{\text{read},i,j}$ (sCMOS), the gradient and Fisher matrix are
 
 ```math
-\Delta\theta_a = \frac{g_a}{H_{\mathrm{diag},a}}, \qquad
-\theta_a^{(k+1)} = \theta_a^{(k)} - \Delta\theta_a
+g_a = \sum_{i,j} \frac{N_{i,j} - \mu_{i,j}}{\mathrm{Var}_{i,j}} \frac{\partial \mu_{i,j}}{\partial \theta_a},
+\qquad
+F_{ab} = \sum_{i,j} \frac{1}{\mathrm{Var}_{i,j}} \frac{\partial \mu_{i,j}}{\partial \theta_a} \frac{\partial \mu_{i,j}}{\partial \theta_b}
 ```
 
-Where:
-- $g_a$ is the gradient component (first derivative)
-- $H_{\mathrm{diag},a}$ is the diagonal curvature used by the optimizer (with the approximations described below)
+and the trial step solves
 
-The update is zero when $|H_{\mathrm{diag},a}| \leq 10^{-10}$. Each update is clamped to its step limit, then the new parameter is clamped to its bounds. The full Fisher matrix is accumulated and inverted once after optimization for uncertainties.
+```math
+(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g, \qquad \theta' = \theta + \Delta
+```
 
-`SplinePSFModel` is instead fitted by Levenberg-Marquardt on the full Fisher matrix, solving $(F + \lambda\,\mathrm{diag}\,F)\,\Delta = g$ with the per-camera objective: the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood $(d + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS). A parameter that sits on a bound with the objective's gradient pointing out of the box is held there: its row and column of the damped matrix are replaced by the identity and its gradient set to zero, so the solve moves only the free parameters. The fit runs from the scan start and from `starts - 1` fixed z starts (see the model guide), each with the full `iterations`, and keeps the one with the highest objective. The reported log-likelihood ratio is the one given above for both cameras; for sCMOS that is the Gaussian approximation $-(d-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the spline fit maximizes. The p-value uses the Pearson statistic for every model (see Goodness of Fit).
+with each component of $\Delta$ clamped to its step limit and $\theta'$ clamped to the bounds.
+The objective is the Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood
+$(N + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS); $g$ is its exact
+gradient for both. A trial that raises the objective is kept and $\lambda$ divided by 10; one that
+lowers it is discarded and $\lambda$ multiplied by 10 ($\lambda$ starts at $10^{-3}$). $F$ is the
+expected negative Hessian (below), positive semidefinite, so a small enough step along the damped
+solution raises the likelihood. A parameter that sits on a bound with the gradient pointing out
+of the box is held there: its row and column of the damped matrix are replaced by the identity
+and its gradient set to zero, so the solve moves only the free parameters.
+
+The Gaussian models stop once the gain the full Newton step predicts,
+$g^\top F^{-1} g / 2$ over the free parameters, is below $10^{-4}$. $F^{-1}$ is the CRLB
+covariance at $\theta$, so $g^\top F^{-1} g$ is the squared distance from $\theta$ to the maximum
+of the local quadratic model in CRLB units: the fit stops within
+$\sqrt{2 \times 10^{-4}} \approx 0.014$ CRLB of it. `SplinePSFModel` runs every pass from the scan
+start and from `starts - 1` fixed z starts (see the model guide), and keeps the start with the
+highest objective. `iterations` caps the pixel passes of every fit (see Iteration Strategy).
+
+The full Fisher matrix at the final $\theta$ is inverted once for uncertainties. The reported
+log-likelihood ratio is the one given above for both cameras; for sCMOS that is the Gaussian
+approximation $-(N-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the fit maximizes. The
+p-value uses the Pearson statistic for every model (see Goodness of Fit).
 
 ## Derivatives
 
@@ -106,20 +130,10 @@ The exact Poisson Hessian elements are:
 \frac{\partial^2 \ell}{\partial \theta_i \partial \theta_j} = -\sum_{k,l} \left[ \frac{N_{k,l}}{\mu_{k,l}^2} \frac{\partial \mu_{k,l}}{\partial \theta_i} \frac{\partial \mu_{k,l}}{\partial \theta_j} - \left( \frac{N_{k,l}}{\mu_{k,l}} - 1 \right) \frac{\partial^2 \mu_{k,l}}{\partial \theta_i \partial \theta_j} \right]
 ```
 
-The optimizer accumulates only the diagonal, with two model-curvature approximations. For `GaussianXYNBS`, the shared-σ second derivative sums the two single-axis contributions and omits the mixed product term
-
-```math
-2\theta_n \frac{\partial G_x}{\partial \sigma} \frac{\partial G_y}{\partial \sigma}.
-```
-
-For `AstigmaticXYZNB`, the z second derivative includes the first and second derivatives of each width separately, but omits
-
-```math
-2\frac{\partial^2 \mu}{\partial \sigma_x \partial \sigma_y}
-\frac{d\sigma_x}{dz}\frac{d\sigma_y}{dz}.
-```
-
-The first derivatives include both width contributions. For Poisson updates, the implementation also sets the likelihood factors to zero when $\mu \leq 0.01$ and caps $cf = N/\mu - 1$ and $df = N/\mu^2$ above at $10^4$. The sCMOS path instead uses the fixed-variance approximation described below.
+Its expectation over the data ($\mathrm{E}[N_{k,l}] = \mu_{k,l}$) drops the second-derivative
+term and is $-F$, the Fisher matrix of the optimizer above. The fit uses $F$ in place of the
+Hessian: it needs only first derivatives, it is positive semidefinite at every point (the Hessian
+is not, away from the maximum), and at the maximum its inverse is the CRLB.
 
 ## Gaussian Integral Computation
 
@@ -225,12 +239,11 @@ For sCMOS cameras, each pixel has independent readout noise characterized by a p
 \text{Var}_{i,j} = \mu(\theta)_{i,j} + \sigma^2_{\text{read},i,j}
 ```
 
-The optimizer uses a weighted-residual approximation, treating the current variance as fixed when forming updates:
-
-```math
-cf_{i,j} = \frac{N_{i,j} - \mu(\theta)_{i,j}}{\text{Var}_{i,j}}, \qquad
-df_{i,j} = \frac{1}{\text{Var}_{i,j}}
-```
+The fit maximizes the Poisson-shifted likelihood $(N + v)\log(\mu + v) - (\mu + v)$, with
+$v = \sigma^2_{\text{read}}$: it treats $N + v$ as Poisson with mean $\mu + v$, which has the
+right mean and variance. Its gradient is the weighted residual
+$(N_{i,j} - \mu_{i,j}) / \text{Var}_{i,j}$ times $\partial\mu_{i,j}/\partial\theta$, and its Fisher
+matrix weights each pixel by $1/\text{Var}_{i,j}$ (see Levenberg-Marquardt Optimization).
 
 The reported residual statistic is:
 
@@ -238,7 +251,7 @@ The reported residual statistic is:
 R(\theta) = -\frac{1}{2} \sum_{i,j} \frac{(N_{i,j} - \mu(\theta)_{i,j})^2}{\text{Var}_{i,j}}
 ```
 
-Its full model-dependent derivatives are not used for optimization. Here the data and model use electrons, and the readout variance uses electrons².
+It is reported, not maximized. Here the data and model use electrons, and the readout variance uses electrons².
 
 Note that unlike the pure Poisson case, the variance depends on both the model value (signal-dependent) and the camera calibration (pixel-dependent). The readout variance map is extracted from the camera calibration as $\sigma^2_{\text{read}} = \text{readnoise}^2$ and indexed at the correct camera coordinates using the ROI corner positions.
 
@@ -257,7 +270,15 @@ with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout te
 
 ### Iteration Strategy
 
-GaussMLE.jl uses a **fixed iteration count** (default 20) for Newton-Raphson optimization (Levenberg-Marquardt for `SplinePSFModel`, one pixel pass per iteration; its last pass only evaluates, so it takes at most `iterations - 1` steps and `iterations = 1` returns the start; each of the spline's `starts` runs the full count), with no convergence checking. This matches the approach used in the original CUDA implementation (Smith et al. 2010, SMITE), where the fixed iteration count is chosen to be sufficient for convergence in typical SMLM conditions while avoiding the overhead of convergence tests on GPU hardware.
+`iterations` (default 20) caps the Levenberg-Marquardt pixel passes of a fit. Each pass
+evaluates the objective, gradient and Fisher matrix at one trial point; the first evaluates the
+start and the last only evaluates, so a fit takes at most `iterations - 1` steps and
+`iterations = 1` returns the start. The Gaussian models stop before the cap once converged (see
+Levenberg-Marquardt Optimization); each of the spline's `starts` runs the full count. Photon and
+background steps have no default step limit: the damped step and the likelihood check keep them
+in place, where the diagonal Newton-Raphson update of GaussMLE 0.4.2 and earlier limited them to
+100 photons and 2 background photons per iteration and fell short of the maximum for bright
+emitters.
 
 ### Stability Measures
 
@@ -274,11 +295,11 @@ With `constraints=nothing`, defaults are built at fit time from ROI size n, and 
 
 For an $N \times N$ pixel region with $p$ parameters:
 
-- **Gradient and diagonal Hessian per iteration**: $O(N^2p)$ operations
+- **Objective, gradient and Fisher matrix per pass**: $O(N^2p^2)$ operations
 - **Final Fisher matrix accumulation**: $O(N^2p^2)$ operations
 - **Final Fisher matrix inversion**: $O(p^3)$ operations
 
-The models have at most six parameters ($p \leq 6$, typically $N \sim 5-13$). Iterations cost $O(N^2p)$ each; final uncertainty estimation costs $O(N^2p^2 + p^3)$ once after optimization.
+The models have at most six parameters ($p \leq 6$, typically $N \sim 5-13$). Passes cost $O(N^2p^2 + p^3)$ each; final uncertainty estimation costs $O(N^2p^2 + p^3)$ once after optimization.
 
 ## References
 

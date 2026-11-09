@@ -2,10 +2,10 @@
 # position bound (applied on the host after the kernel) and a Fisher matrix singular to
 # working precision (decided in the kernel by `_invert_fisher`). The ROIs below are
 # rendered noise-free by SMLMSim: a Gaussian PSF on a 9 x 9 sCMOS camera (0.1 um pixels,
-# gain 1, offset 0, read noise 1 e-) with the emitter outside the box. The first (x 1.3,
-# y 11.4 px, PSF sigma 0.07 um) is fitted with y on its upper bound (11 px) and the PSF
-# width on its lower bound, where its Fisher matrix is singular; before the fix it
-# reported zero uncertainty for x, y, photons and width.
+# gain 1, offset 0, read noise 1 e-) with the emitter at or beyond the box edge, fitted
+# with GaussianXYNBS. The first (x 0.2, y 10.9 px, PSF sigma 0.07 um, background 162 per
+# pixel) is fitted with y on its upper bound (11 px), and its Fisher matrix is singular to
+# working precision as well.
 using Test, GaussMLE, SMLMData, StaticArrays, Random
 using MicroscopePSFs: GaussianPSF
 using SMLMSim: gen_images, poisson_noise
@@ -25,28 +25,32 @@ end
 
 @testset "Fits on a bound and singular Fisher matrices" begin
     zp_batch = ROIBatch(
-        sim_roi(1.3f0, 11.4f0, 19280, 4.1, 0.07), Int32[1], Int32[1], Int32[1], SIM_CAMERA
+        sim_roi(0.2f0, 10.9f0, 469, 162.4, 0.07), Int32[1], Int32[1], Int32[1], SIM_CAMERA
     )
     emitter_sigmas(e) = (e.σ_x, e.σ_y, e.σ_photons, e.σ_bg, e.σ_σ)
 
-    @testset "a zero-precision ROI pins y and reports Inf" begin
+    @testset "a fit pinned on its y bound reports Inf" begin
         smld, _ = fit(zp_batch; psf_model = GaussianXYNBS(), iterations = 20, backend = :cpu)
         e = only(smld.emitters)
+        @test e.y ≈ (11 - 0.5) * 0.1 atol = 1.0e-6  # the upper bound, 11 px, in microns
         @test all(==(Inf32), emitter_sigmas(e))
         @test e.σ_xy == 0
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons) && isfinite(e.pvalue)
     end
 
     @testset "a ROI with a Fisher matrix singular to accumulation error" begin
-        # The emitter is beyond the top-left corner (x -0.9, y -0.7 px, PSF sigma 0.10 um).
-        # No position ends on a bound, but the Fisher matrix is singular to working
-        # precision: its smallest Cholesky pivot lies above N * eps but at or below
-        # n_pixels * eps, the accumulation error of the Float32 sum over the box's pixels.
-        # With the tolerance N * eps it reported sigma_x = 4.8 um and sigma_y = 4.4 um.
-        roi = sim_roi(-0.9f0, -0.7f0, 4991, 0.9, 0.1)
+        # The emitter is at the top-left corner (x 0.3, y 0.4 px, PSF sigma 0.05 um, 2270
+        # photons, background 3.5). No position ends on a bound, but the Fisher matrix is
+        # singular to working precision: its smallest Cholesky pivot, about 20 eps, lies
+        # above N * eps but at or below n_pixels * eps, the accumulation error of the Float32
+        # sum over the box's pixels. With the tolerance N * eps it reports sigma_x = 3.0 um
+        # and sigma_y = 2.8 um.
+        roi = sim_roi(0.3f0, 0.4f0, 2270, 3.5, 0.05)
         batch = ROIBatch(roi, Int32[1], Int32[1], Int32[1], SIM_CAMERA)
         smld, _ = fit(batch; psf_model = GaussianXYNBS(), iterations = 20, backend = :cpu)
         e = only(smld.emitters)
+        lo, hi = (-1 - 0.5) * 0.1, (11 - 0.5) * 0.1  # the x and y bounds in microns
+        @test lo + 1.0e-3 < e.x < hi - 1.0e-3 && lo + 1.0e-3 < e.y < hi - 1.0e-3
         @test all(==(Inf32), emitter_sigmas(e))
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons)
     end
@@ -71,13 +75,18 @@ end
         @test isfinite(e.σ_photons) && isfinite(e.σ_bg)
     end
 
-    @testset "the kernel itself reports Inf, never a zero, for the singular matrix" begin
-        # Bypasses the host step: the fit's y sits on its bound, but the kernel alone must
-        # not turn the failed inversion into zero precision.
+    @testset "the kernel itself reports Inf, never a zero, for a singular matrix" begin
+        # Bypasses the host step. The emitter is beyond the bottom-left corner (x -0.5,
+        # y 10.1 px, PSF sigma 0.06 um, 13625 photons, background 8); the fit ends inside
+        # the box with a Fisher matrix whose Jacobi-scaled Cholesky meets a negative pivot
+        # (singular in Float32), and the kernel alone must not turn the failed inversion
+        # into a number.
         psf = GaussMLE._model_for_camera(GaussianXYNBS(), SIM_CAMERA)
         variance_map = GaussMLE.extract_variance_map(SIM_CAMERA, Float32)
         data = Float32.(
-            GaussMLE.to_electrons(zp_batch.data, SIM_CAMERA, Int32[1], Int32[1])
+            GaussMLE.to_electrons(
+                sim_roi(-0.5f0, 10.1f0, 13625, 8.0, 0.06), SIM_CAMERA, Int32[1], Int32[1]
+            )
         )
         results = zeros(Float32, 5, 1)
         uncertainties = zeros(Float32, 5, 1)
@@ -92,7 +101,7 @@ end
             variance_map, Int32[1], Int32[1], constraints, 20; ndrange = 1
         )
         ka.synchronize(ka.CPU())
-        @test results[2, 1] == constraints.upper[2]
+        @test all(k -> constraints.lower[k] < results[k, 1] < constraints.upper[k], 1:2)
         @test all(==(Inf32), uncertainties)
         @test all(iszero, covariances)
     end

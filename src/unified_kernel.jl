@@ -187,33 +187,13 @@ end
         # Estimate z from Δα (negative because of sign convention)
         # When z < 0: αx > αy → Δα > 0 → z = -Δα*d²/(4γ) < 0 ✓
         # When z > 0: αx < αy → Δα < 0 → z = -Δα*d²/(4γ) > 0 ✓
+        # z in microns; the fit clamps the start to the z constraints
         z_init = -Δα * psf.d^2 / (T(4) * psf.γ)
-
-        # Clamp to reasonable range (±600nm for typical astigmatic systems)
-        z_init = clamp(z_init, T(-600), T(600))
     else
         z_init = T(0)
     end
 
     return SVector{5, T}(x, y, z_init, photons, bg)
-end
-
-# Likelihood dispatch helpers - compile-time Val{Bool} branching
-# Val{false} → IdealCamera (Poisson only)
-@inline function _dispatch_likelihood(
-        ::Val{false}, data::T, model::T, variance_map, corner_x, corner_y, i, j
-    ) where {T}
-    return compute_likelihood_terms(data, model, IdealCameraInternal())
-end
-
-# Val{true} → SCMOSCamera (Poisson + variance)
-@inline function _dispatch_likelihood(
-        ::Val{true}, data::T, model::T, variance_map, corner_x, corner_y, i, j
-    ) where {T}
-    # Convert ROI-local (i,j) to camera coordinates for variance lookup
-    cam_i = corner_y + i - 1
-    cam_j = corner_x + j - 1
-    return compute_likelihood_terms(data, model, variance_map, cam_i, cam_j)
 end
 
 # Read-noise variance at the pixel's camera position: zero for the ideal camera (Poisson
@@ -266,43 +246,23 @@ end
     return x
 end
 
-# Fit one ROI from the start θ0 and return θ. The Gaussian models take `iterations`
-# diagonal Newton-Raphson steps; SplinePSFModel overrides this with Levenberg-Marquardt.
+# Log-likelihood gain below which a Gaussian fit stops: the gain the full Newton step
+# predicts, g' F⁻¹ g / 2 over the free parameters. F⁻¹ is the CRLB covariance at θ, so
+# g' F⁻¹ g is the squared distance to the maximum of the local quadratic model in CRLB
+# units (Mahalanobis); a gain of 1e-4 is a distance of sqrt(2e-4) = 0.014 CRLB.
+const _LM_GAIN_TOL = 1.0e-4
+
+# Fit one ROI from the start θ0 and return θ: Levenberg-Marquardt on the full Fisher
+# matrix (`_lm_fit`), stopping once the predicted gain is below `_LM_GAIN_TOL` or after
+# `iterations` pixel passes. SplinePSFModel overrides this with several starts.
 @inline function _optimize(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {N, T}
-    θ = θ0
-    # Newton-Raphson iterations with diagonal updates
-    for iter in 1:iterations
-        # Zero out gradient and diagonal Hessian
-        ∇L = zero(SVector{N, T})
-        H_diag = zero(SVector{N, T})
-
-        # Compute derivatives over all pixels
-        @inbounds for j in 1:box_size, i in 1:box_size
-            # Model and derivatives at this pixel
-            model, dudt, d2udt2_diag = compute_pixel_derivatives(i, j, θ, psf_model)
-
-            # Likelihood terms based on camera model (Val dispatch for compile-time
-            # optimization)
-            data_ij = roi[i, j]
-            cf, df = _dispatch_likelihood(
-                camera_model, data_ij, model, variance_map, corner_x, corner_y, i, j
-            )
-
-            # Whole-vector operations preserve arithmetic order per element.
-            ∇L = ∇L + dudt * cf
-            H_diag = H_diag + (d2udt2_diag * cf - (dudt .* dudt) * df)
-        end
-
-        # Elementwise Newton-Raphson updates with constraints
-        Δθ = map((g, h) -> abs(h) > T(1.0e-10) ? g / h : zero(T), ∇L, H_diag)
-
-        # Apply constraints
-        θ_new = apply_constraints!(θ, Δθ, constraints)
-        θ = θ_new
-    end
+    θ, _, _ = _lm_fit(
+        roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+        constraints, iterations, θ0, T(_LM_GAIN_TOL)
+    )
     return θ
 end
 
@@ -314,14 +274,18 @@ end
 # is rejected (lambda * 10). The next trial is theta_acc + delta with
 # (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded, with a parameter
 # that sits on a bound and whose gradient points out of the box held fixed; if the
-# factorization fails, delta = 0 and lambda * 10. Returns the last accepted point and the
-# objective there, `(θ_acc, obj_acc)`: the first pass always accepts its start, so
+# factorization fails, delta = 0 and lambda * 10. With `gain_tol > 0` the fit stops after
+# an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free parameters (undamped
+# F_acc, held parameters removed) is below `gain_tol`; `gain_tol = 0` runs every pass.
+# Returns the last accepted point, the objective there and the pixel passes made,
+# `(θ_acc, obj_acc, passes)`: the first pass always accepts its start, so
 # iterations = 1 returns the clamped start with its objective. The multi-start `_optimize`
 # of SplinePSFModel compares these objectives.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
-        corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0
+        corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0,
+        gain_tol::T = zero(T)
     ) where {N, T}
     θ = clamp.(θ0, constraints.lower, constraints.upper)
     θ_acc = θ
@@ -329,13 +293,15 @@ end
     F_acc = zero(SMatrix{N, N, T})
     obj_acc = zero(T)
     λ = T(1.0e-3)
+    passes = 0
 
     for iter in 1:iterations
+        passes = iter
         g = zero(SVector{N, T})
         F = zero(SMatrix{N, N, T})
         obj = zero(T)
         @inbounds for j in 1:box_size, i in 1:box_size
-            model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
+            model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
             d = roi[i, j]
             v = _readout_variance(
                 camera_model, model, variance_map, corner_x, corner_y, i, j
@@ -348,6 +314,7 @@ end
             end
         end
 
+        accepted = true
         if iter == 1 || obj > obj_acc
             θ_acc = θ
             g_acc = g
@@ -361,38 +328,79 @@ end
             g_acc = g
             F_acc = F
         else
+            accepted = false
             λ = min(λ * 10, T(1.0e7))
+        end
+
+        # A parameter on a bound whose ascent gradient points out of the box is held:
+        # its row and column become the identity and its gradient zero, so the solve
+        # moves only the free parameters (the coupled photon and background steps
+        # otherwise assume the held one moves, and the clamped trial is rejected).
+        held = map(
+            (θk, gk, lo, hi) -> (θk <= lo && gk < zero(T)) || (θk >= hi && gk > zero(T)),
+            θ_acc, g_acc, constraints.lower, constraints.upper
+        )
+        g_free = g_acc
+        @inbounds for k in 1:N
+            if held[k]
+                g_free = Base.setindex(g_free, zero(T), k)
+            end
         end
 
         A = F_acc
         @inbounds for k in 1:N
             A = Base.setindex(A, F_acc[k, k] + λ * F_acc[k, k], k, k)
         end
-        # A parameter on a bound whose ascent gradient points out of the box is held:
-        # its row and column become the identity and its gradient zero, so the solve
-        # moves only the free parameters (the coupled photon and background steps
-        # otherwise assume the held one moves, and the clamped trial is rejected).
-        g_free = g_acc
-        @inbounds for k in 1:N
-            held = (θ_acc[k] <= constraints.lower[k] && g_acc[k] < zero(T)) ||
-                (θ_acc[k] >= constraints.upper[k] && g_acc[k] > zero(T))
-            if held
-                for l in 1:N
-                    A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), k, l)
-                    A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), l, k)
-                end
-                g_free = Base.setindex(g_free, zero(T), k)
-            end
-        end
-        ok, L = static_cholesky_decomposition(A)
+        ok, Δ = _lm_solve(A, held, g_free)
         if !ok
             λ = min(λ * 10, T(1.0e7))
         end
-        Δ = ok ? static_cholesky_solve(L, g_free) : zero(SVector{N, T})
+        # Stop test. The damped gain g' A⁻¹ g never exceeds the full Newton gain g' F⁻¹ g
+        # (A ⪰ F), so it is a necessary condition, and the undamped matrix is factored
+        # only when it holds: the stop is exactly the full Newton gain below gain_tol.
+        if accepted && ok && gain_tol > zero(T) && sum(g_free .* Δ) < 2 * gain_tol &&
+                _newton_gain(F_acc, held, g_free) < gain_tol
+            break
+        end
         step = clamp.(Δ, -constraints.max_step, constraints.max_step)
         θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
     end
-    return θ_acc, obj_acc
+    return θ_acc, obj_acc, passes
+end
+
+# The two factorizations of an LM pass are separate, non-inlined functions: with both
+# inlined into the kernel, the POCL CPU kernel (KernelAbstractions 0.10) ran Gaussian fits
+# about 8 times slower than with them as calls. Results are the same either way.
+
+# Damped step: solve (A with held rows and columns set to the identity's) Δ = g, `(ok, Δ)`;
+# Δ = 0 when the factorization fails.
+@noinline function _lm_solve(
+        A::SMatrix{N, N, T}, held::SVector{N, Bool}, g::SVector{N, T}
+    ) where {N, T}
+    ok, L = static_cholesky_decomposition(_hold_rows(A, held))
+    return ok, (ok ? static_cholesky_solve(L, g) : zero(SVector{N, T}))
+end
+
+# Log-likelihood gain of the full Newton step over the free parameters, g' F⁻¹ g / 2; Inf
+# when F (held rows and columns set to the identity's) is not positive definite.
+@noinline function _newton_gain(
+        F::SMatrix{N, N, T}, held::SVector{N, Bool}, g::SVector{N, T}
+    ) where {N, T}
+    ok, L = static_cholesky_decomposition(_hold_rows(F, held))
+    return ok ? sum(g .* static_cholesky_solve(L, g)) / 2 : T(Inf)
+end
+
+# A with the row and column of each held parameter replaced by the identity's
+@inline function _hold_rows(A::SMatrix{N, N, T}, held::SVector{N, Bool}) where {N, T}
+    @inbounds for k in 1:N
+        if held[k]
+            for l in 1:N
+                A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), k, l)
+                A = Base.setindex(A, ifelse(k == l, one(T), zero(T)), l, k)
+            end
+        end
+    end
+    return A
 end
 
 # Unified kernel that works on both CPU and GPU
@@ -437,7 +445,7 @@ end
     H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
 
     @inbounds for j in 1:box_size, i in 1:box_size
-        model, dudt, _ = compute_pixel_derivatives(i, j, θ, psf_model)
+        model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
         data_ij = roi[i, j]
 
         # Log-likelihood contribution (dispatch based on camera_model Val)

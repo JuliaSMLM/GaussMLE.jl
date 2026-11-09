@@ -50,14 +50,14 @@ The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
 - Immutable StaticArrays (SVector/SMatrix) for allocation-free CPU and GPU kernels
 - Custom GPU-compatible linear algebra (Cholesky decomposition and inverse)
-- **Optimization by dispatch (`_optimize`)**: diagonal Newton-Raphson for the Gaussian
-  models (element-wise, not full matrix inverse), Levenberg-Marquardt on the full Fisher
-  matrix for `SplinePSFModel`
+- **Optimization (`_optimize`)**: Levenberg-Marquardt on the full Fisher matrix
+  (`_lm_fit`) for every model; the Gaussian models stop once converged, `SplinePSFModel`
+  runs several z starts
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
 - Spline pixel-integral tables are built on the host and adapted once per backend attempt;
   CPU (POCL under KernelAbstractions 0.10, native under 0.9), CUDA and AMDGPU use one
   kernel, with the point callable removed before launch
-- Spline values and analytic first derivatives share one 4 × 4 × 4 gather (second derivatives are zero: no fit uses them);
+- Spline values and analytic first derivatives share one 4 × 4 × 4 gather (`compute_pixel_derivatives` returns `(model, dudt)` for every model: no fit uses second derivatives);
   rectangular pixels use each axis's spacing, and non-positive values have zero derivatives
 - Spline initialization and z scanning use immutable `SVector` parameters; the scan gathers
   values only. Coefficients typically occupy 5 to 10 MiB for a PSFLearning export
@@ -165,7 +165,8 @@ The two camera models have **fundamentally different data flows**:
 | **Variance map** | Not used | Required (readnoise²) |
 | **Corners** | Required for output coordinates | Required for output coordinates and variance-map lookup |
 | **Data units** | Photons (or ADU if gain=1) | Must convert ADU → electrons |
-| **Likelihood** | `cf = data/model - 1`<br>`df = data/model²` | `cf = (data-model)/total_var`<br>`df = 1/total_var` |
+| **Fit objective** | Poisson log-likelihood | Poisson-shifted: `(data+v) log(model+v) - (model+v)`, `v` = readnoise² |
+| **Gradient weight** | `(data-model)/model` | `(data-model)/total_var` |
 | **p-value statistic** | Pearson `Σ (data-model)²/model` against χ²(df) | Pearson `Σ (data-model)²/total_var` against χ²(df) (`-2×` the log-likelihood ratio) |
 | **Kernel indexing** | `data[i,j]` only | `data[i,j]` and `variance_map[cam_y, cam_x]` |
 
@@ -209,29 +210,29 @@ end
 
 ### Critical Implementation Details
 
-#### Newton-Raphson vs Fisher Information
-The kernel uses **different approaches** for optimization vs uncertainty estimation:
+#### Optimization and Fisher Information
+The kernel uses the Fisher matrix for both optimization and uncertainty estimation:
 
-1. **Optimization: diagonal Newton (Gaussian models), Levenberg-Marquardt
-   (SplinePSFModel)**. Gaussian models use a diagonal Hessian approximation
-   - Element-wise updates: `θ[k] -= ∇L[k] / H_diag[k]`
-   - More stable than full Newton method for convergence
-   - Diagonal elements: `H_diag[k] += d2udt2_diag[k] * cf - dudt[k]^2 * df`
-   - Shared-σ curvature sums the two single-axis second derivatives, omitting
-     `2N * (∂Gx/∂σ) * (∂Gy/∂σ)`; astigmatic z curvature omits
-     `2 * (∂²u/∂σx∂σy) * (dσx/dz) * (dσy/dz)`
-   - sCMOS updates additionally hold the current `model + readnoise²` variance fixed
-   - SplinePSFModel: `_optimize(::SplinePSFModel)` is Levenberg-Marquardt (`_lm_fit`) on the
-     full Fisher matrix, climbing one objective (`_fit_objective`, read-noise variance from
-     `_readout_variance`, zero for IdealCamera), with uncapped photon and background steps;
-     a parameter on a bound whose gradient points out of the box is held (identity row and
-     column, zero gradient) while the rest take the step; `iterations` counts its pixel
-     passes, the last only evaluating, so a fit takes at most `iterations - 1` steps;
-     `_lm_fit` returns `(θ_acc, obj_acc)`, and `_optimize` runs it from the scan start and
-     then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N, bg from the scan
-     start; default count `_default_spline_starts`, one fixed start per 0.4 µm over the
-     central 80 % of `z_range`), each with the full `iterations`, keeping the strictly
-     higher objective (the earlier start on a tie). `starts = 1` is the scan start alone
+1. **Optimization: Levenberg-Marquardt (`_lm_fit`) on the full Fisher matrix, every model**
+   - One pixel pass per iteration at the trial point: objective (`_fit_objective`, read-noise
+     variance from `_readout_variance`, zero for IdealCamera), gradient
+     `g = Σ dudt (d - μ)/var` and Fisher `F = Σ dudt dudt'/var`; no second derivatives
+   - Step: `(F_acc + λ diag F_acc) Δ = g_acc`, clamped to `max_step` and the bounds; a
+     higher objective is accepted (λ/10), a lower one rejected (λ×10)
+   - A parameter on a bound whose gradient points out of the box is held (identity row and
+     column via `_hold_rows`, zero gradient) while the rest take the step
+   - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
+   - `iterations` caps the pixel passes, the last only evaluating, so a fit takes at most
+     `iterations - 1` steps; `_lm_fit` returns `(θ_acc, obj_acc, passes)`
+   - Gaussian models (`_optimize` for `PSFModel`): stop after an accepted pass whose
+     predicted gain `g' F⁻¹ g / 2` over the free parameters (undamped `F_acc`) is below
+     `_LM_GAIN_TOL = 1e-4`, i.e. within `sqrt(2e-4) = 0.014` CRLB of the local maximum
+   - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`), from
+     the scan start and then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N,
+     bg from the scan start; default count `_default_spline_starts`, one fixed start per
+     0.4 µm over the central 80 % of `z_range`), each with the full `iterations`, keeping
+     the strictly higher objective (the earlier start on a tie). `starts = 1` is the scan
+     start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
@@ -243,7 +244,7 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
      from the kernel) means F is singular to working precision. The Float32 accumulation
      over the box's pixels perturbs the entries of G by about that much, so a smaller
      pivot of a real matrix cannot be told from an exactly singular one (a tolerance of
-     `N * eps(T)` passed a simulated ROI, which then reported σ_x = 4.8 µm). There is no LU
+     `N * eps(T)` passes a simulated ROI, which then reports σ_x = 3.0 µm). There is no LU
      fallback, because F is positive semidefinite by construction and LU there only turns
      rounding into a number. Failed inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
      diagonal entry that is not positive and finite (no `max(0, ...)` on a variance).
@@ -256,29 +257,16 @@ The kernel uses **different approaches** for optimization vs uncertainty estimat
      (`lower == upper`) is not a bound hit
    - Off-diagonal correlations matter for CRLB
 
-**CRITICAL SIGN CONVENTION** (unified_kernel.jl):
-
-The diagonal Hessian and Fisher matrix have **different formulas with different signs**:
+**SIGN CONVENTION** (unified_kernel.jl): the gradient is of the log-likelihood (ascent), and
+the step solves `(F + λ diag F) Δ = +g` with `θ_new = θ + Δ`:
 
 ```julia
-# Diagonal curvature for Newton-Raphson
-H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
-#            ^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^
-#            PLUS (2nd derivative)   MINUS (1st derivative²)
-
-# Fisher Information Matrix for CRLB
-F_kl = dudt[k] * dudt[l] / variance
-H[k,l] += F_kl  # Add derivative outer product, no 2nd derivative term
+g  += dudt * ((d - model) / var)          # ascent gradient
+F  += (dudt * dudt') * (1 / var)          # Fisher = E[-∇²L], positive semidefinite
 ```
 
-**Why different**:
-- Optimization curvature follows the Poisson Hessian formula, with the model-curvature
-  omissions above; sCMOS uses a fixed-variance approximation. Poisson `cf` and `df` are
-  zero for `model ≤ 0.01` and capped above at `10⁴`
-- Poisson Fisher = E[-∇²L] (only 1st derivatives, positive semidefinite); sCMOS uses
-  `variance = model + readnoise²` in the same outer-product accumulation
-
-Wrong signs cause convergence failure or incorrect CRLB.
+Poisson Fisher = E[-∇²L] (only 1st derivatives); sCMOS uses `var = model + readnoise²` in
+the same outer-product accumulation, which is also the Poisson-shifted objective's Fisher.
 
 #### Custom Linear Algebra
 
@@ -289,8 +277,8 @@ GPU kernels cannot use standard library matrix operations, so custom implementat
 - `static_cholesky_inverse` - Invert via Cholesky factors
 
 All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
-The spline Levenberg-Marquardt step calls the decomposition without a tolerance (a
-positive pivot passes, a NaN pivot is not caught there); the inverse helper has no
+The Levenberg-Marquardt step and its convergence check call the decomposition without a
+tolerance (a positive pivot passes, a NaN pivot is not caught there); the inverse helper has no
 tolerance check. The Fisher matrix goes through `_invert_fisher(F, n_pixels)`, which scales
 it to a unit diagonal first and factors it with tolerance `n_pixels * eps(T)`; a NaN pivot
 ends as a failed inversion through the check on the inverse diagonal.
