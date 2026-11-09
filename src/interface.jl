@@ -549,7 +549,10 @@ function _run_mle_kernel!(
                         gpu_backend, Float32, batch_size_actual
                     )
 
-                    kernel = unified_gaussian_mle_kernel!(gpu_backend)
+                    workgroup = _gpu_workgroup_size(vendor)
+                    kernel = workgroup === nothing ?
+                        unified_gaussian_mle_kernel!(gpu_backend) :
+                        unified_gaussian_mle_kernel!(gpu_backend, workgroup)
                     kernel(
                         d_results, d_uncertainties, d_covariances, d_log_likelihoods,
                         d_chi2, d_batch_data, device_psf, use_scmos, d_variance_map,

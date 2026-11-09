@@ -98,7 +98,9 @@ smld, info = fit(batch, GaussMLEConfig(backend = :gpu))
 
 Both `:gpu` and `:auto` support AMD. CUDA wins when both vendors are functional.
 `info.backend` is `:gpu` on either vendor, and `info.device_id` is a 0-based index.
-Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10.
+Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10. On AMD the kernel runs
+in workgroups of 64 ROIs: the size AMDGPU chooses itself put a large batch in one
+workgroup of up to 1024, which never ran on that GPU.
 
 Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
 contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,

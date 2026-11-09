@@ -115,4 +115,25 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             end
         end
     end
+
+    # One launch of more ROIs than one workgroup holds. AMDGPU's own launch size put up to
+    # 1024 of them in one workgroup, which never ran on a Radeon 780M; the AMD launch now
+    # uses workgroups of 64.
+    @testset "One launch of 3000 ROIs agrees with CPU" begin
+        camera = IdealCamera(64, 64, 0.1f0)
+        model = GaussianXYNB(0.13f0)
+        batch = generate_roi_batch(camera, model; n_rois = 3000, roi_size = 11, seed = 7)
+        cpu, _ = fit(batch, GaussMLEConfig(psf_model = model, backend = :cpu))
+        gpu, info = fit(
+            batch, GaussMLEConfig(
+                psf_model = model, backend = :gpu, batch_size = 3000, gpu_timeout = 30.0,
+            ),
+        )
+        @test info.backend == :gpu
+        @test info.n_batches == 1
+        for field in (:x, :y, :photons, :bg)
+            @test getproperty.(gpu.emitters, field) ≈
+                getproperty.(cpu.emitters, field) rtol = 1.0e-4
+        end
+    end
 end

@@ -337,3 +337,10 @@ end
         @test r.elapsed < 10
     end
 end
+
+@testset "GPU launch workgroup size per vendor" begin
+    # CUDA keeps its occupancy-based size; AMD launches use workgroups of 64 (an unsized
+    # AMDGPU launch of a large batch hung on a Radeon 780M).
+    @test GaussMLE._gpu_workgroup_size(GaussMLE.CUDAGPU()) === nothing
+    @test GaussMLE._gpu_workgroup_size(GaussMLE.ROCmGPU()) == 64
+end

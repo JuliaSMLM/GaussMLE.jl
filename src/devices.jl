@@ -19,6 +19,15 @@ _reclaim_gpu(::CUDAGPU) = CUDA.reclaim()
 _active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
 _release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
 
+# Workgroup size of the fitting kernel's GPU launch; `nothing` lets the backend choose.
+# CUDA sizes it from its occupancy query. AMDGPU does the same from HIP's, up to 1024 work
+# items, and on a Radeon 780M (ROCm under WSL2) a launch of 768 or more items in one
+# workgroup never ran: the fit hung in synchronize. A fixed size of 64 ran at every batch
+# size there, with the same results at 32 to 256, and lets the compiler keep more values
+# in registers.
+_gpu_workgroup_size(::GPUVendor) = nothing
+_gpu_workgroup_size(::ROCmGPU) = 64
+
 # Whether `e` is a device out-of-memory error: a smaller batch can clear it at once.
 _is_oom_error(::GPUVendor, e) = false
 function _is_oom_error(::CUDAGPU, e)
