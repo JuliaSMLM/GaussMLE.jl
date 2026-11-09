@@ -95,11 +95,10 @@ println("-"^50)
 
 fitter = GaussMLE.GaussMLEConfig(
     psf_model = GaussMLE.GaussianXYNB(0.13f0),
-    device = :cpu,
-    iterations = 20
+    device = :cpu
 )
 
-println("  Fitter: GaussianXYNB(σ=1.3), 20 iterations")
+println("  Fitter: GaussianXYNB(σ=1.3), default cap of 100 passes")
 
 smld_output = fit(fitter, batch)
 println("  ✓ Fitted $(length(smld_output.emitters)) localizations → BasicSMLD")

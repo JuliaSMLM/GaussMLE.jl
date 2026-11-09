@@ -130,7 +130,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         # Fit
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Validate each parameter
@@ -195,7 +195,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 43
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # More relaxed tolerances for low SNR
@@ -257,7 +257,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 44
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Check convergence - no infinite uncertainties
@@ -321,7 +321,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 45
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
@@ -375,7 +375,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         fitter_nbs = GaussMLE.GaussMLEConfig(
-            psf_model = psf_nbs, backend = :cpu, iterations = 20,
+            psf_model = psf_nbs, backend = :cpu,
         )
         smld_nbs, _info = GaussMLE.fit(batch_nbs, fitter_nbs)
 
@@ -404,7 +404,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         fitter_sxsy = GaussMLE.GaussMLEConfig(
-            psf_model = psf_sxsy, backend = :cpu, iterations = 20,
+            psf_model = psf_sxsy, backend = :cpu,
         )
         smld_sxsy, _info = GaussMLE.fit(batch_sxsy, fitter_sxsy)
 
@@ -460,7 +460,7 @@ Using the new camera-aware simulator for reliable test data generation
             )
 
             fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, backend = :cpu, iterations = 20,
+                psf_model = psf, backend = :cpu,
             )
             smld, _info = GaussMLE.fit(batch, fitter)
 

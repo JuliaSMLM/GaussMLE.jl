@@ -121,8 +121,7 @@ println("-"^50)
 
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),
-    device = :cpu,
-    iterations = 20
+    device = :cpu
 )
 
 println("  Fitter configuration:")

@@ -21,9 +21,11 @@ include(joinpath(@__DIR__, "long", "utils", "spline_psf_helpers.jl"))
     roi = roi_at(model_one, z_true; box, photons = 2000)
     θ0 = SVector{5, Float32}(6, 6, -0.35, 2000, 10)
     cons = GaussMLE.default_constraints(model_one, box)
-    optimize(model) = GaussMLE._optimize(
-        roi, box, model, Val(false), zeros(Float32, box, box), Int32(1), Int32(1), cons,
-        20, θ0
+    optimize(model) = first(
+        GaussMLE._optimize(
+            roi, box, model, Val(false), zeros(Float32, box, box), Int32(1), Int32(1),
+            cons, 20, θ0
+        )
     )
 
     @test optimize(model_one)[3] < 0  # the single start stays in the lower well

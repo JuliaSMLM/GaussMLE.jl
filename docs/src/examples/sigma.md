@@ -255,13 +255,13 @@ end
 
 ### Slow Convergence
 
-The Gaussian fits stop once converged; `iterations` (default 50) only caps a fit that
+The Gaussian fits stop once converged; `iterations` (default 100) only caps a fit that
 converges slowly. To allow more pixel passes:
 
 ```julia
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNBS(),
-    iterations = 100  # Default is 50
+    iterations = 200  # Default is 100
 )
 ```
 

@@ -3,9 +3,11 @@
 # working precision (decided in the kernel by `_invert_fisher`). The ROIs below are
 # rendered noise-free by SMLMSim: a Gaussian PSF on a 9 x 9 sCMOS camera (0.1 um pixels,
 # gain 1, offset 0, read noise 1 e-) with the emitter at or beyond the box edge, fitted
-# with GaussianXYNBS. The first (x 0.2, y 10.9 px, PSF sigma 0.07 um, background 162 per
-# pixel) is fitted with y on its upper bound (11 px), and its Fisher matrix is singular to
-# working precision as well.
+# with GaussianXYNBS. The first (x 0.0, y 10.6 px, 2766 photons, PSF sigma 0.07 um,
+# background 414 per pixel) is fitted with y on its upper bound (11 px), and its Fisher
+# matrix is singular to working precision as well. A fit capped before its convergence test
+# also reports Inf, so each of these is refitted with a cap of 1000 passes: the same result
+# shows the fit stopped on its test and the Inf is the path's own.
 using Test, GaussMLE, SMLMData, StaticArrays, Random
 using MicroscopePSFs: GaussianPSF
 using SMLMSim: gen_images, poisson_noise
@@ -25,9 +27,16 @@ end
 
 @testset "Fits on a bound and singular Fisher matrices" begin
     zp_batch = ROIBatch(
-        sim_roi(0.2f0, 10.9f0, 469, 162.4, 0.07), Int32[1], Int32[1], Int32[1], SIM_CAMERA
+        sim_roi(0.0f0, 10.6f0, 2766, 414.0, 0.07), Int32[1], Int32[1], Int32[1], SIM_CAMERA
     )
     emitter_sigmas(e) = (e.σ_x, e.σ_y, e.σ_photons, e.σ_bg, e.σ_σ)
+    # The fit stopped on its convergence test: a cap of 1000 passes returns the same fit.
+    function stopped_before_cap(batch, e)
+        smld, _ = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu, iterations = 1000)
+        long = only(smld.emitters)
+        return (long.x, long.y, long.photons, long.bg, long.σ) ==
+            (e.x, e.y, e.photons, e.bg, e.σ)
+    end
 
     @testset "a fit pinned on its y bound reports Inf" begin
         smld, _ = fit(zp_batch; psf_model = GaussianXYNBS(), backend = :cpu)
@@ -36,18 +45,20 @@ end
         @test all(==(Inf32), emitter_sigmas(e))
         @test e.σ_xy == 0
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons) && isfinite(e.pvalue)
+        @test stopped_before_cap(zp_batch, e)
     end
 
     @testset "a ROI with a Fisher matrix singular to accumulation error" begin
-        # The emitter is beyond the left edge (x -0.6, y 5.5 px, PSF sigma 0.05 um, 5163
-        # photons, background 261). No position ends on a bound, but the Fisher matrix is
-        # singular to working precision. On the POCL CPU path (KernelAbstractions 0.10) its
-        # smallest Cholesky pivot is about 21 eps: above N * eps, where that tolerance reports
-        # sigma_x = 6.5 um and sigma_y = 29 nm (finite, and plausible), and at or below n_pixels * eps, the
-        # accumulation error of the Float32 sum over the box's pixels. The pivot is rounding
-        # noise and moves with the platform; the constructed matrix in the `_invert_fisher`
-        # test below holds that band on every path.
-        roi = sim_roi(-0.6f0, 5.5f0, 5163, 261.1, 0.05)
+        # The emitter is just beyond the first row (x 8.8, y -0.9 px, PSF sigma 0.05 um,
+        # 57163 photons, background 9.8). No position ends on a bound, but the Fisher matrix
+        # is singular to working precision. At the fit's end point its smallest Jacobi-scaled
+        # Cholesky pivot is about 21 to 23 eps on the CPU paths of KernelAbstractions 0.9 and
+        # 0.10: above N * eps, where that tolerance reports sigma_x = 72 nm (finite, and
+        # plausible) and sigma_y = 1.5 um, and at or below n_pixels * eps, the accumulation
+        # error of the Float32 sum over the box's pixels. The pivot is rounding noise and
+        # moves with the platform; the constructed matrix in the `_invert_fisher` test below
+        # holds that band on every path.
+        roi = sim_roi(8.8f0, -0.9f0, 57163, 9.8, 0.05)
         batch = ROIBatch(roi, Int32[1], Int32[1], Int32[1], SIM_CAMERA)
         smld, _ = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu)
         e = only(smld.emitters)
@@ -55,6 +66,7 @@ end
         @test lo + 1.0e-3 < e.x < hi - 1.0e-3 && lo + 1.0e-3 < e.y < hi - 1.0e-3
         @test all(==(Inf32), emitter_sigmas(e))
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons)
+        @test stopped_before_cap(batch, e)
     end
 
     @testset "parameters the caller holds fixed are not pinned" begin
@@ -78,34 +90,40 @@ end
     end
 
     @testset "the kernel itself reports Inf, never a zero, for a singular matrix" begin
-        # Bypasses the host step. The emitter is beyond the bottom-left corner (x -1.3,
-        # y 10.4 px, PSF sigma 0.06 um, 9911 photons, background 20.5); the fit ends inside
-        # its bounds (just outside the box) with a Fisher matrix whose Jacobi-scaled
-        # Cholesky meets a negative pivot (singular in Float32), and the kernel alone must
-        # not turn the failed inversion into a number.
+        # Bypasses the host step. The emitter is beyond the corner past the last row and
+        # column (x 11.0, y 10.5 px, PSF sigma 0.07 um, 44955 photons, background 2.1); the
+        # fit stops inside its bounds (just outside the box) with a Fisher matrix singular in
+        # Float32 (at its end point the Jacobi-scaled Cholesky meets a negative pivot on the
+        # CPU paths of KernelAbstractions 0.9 and 0.10), and the kernel alone must not turn
+        # the failed inversion into a number.
         psf = GaussMLE._model_for_camera(GaussianXYNBS(), SIM_CAMERA)
         variance_map = GaussMLE.extract_variance_map(SIM_CAMERA, Float32)
         data = Float32.(
             GaussMLE.to_electrons(
-                sim_roi(-1.3f0, 10.4f0, 9911, 20.5, 0.06), SIM_CAMERA, Int32[1], Int32[1]
+                sim_roi(11.0f0, 10.5f0, 44955, 2.1, 0.07), SIM_CAMERA, Int32[1], Int32[1]
             )
         )
-        results = zeros(Float32, 5, 1)
-        uncertainties = zeros(Float32, 5, 1)
-        covariances = zeros(Float32, 3, 1)
-        llr = zeros(Float32, 1)
-        chi2 = zeros(Float32, 1)
         constraints = GaussMLE._resolve_constraints(nothing, psf, 9)
         ka = GaussMLE.KernelAbstractions
         kernel = GaussMLE.unified_gaussian_mle_kernel!(ka.CPU(), 64)
-        kernel(
-            results, uncertainties, covariances, llr, chi2, data, psf, Val(true),
-            variance_map, Int32[1], Int32[1], constraints, GaussMLE._default_iterations(psf); ndrange = 1
-        )
-        ka.synchronize(ka.CPU())
+        function run_kernel(iterations)
+            results = zeros(Float32, 5, 1)
+            uncertainties = zeros(Float32, 5, 1)
+            covariances = zeros(Float32, 3, 1)
+            llr = zeros(Float32, 1)
+            chi2 = zeros(Float32, 1)
+            kernel(
+                results, uncertainties, covariances, llr, chi2, data, psf, Val(true),
+                variance_map, Int32[1], Int32[1], constraints, iterations; ndrange = 1
+            )
+            ka.synchronize(ka.CPU())
+            return results, uncertainties, covariances
+        end
+        results, uncertainties, covariances = run_kernel(GaussMLE._default_iterations(psf))
         @test all(k -> constraints.lower[k] < results[k, 1] < constraints.upper[k], 1:2)
         @test all(==(Inf32), uncertainties)
         @test all(iszero, covariances)
+        @test first(run_kernel(1000)) == results  # stopped on its test, not at the cap
     end
 
     @testset "_invert_fisher fails singular matrices and inverts a good one" begin

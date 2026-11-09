@@ -59,8 +59,7 @@ println("\n2. Fitting with ideal camera model...")
 
 fitter = GaussMLEConfig(
     psf_model = psf_model,
-    device = CPU(),
-    iterations = 20
+    device = CPU()
 )
 
 results_ideal = fit(fitter, roi_batch)

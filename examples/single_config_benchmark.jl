@@ -86,7 +86,6 @@ fitter = GaussMLE.GaussMLEConfig(
     psf_model = psf_model,
     camera_model = camera_model,
     device = device,
-    iterations = 20,
     batch_size = 10_000
 )
 

@@ -17,7 +17,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
         for psf in psf_models
             batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 5, seed = 42)
             fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
+                psf_model = psf, device = GaussMLE.CPU(),
             )
             smld, _info = GaussMLE.fit(batch, fitter)
 
@@ -35,7 +35,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
     # Test configuration
     n_test_blobs = 100
     box_size = 7
-    iterations = 20
+    iterations = 100  # the Gaussian models' default cap
 
     # Generate test data
     function generate_simple_test_data(n_blobs, box_size)

@@ -99,14 +99,22 @@ The Gaussian models run to convergence:
   the observed curvature puts it, which differs from $F$ on noisy data; on simulated ROIs of
   every Gaussian model, stopped fits were within 0.1 CRLB of their own maximum.
 - **Damping.** On a kept trial, $\lambda$ follows the ratio $\rho$ of the actual to the
-  predicted gain of the step: $\rho < 1/4$ sets $\lambda$ to $\max(10\lambda, 0.1)$,
-  $\rho > 3/4$ divides it by 10, and otherwise it is kept. Where the observed curvature
-  exceeds $F$, as for z at low counts, the undamped step overshoots, and this damps it.
-- **Ties.** A trial whose objective is within the Float32 rounding of the sum is a tie: it is
-  kept with $\lambda$ unchanged and the stop is tested there. A bright emitter otherwise
-  stalls on gains its objective cannot resolve.
+  predicted gain of the step (Nielsen's rule): it is multiplied by
+  $\max(1/3,\ 1 - (2\rho - 1)^3)$. A discarded trial multiplies $\lambda$ by $\nu$, which
+  starts at 2 and doubles with each discard in a row. Where the observed curvature exceeds
+  $F$, as for z at low counts, the undamped step overshoots; this damps it without
+  switching the damping back and forth between passes.
+- **Gains below the objective's rounding.** When a trial changes the objective by less than
+  10 times the Float32 rounding of its sum, the gain is taken from the gradients instead, as
+  the trapezoid $(g_\mathrm{kept} + g)^\top s / 2$ of the step $s$, exact for a quadratic
+  along the step, and the trial is kept if that gain is positive. A bright emitter otherwise
+  stalls on gains its objective cannot resolve. A trial whose objective is not finite is
+  discarded.
 - **Step limits.** The whole step is scaled so that no parameter exceeds its step limit,
   which keeps its direction; clamping one component alone breaks the coupled step.
+- **Capped fits.** A fit that reaches the `iterations` cap without meeting the stop test is
+  not at the maximum its CRLB describes: it reports infinite uncertainties and zero
+  covariances (see Stability Measures).
 
 `SplinePSFModel` keeps the fixed schedule: a kept trial divides $\lambda$ by 10, each
 component is clamped to its step limit, and every pass runs from the scan start and from
@@ -288,7 +296,7 @@ with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout te
 
 ### Iteration Strategy
 
-`iterations` caps the Levenberg-Marquardt pixel passes of a fit: by default 50 for the
+`iterations` caps the Levenberg-Marquardt pixel passes of a fit: by default 100 for the
 Gaussian models, which converge in fewer for most fits, and 20 for `SplinePSFModel`. Each pass
 evaluates the objective, gradient and Fisher matrix at one trial point; the first evaluates the
 start and the last only evaluates, so a fit takes at most `iterations - 1` steps and
@@ -306,6 +314,7 @@ To ensure numerical stability:
 - **Parameter constraints**: Restrict parameter updates with step limits and enforce bounds (positive intensity, bounded position, etc.)
 - **Fisher matrix scaling**: The Fisher Information Matrix is positive semidefinite and its entries span many orders of magnitude (the position entries grow like $N$, the photon entry shrinks like $1/N$). It is inverted after Jacobi scaling, $G = D I D$ with $D = \mathrm{diag}(I_{kk}^{-1/2})$, so $G$ has a unit diagonal, and $I^{-1} = D G^{-1} D$. Nothing is added to the diagonal, so the photon uncertainty stays at the Cramér-Rao bound for bright emitters
 - **Cholesky decomposition**: $G$ is inverted by Cholesky only. A Cholesky pivot (the squared diagonal of the factor) at or below $n_\mathrm{pix}\,\epsilon$, with $n_\mathrm{pix}$ the number of pixels of the box and $\epsilon$ the machine epsilon of the working precision, means $G$ is singular to working precision: the accumulation over the pixels perturbs the entries of $G$ by about that much, so a smaller pivot cannot be told from that of an exactly singular matrix; there is no LU fallback, since $I$ is positive semidefinite by construction and LU there only turns rounding into a number. If a diagonal entry of $I$ is not positive and finite, the Cholesky fails, or a diagonal entry of $I^{-1}$ is not positive and finite, the fitted parameters are retained with infinite uncertainties and zero covariances
+- **Fits that did not converge**: A Gaussian fit that used all `iterations` pixel passes without meeting its stop test (see Levenberg-Marquardt Optimization) reports infinite uncertainties and zero covariances; its parameters, log-likelihood and p-value are those of its last kept trial. `SplinePSFModel` runs every pass on its fixed schedule and has no such test
 - **Fits on a bound**: A fit whose x or y (and z, for `AstigmaticXYZNB` and `SplinePSFModel`) ends exactly on a lower or upper bound of its constraints did not localize an emitter inside the allowed region. After the kernel, on the host, it reports infinite uncertainties and zero covariances as well; its parameters, log-likelihood and p-value are unchanged. A parameter the caller holds fixed (equal lower and upper bounds) is not a bound hit
 
 With `constraints=nothing`, defaults are built at fit time from ROI size n, and the config retains `nothing`. Default x and y bounds are `[-1,n+2]` in ROI pixels, extending 1.5 pixels beyond each ROI edge.

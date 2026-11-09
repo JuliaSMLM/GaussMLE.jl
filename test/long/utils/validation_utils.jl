@@ -342,8 +342,7 @@ function run_model_validation(
     # Create fitter
     fitter = GaussMLE.GaussMLEConfig(
         psf_model = psf_model,
-        backend = device isa GaussMLE.CPU ? :cpu : :gpu,
-        iterations = 20
+        backend = device isa GaussMLE.CPU ? :cpu : :gpu
     )
 
     # Fit the data (data-first API, returns tuple)

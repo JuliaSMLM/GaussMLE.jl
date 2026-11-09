@@ -729,7 +729,7 @@ end
             obj_best = obj
         end
     end
-    return θ_best
+    return θ_best, true  # a fixed schedule: no convergence test to fail
 end
 
 # Every pass runs from each start (no convergence stop), so the cap is the pass count.

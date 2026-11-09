@@ -27,14 +27,14 @@ using Statistics
 # Create fitter with default settings
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
 # - Auto backend selection (GPU if available)
-# - Levenberg-Marquardt fits that stop once converged (at most 50 pixel passes)
+# - Levenberg-Marquardt fits that stop once converged (at most 100 pixel passes)
 fitter = GaussMLEConfig()
 
 # Or with explicit configuration
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
     backend = :cpu,                      # Force CPU
-    iterations = 50                      # cap on pixel passes (the default)
+    iterations = 100                     # cap on pixel passes (the default)
 )
 ```
 
@@ -244,7 +244,8 @@ The ROI should be large enough to capture the full PSF:
 ### Handling Edge Cases
 
 ```julia
-# Filter by finite position uncertainties and goodness-of-fit (not convergence)
+# Keep fits with finite position uncertainties (converged, off the bounds, Fisher matrix
+# invertible) and an acceptable goodness of fit
 good_emitters = filter(
     e -> isfinite(e.σ_x) && isfinite(e.σ_y) && e.pvalue > 0.01, smld.emitters
 )

@@ -578,8 +578,10 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
             roi = Float32.(poisson_noise(roi_at(multi, z; photons = 300)))
             θ0 = GaussMLE.simple_initialize(roi, box, multi)
             fits = map((one_start, multi)) do mdl
-                GaussMLE._optimize(
-                    roi, box, mdl, Val(false), vmap, Int32(1), Int32(1), cons, 20, θ0
+                first(
+                    GaussMLE._optimize(
+                        roi, box, mdl, Val(false), vmap, Int32(1), Int32(1), cons, 20, θ0
+                    )
                 )
             end
             # the tolerance covers Float32 summation order: the kernel compares its own sums

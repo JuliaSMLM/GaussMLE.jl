@@ -254,18 +254,20 @@ end
 # curvature puts it, which differs from F on noisy data.
 const _LM_GAIN_TOL = 1.0e-4
 
-# Fit one ROI from the start θ0 and return θ: Levenberg-Marquardt on the full Fisher
-# matrix (`_lm_fit`), stopping once the predicted gain is below `_LM_GAIN_TOL` or after
-# `iterations` pixel passes. SplinePSFModel overrides this with several starts.
+# Fit one ROI from the start θ0 and return `(θ, converged)`: Levenberg-Marquardt on the full
+# Fisher matrix (`_lm_fit`), stopping once the predicted gain is below `_LM_GAIN_TOL`;
+# `converged = false` when the fit used all `iterations` pixel passes without stopping, and
+# the kernel then reports infinite uncertainties and zero covariances for it.
+# SplinePSFModel overrides this with several starts and a fixed schedule.
 @inline function _optimize(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {N, T}
-    θ, _, _ = _lm_fit(
+    θ, _, _, stopped = _lm_fit(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ0, T(_LM_GAIN_TOL)
     )
-    return θ
+    return θ, stopped
 end
 
 # Levenberg-Marquardt fit of one ROI on the full Fisher matrix, from the start θ0. Each
@@ -280,14 +282,18 @@ end
 # every pass on that schedule. `gain_tol > 0` (the Gaussian models) runs to convergence:
 # - it stops after an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free
 #   parameters (undamped F_acc, held parameters removed) is below `gain_tol`;
+# - a trial is kept when its gain is positive: the objective change, or, when that is within
+#   10 times the sum's Float32 rounding, the trapezoid gain (g_acc + g)' s / 2 of the step s
+#   (bright emitters otherwise stall on gains the objective cannot resolve); a non-finite
+#   objective is rejected;
 # - an accepted pass sets lambda from rho, the actual over the predicted gain of the step
-#   taken: rho < 1/4 gives max(10 lambda, 0.1), rho > 3/4 gives lambda / 10, otherwise
-#   lambda is kept (Fisher scoring overshoots where the observed curvature exceeds F);
-# - a trial within the objective's Float32 rounding of the accepted one is a tie, accepted
-#   with lambda kept (bright emitters otherwise stall on unresolvable gains);
+#   taken, by Nielsen's rule: lambda * max(1/3, 1 - (2 rho - 1)^3), nu = 2; a rejected one
+#   multiplies lambda by nu and doubles nu (Fisher scoring overshoots where the observed
+#   curvature exceeds F, and this damps it without toggling);
 # - the whole step is scaled to the step limits instead of clamping each component.
-# Returns the last accepted point, the objective there and the pixel passes made,
-# `(θ_acc, obj_acc, passes)`: the first pass always accepts its start, so
+# Returns the last accepted point, the objective there, the pixel passes made and whether
+# the stop test ended the fit,
+# `(θ_acc, obj_acc, passes, stopped)`: the first pass always accepts its start, so
 # iterations = 1 returns the clamped start with its objective. The multi-start `_optimize`
 # of SplinePSFModel compares these objectives.
 # Immutable state only: no allocation, no throw.
@@ -303,8 +309,10 @@ end
     F_acc = zero(SMatrix{N, N, T})
     obj_acc = zero(T)
     λ = T(1.0e-3)
+    ν = T(2)
     pred = zero(T)
     passes = 0
+    stopped = false
 
     for iter in 1:iterations
         passes = iter
@@ -322,7 +330,9 @@ end
             term = _fit_objective(d, model, v)
             obj += term
             if adaptive
-                # The term's Float32 error is about eps * |model - d| (deviance form)
+                # Scale of the sum's Float32 error (the model's own error, from erf
+                # differences, can be several times eps * |model - d|; hence the factor 10
+                # in the window below)
                 rounding += abs(term) + abs(model - d)
             end
             if var > zero(T) && isfinite(var)
@@ -333,31 +343,44 @@ end
 
         accepted = true
         gain = obj - obj_acc
-        # With adaptive steps, a change within the objective's rounding is a tie: the fit
-        # cannot tell the trial from the accepted point, so it moves there and tests again.
-        tie = adaptive ? abs(gain) <= eps(T) * rounding : obj == obj_acc
-        if iter == 1 || (obj > obj_acc && !tie)
+        if adaptive && iter > 1 && isfinite(obj) && abs(gain) <= 10 * eps(T) * rounding
+            # The change is within the objective's Float32 rounding, so the gain of the step
+            # taken comes from the gradients instead: the trapezoid (g_acc + g)' s / 2 is
+            # exact for a quadratic along the step and free of that cancellation (an
+            # approximate Wolfe test). The trial is judged by the sign of this gain, which
+            # added to obj_acc would round away (the Float32 spacing of an objective of 5e4
+            # is 0.004, bright fits gain less near their maximum).
+            s = θ - θ_acc
+            gain = sum((g_acc + g) .* s) / 2
+        end
+        better = adaptive ? isfinite(obj) && gain > zero(T) : obj > obj_acc
+        if iter == 1 || better
             θ_acc = θ
             g_acc = g
             F_acc = F
             obj_acc = obj
             if iter > 1
                 if adaptive
-                    # Damping from the ratio of the actual to the predicted gain
+                    # Damping from rho, the actual over the predicted gain (Nielsen 1999)
                     ρ = pred > zero(T) ? gain / pred : T(0.5)
-                    λ = ρ < T(0.25) ? max(λ * 10, T(0.1)) :
-                        (ρ > T(0.75) ? max(λ / 10, T(1.0e-7)) : λ)
+                    λ = max(λ * max(T(1 / 3), 1 - (2 * ρ - 1)^3), T(1.0e-7))
+                    ν = T(2)
                 else
                     λ = max(λ / 10, T(1.0e-7))
                 end
             end
-        elseif tie
+        elseif !adaptive && obj == obj_acc
             θ_acc = θ
             g_acc = g
             F_acc = F
         else
             accepted = false
-            λ = min(λ * 10, T(1.0e7))
+            if adaptive
+                λ = min(λ * ν, T(1.0e7))
+                ν = min(2 * ν, T(1.0e7))
+            else
+                λ = min(λ * 10, T(1.0e7))
+            end
         end
 
         # A parameter on a bound whose ascent gradient points out of the box is held:
@@ -383,11 +406,12 @@ end
         if !ok
             λ = min(λ * 10, T(1.0e7))
         end
-        # Stop test. The damped gain g' A⁻¹ g never exceeds the full Newton gain g' F⁻¹ g
-        # (A ⪰ F), so it is a necessary condition, and the undamped matrix is factored
-        # only when it holds: the stop is exactly the full Newton gain below gain_tol.
+        # Stop test. The damped gain g' A⁻¹ g never exceeds the undamped Fisher-scoring gain
+        # g' F⁻¹ g (A ⪰ F), so it is a necessary condition, and the undamped matrix is
+        # factored only when it holds: the stop is exactly the undamped gain below gain_tol.
         if accepted && ok && adaptive && sum(g_free .* Δ) < 2 * gain_tol &&
                 _newton_gain(F_acc, held, g_free) < gain_tol
+            stopped = true
             break
         end
         if adaptive
@@ -397,7 +421,7 @@ end
             θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
         end
     end
-    return θ_acc, obj_acc, passes
+    return θ_acc, obj_acc, passes, stopped
 end
 
 # Next trial of an adaptive (Gaussian) fit, `(θ, pred)`. The whole step is scaled so that no
@@ -411,7 +435,9 @@ end
     scale = one(T)
     @inbounds for k in 1:N
         lim = T(constraints.max_step[k])
-        if lim > zero(T) && abs(Δ[k]) > lim
+        # A non-finite component would make scale 0 and the step NaN; the clamp below
+        # bounds it instead.
+        if lim > zero(T) && isfinite(Δ[k]) && abs(Δ[k]) > lim
             scale = min(scale, lim / abs(Δ[k]))
         end
     end
@@ -435,8 +461,9 @@ end
     return ok, (ok ? static_cholesky_solve(L, g) : zero(SVector{N, T}))
 end
 
-# Log-likelihood gain of the full Newton step over the free parameters, g' F⁻¹ g / 2; Inf
-# when F (held rows and columns set to the identity's) is not positive definite.
+# Log-likelihood gain of the undamped Fisher-scoring step over the free parameters,
+# g' F⁻¹ g / 2; Inf when F (held rows and columns set to the identity's) is not positive
+# definite.
 @noinline function _newton_gain(
         F::SMatrix{N, N, T}, held::SVector{N, Bool}, g::SVector{N, T}
     ) where {N, T}
@@ -487,7 +514,7 @@ end
 
     # Immutable working vectors avoid heap allocation from bounds-check error paths.
     θ = simple_initialize(roi, box_size, psf_model)
-    θ = _optimize(
+    θ, converged = _optimize(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ
     )
@@ -535,6 +562,10 @@ end
     # precision, or a parameter with no Fisher information, gives infinite uncertainties
     # and zero covariances.
     ok, H_inv = _invert_fisher(H, box_size * box_size)
+    # A fit that used every pass without meeting its convergence test is not at the
+    # maximum its CRLB describes: infinite uncertainties and zero covariances, as for a
+    # Fisher matrix that cannot be inverted.
+    ok = ok && converged
     # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
     # covariances[3,idx] = σ_yz (3D only, zero otherwise)
     has_z = _has_axial_position(typeof(psf_model))

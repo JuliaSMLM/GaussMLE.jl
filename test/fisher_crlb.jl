@@ -69,9 +69,10 @@ end
 
 # The Gaussian fits' stop. On a noise-free box the likelihood's maximum is the truth and the
 # observed and expected information agree there, so a fit stopped by g' F⁻¹ g / 2 < 1e-4
-# is within sqrt(2e-4) = 0.0141 CRLB of the truth in every parameter. With the stop off
-# (gain_tol = 0) the fit runs every pass. A noisy box stops before the cap too.
-using SMLMSim: poisson_noise
+# is within sqrt(2e-4) = 0.0141 CRLB of the truth in every parameter. A noisy box stops
+# before the cap within the same distance of where a fit that never stops (a tolerance
+# Float32 cannot meet, 500 passes) ends.
+using SMLMSim: poisson_noise, gen_images
 @testset "Gaussian fits stop at the maximum" begin
     px, box = 0.1, 13
     camera = IdealCamera(box, box, px)
@@ -90,20 +91,180 @@ using SMLMSim: poisson_noise
             cons = GaussMLE.default_constraints(pm, box)
             cap = GaussMLE._default_iterations(model)
             tol = Float32(GaussMLE._LM_GAIN_TOL)
-            lm(roi, gain_tol) = GaussMLE._lm_fit(
+            lm(roi, gain_tol, cap) = GaussMLE._lm_fit(
                 roi, box, pm, Val(false), vmap, Int32(1), Int32(1), cons, cap,
                 GaussMLE.simple_initialize(roi, box, pm), gain_tol
             )
             for N in (1.0e3, 1.0e5, 1.0e6)
                 C, mu = reference_crlb(pm, box, truth(N))
-                θ, _, passes = lm(mu, tol)
-                @test passes < cap
+                θ, _, passes, stopped = lm(mu, tol, cap)
+                @test stopped && passes < cap
                 @test all(k -> abs(θ[k] - truth(N)[k]) <= 0.015 * sqrt(C[k, k]), 1:n)
-                @test lm(mu, 0.0f0)[3] == cap
             end
-            _, mu = reference_crlb(pm, box, truth(2000.0))
+            C, mu = reference_crlb(pm, box, truth(2000.0))
             Random.seed!(17)
-            @test lm(Float32.(poisson_noise(mu)), tol)[3] < cap
+            roi = Float32.(poisson_noise(mu))
+            θ, _, passes, stopped = lm(roi, tol, cap)
+            @test stopped && passes < cap
+            θ_long = first(lm(roi, 1.0f-9, 500))
+            @test all(k -> abs(θ[k] - θ_long[k]) <= 0.015 * sqrt(C[k, k]), 1:n)
         end
+    end
+end
+
+# The Gaussian fits' step rules (gain_tol > 0) where they differ from SplinePSFModel's fixed
+# schedule (gain_tol = 0): the trial step is scaled whole to the step limits, a gain within
+# the objective's rounding is judged by the trapezoid of the gradients, and the damping
+# follows the ratio of actual to predicted gain. The SMLMSim ROIs below are ones earlier
+# rules fitted badly: bright XYNBS fits that ran to any cap without stopping (the objective
+# could not resolve their last gains), and low-count astigmatic fits that took 36 to 57
+# passes with lambda divided by 10 on every accepted pass and each step component clamped
+# alone, or ran to the cap of 50 through chains of trials accepted as ties at the rounding
+# level. Each stops within 6 to 14 passes now.
+@testset "Gaussian fit step rules" begin
+    @testset "a trial step is scaled whole to the step limits" begin
+        cons = GaussMLE.default_constraints(GaussianXYNBS(), 13)  # x, y: 1 px; σ: 0.5 px
+        θ = SVector{5, Float32}(6.0, 7.0, 1000.0, 10.0, 1.3)
+        g = SVector{5, Float32}(1.0, -2.0, 0.5, 0.1, 3.0)
+        F = SMatrix{5, 5, Float32}(Diagonal(Float32[4, 3, 1.0e-3, 0.5, 20])) +
+            SMatrix{5, 5, Float32}([i + j == 3 ? 0.5f0 : 0.0f0 for i in 1:5, j in 1:5])
+        pred(s) = dot(g, s) - dot(s, F * s) / 2
+        # x at 2.5 times its limit: every component scaled by 0.4
+        Δ = SVector{5, Float32}(2.5, -0.5, 300.0, -3.0, 0.2)
+        θt, p = GaussMLE._adaptive_trial(Δ, θ, g, F, cons)
+        s = θt - θ
+        @test s ≈ 0.4f0 * Δ rtol = 1.0e-6
+        @test all(abs.(s) .<= cons.max_step)
+        @test p ≈ pred(s) rtol = 1.0e-5
+        # a non-finite component is bounded by its limit and does not scale the others
+        θt, p = GaussMLE._adaptive_trial(
+            SVector{5, Float32}(Inf, 0.5, 10.0, 1.0, 0.1), θ, g, F, cons
+        )
+        @test θt - θ ≈ SVector{5, Float32}(1.0, 0.5, 10.0, 1.0, 0.1) rtol = 1.0e-6
+        @test isfinite(p)
+        # a step past a bound ends on it, and the prediction is for the step taken
+        θb = Base.setindex(θ, 14.6f0, 1)  # upper x bound of a 13 px box: 15 px
+        θt, p = GaussMLE._adaptive_trial(
+            SVector{5, Float32}(0.8, 0, 0, 0, 0), θb, g, F, cons
+        )
+        @test θt[1] == cons.upper[1] && θt[2:5] == θb[2:5]
+        @test p ≈ pred(θt - θb) rtol = 1.0e-5
+    end
+
+    box = 13
+    camera = IdealCamera(box, box, 0.1)
+    vmap = zeros(Float32, box, box)
+    tol = Float32(GaussMLE._LM_GAIN_TOL)
+    function expected_counts(pm, θ)
+        θ32 = SVector{length(θ), Float32}(θ)
+        return Float32[
+            first(GaussMLE.compute_pixel_derivatives(i, j, θ32, pm)) for i in 1:box, j in 1:box
+        ]
+    end
+    function noisy_roi(pm, θ, seed)
+        mu = expected_counts(pm, θ)
+        Random.seed!(seed)
+        return Float32.(poisson_noise(mu))
+    end
+    lm(roi, pm, cons, cap, θ0, gain_tol) = GaussMLE._lm_fit(
+        roi, box, pm, Val(false), vmap, Int32(1), Int32(1), cons, cap, θ0, gain_tol
+    )
+    astig = AstigmaticXYZNB{Float32}(0.13, 0.13, 0.05, -0.05, 0.01, -0.01, 0.2, 0.5)
+
+    @testset "the first step: clamped per parameter or scaled whole" begin
+        # Noise-free ROI at z = 0.3 um fitted from z = -0.1 um: the first step in z, 0.26 um,
+        # exceeds its 0.1 um limit. Clamping z alone keeps the photon and background steps
+        # made for the full z step; scaling shortens them all.
+        pm = GaussMLE._model_for_camera(astig, camera)
+        cons = GaussMLE.default_constraints(pm, box)
+        mu = expected_counts(pm, [6.2, 6.9, 0.3, 2000.0, 20.0])
+        θ0 = SVector{5, Float32}(6.2, 6.9, -0.1, 2000.0, 20.0)
+        g = zeros(5)
+        F = zeros(5, 5)
+        for j in 1:box, i in 1:box
+            m, dudt = GaussMLE.compute_pixel_derivatives(i, j, θ0, pm)
+            g .+= Float64.(dudt) .* ((mu[i, j] - m) / m)
+            F .+= Float64.(dudt) * Float64.(dudt)' ./ m
+        end
+        Δ = (F + 1.0e-3 * Diagonal(diag(F))) \ g  # the first pass's damping, 1e-3
+        lim = Float64.(cons.max_step)
+        @test abs(Δ[3]) > 2 * lim[3]
+        clamped = Float64.(θ0) .+ clamp.(Δ, -lim, lim)
+        scaled = Float64.(θ0) .+ Δ .* (lim[3] / abs(Δ[3]))
+        @test abs(clamped[4] - scaled[4]) > 100  # photons
+        # iterations = 2: the start, then the first trial (accepted in both)
+        @test lm(mu, pm, cons, 2, θ0, 0.0f0)[1] ≈ clamped rtol = 1.0e-5
+        @test lm(mu, pm, cons, 2, θ0, tol)[1] ≈ scaled rtol = 1.0e-5
+    end
+
+    @testset "bright fits stop within a few passes" begin
+        pm = GaussMLE._model_for_camera(GaussianXYNBS(), camera)
+        cons = GaussMLE.default_constraints(pm, box)
+        for seed in (41, 150, 177)
+            roi = noisy_roi(pm, [6.2, 6.9, 1.0e5, 2.0, 1.3], seed)
+            _, _, passes, stopped = lm(
+                roi, pm, cons, 50, GaussMLE.simple_initialize(roi, box, pm), tol
+            )
+            @test stopped && passes <= 8
+        end
+    end
+
+    @testset "low-count astigmatic fits stop within 20 passes" begin
+        pm = GaussMLE._model_for_camera(
+            AstigmaticXYZNB{Float32}(0.13, 0.13, 0.05, 0.05, 0.3, 0.3, 0.05, 0.4), camera
+        )
+        cons = GaussMLE.default_constraints(pm, box)
+        for seed in (199, 245, 350, 1598, 2407)
+            roi = noisy_roi(pm, [6.2, 6.9, 0.15, 500.0, 20.0], seed)
+            _, _, passes, stopped = lm(
+                roi, pm, cons, 50, GaussMLE.simple_initialize(roi, box, pm), tol
+            )
+            @test stopped && passes <= 20
+        end
+    end
+
+    @testset "a bright fit to a mismatched PSF stops" begin
+        # Noise-free SMLMSim ROI of a Gaussian PSF 0.18 um wide (300,000 photons, background
+        # 50), fitted with the 0.13 um fixed-width model. The mismatch makes the objective
+        # about -3.4e4, where the Float32 spacing (0.004) exceeds the last gains, so they are
+        # judged by the trapezoid's sign; added to the objective they rounded away and the
+        # fit ran to the cap. Bright real bead z stacks fitted with the Gaussian models did
+        # the same.
+        psf = GaussianXYNB(0.13f0)
+        pm = GaussMLE._model_for_camera(psf, camera)
+        cons = GaussMLE.default_constraints(pm, box)
+        um(p) = (p - 0.5f0) * 0.1f0
+        e = Emitter2DFit{Float32}(
+            um(6.7f0), um(7.2f0), 3.0f5, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0
+        )
+        images, _ = gen_images(BasicSMLD([e], camera, 1, 1), GaussianPSF(0.18); bg = 50.0)
+        roi = Float32.(images[:, :, 1])
+        θ0 = GaussMLE.simple_initialize(roi, box, pm)
+        θ, obj, passes, stopped = lm(roi, pm, cons, 50, θ0, tol)
+        @test obj < -1.0e4
+        @test stopped && passes <= 15
+        C, _ = reference_crlb(pm, box, θ)
+        θ_long = first(lm(roi, pm, cons, 500, θ0, 1.0f-9))
+        @test all(k -> abs(θ[k] - θ_long[k]) <= 0.015 * sqrt(C[k, k]), 1:4)
+    end
+
+    @testset "a fit capped before its stop reports infinite uncertainties" begin
+        psf = GaussianXYNB(0.13f0)
+        pm = GaussMLE._model_for_camera(psf, camera)
+        cons = GaussMLE.default_constraints(pm, box)
+        roi = noisy_roi(pm, [6.2, 6.9, 2000.0, 20.0], 17)
+        _, _, passes, stopped = lm(
+            roi, pm, cons, 50, GaussMLE.simple_initialize(roi, box, pm), tol
+        )
+        @test stopped && passes > 1
+        batch = ROIBatch(reshape(roi, box, box, 1), Int32[1], Int32[1], Int32[1], camera)
+        fitted(iterations) = only(
+            first(fit(batch; psf_model = psf, backend = :cpu, iterations)).emitters
+        )
+        capped, done = fitted(passes - 1), fitted(passes)
+        @test (capped.σ_x, capped.σ_y, capped.σ_photons, capped.σ_bg) == ntuple(_ -> Inf32, 4)
+        @test capped.σ_xy == 0
+        @test isfinite(capped.x) && isfinite(capped.photons)
+        @test all(isfinite, (done.σ_x, done.σ_y, done.σ_photons, done.σ_bg))
     end
 end

@@ -31,9 +31,6 @@ using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter,
 
 import Adapt
 
-# Constants
-include("constants.jl")
-
 # Original modules needed for GaussLib
 include("gausslib/GaussLib.jl")
 using .GaussLib

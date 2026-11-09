@@ -57,9 +57,11 @@ end
 # Default cap on the Levenberg-Marquardt pixel passes of a fit. The Gaussian fits stop once
 # converged, most within 10 passes, so the cap binds only on a slow fit: Fisher scoring
 # converges linearly where the observed curvature differs from F, as for z at low counts.
-# On simulated astigmatic ROIs at 500 photons, 20 passes left up to 5 % of the fits capped,
-# 50 none. SplinePSFModel runs every pass from each start (its own method).
-_default_iterations(::PSFModel) = 50
+# A fit capped before it converges reports infinite uncertainties. On SMLMSim Poisson ROIs
+# of every Gaussian model (20,000 each), up to 3 % of the low-count astigmatic fits (300
+# to 500 photons) needed more than 20 passes and up to 0.065 % more than 50; none needed
+# more than 100. SplinePSFModel runs every pass from each start (its own method).
+_default_iterations(::PSFModel) = 100
 
 _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = constraints
 
