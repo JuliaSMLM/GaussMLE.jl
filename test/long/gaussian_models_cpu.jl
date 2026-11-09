@@ -82,6 +82,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
 
             kernel(
                 results, uncertainties, covariances, log_likelihoods, chi2,
+                zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -116,6 +117,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
 
             kernel(
                 results, uncertainties, covariances, log_likelihoods, chi2,
+                zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs

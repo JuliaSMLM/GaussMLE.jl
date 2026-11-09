@@ -244,8 +244,8 @@ The ROI should be large enough to capture the full PSF:
 ### Handling Edge Cases
 
 ```julia
-# Keep fits with finite position uncertainties (converged, off the bounds, Fisher matrix
-# invertible) and an acceptable goodness of fit
+# Keep fits with finite position uncertainties (off the bounds, Fisher matrix invertible)
+# and an acceptable goodness of fit; info.n_converged counts the fits that converged
 good_emitters = filter(
     e -> isfinite(e.σ_x) && isfinite(e.σ_y) && e.pvalue > 0.01, smld.emitters
 )

@@ -5,9 +5,8 @@
 # gain 1, offset 0, read noise 1 e-) with the emitter at or beyond the box edge, fitted
 # with GaussianXYNBS. The first (x 0.0, y 10.6 px, 2766 photons, PSF sigma 0.07 um,
 # background 414 per pixel) is fitted with y on its upper bound (11 px), and its Fisher
-# matrix is singular to working precision as well. A fit capped before its convergence test
-# also reports Inf, so each of these is refitted with a cap of 1000 passes: the same result
-# shows the fit stopped on its test and the Inf is the path's own.
+# matrix is singular to working precision as well. Each of these fits meets its convergence
+# test (`n_converged`, or the kernel's flag), so it is the path itself that reports Inf.
 using Test, GaussMLE, SMLMData, StaticArrays, Random
 using MicroscopePSFs: GaussianPSF
 using SMLMSim: gen_images, poisson_noise
@@ -30,22 +29,15 @@ end
         sim_roi(0.0f0, 10.6f0, 2766, 414.0, 0.07), Int32[1], Int32[1], Int32[1], SIM_CAMERA
     )
     emitter_sigmas(e) = (e.σ_x, e.σ_y, e.σ_photons, e.σ_bg, e.σ_σ)
-    # The fit stopped on its convergence test: a cap of 1000 passes returns the same fit.
-    function stopped_before_cap(batch, e)
-        smld, _ = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu, iterations = 1000)
-        long = only(smld.emitters)
-        return (long.x, long.y, long.photons, long.bg, long.σ) ==
-            (e.x, e.y, e.photons, e.bg, e.σ)
-    end
 
     @testset "a fit pinned on its y bound reports Inf" begin
-        smld, _ = fit(zp_batch; psf_model = GaussianXYNBS(), backend = :cpu)
+        smld, info = fit(zp_batch; psf_model = GaussianXYNBS(), backend = :cpu)
         e = only(smld.emitters)
         @test e.y ≈ (11 - 0.5) * 0.1 atol = 1.0e-6  # the upper bound, 11 px, in microns
         @test all(==(Inf32), emitter_sigmas(e))
         @test e.σ_xy == 0
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons) && isfinite(e.pvalue)
-        @test stopped_before_cap(zp_batch, e)
+        @test info.n_converged == 1
     end
 
     @testset "a ROI with a Fisher matrix singular to accumulation error" begin
@@ -60,13 +52,13 @@ end
         # holds that band on every path.
         roi = sim_roi(8.8f0, -0.9f0, 57163, 9.8, 0.05)
         batch = ROIBatch(roi, Int32[1], Int32[1], Int32[1], SIM_CAMERA)
-        smld, _ = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu)
+        smld, info = fit(batch; psf_model = GaussianXYNBS(), backend = :cpu)
         e = only(smld.emitters)
         lo, hi = (-1 - 0.5) * 0.1, (11 - 0.5) * 0.1  # the x and y bounds in microns
         @test lo + 1.0e-3 < e.x < hi - 1.0e-3 && lo + 1.0e-3 < e.y < hi - 1.0e-3
         @test all(==(Inf32), emitter_sigmas(e))
         @test isfinite(e.x) && isfinite(e.y) && isfinite(e.photons)
-        @test stopped_before_cap(batch, e)
+        @test info.n_converged == 1
     end
 
     @testset "parameters the caller holds fixed are not pinned" begin
@@ -106,24 +98,22 @@ end
         constraints = GaussMLE._resolve_constraints(nothing, psf, 9)
         ka = GaussMLE.KernelAbstractions
         kernel = GaussMLE.unified_gaussian_mle_kernel!(ka.CPU(), 64)
-        function run_kernel(iterations)
-            results = zeros(Float32, 5, 1)
-            uncertainties = zeros(Float32, 5, 1)
-            covariances = zeros(Float32, 3, 1)
-            llr = zeros(Float32, 1)
-            chi2 = zeros(Float32, 1)
-            kernel(
-                results, uncertainties, covariances, llr, chi2, data, psf, Val(true),
-                variance_map, Int32[1], Int32[1], constraints, iterations; ndrange = 1
-            )
-            ka.synchronize(ka.CPU())
-            return results, uncertainties, covariances
-        end
-        results, uncertainties, covariances = run_kernel(GaussMLE._default_iterations(psf))
+        results = zeros(Float32, 5, 1)
+        uncertainties = zeros(Float32, 5, 1)
+        covariances = zeros(Float32, 3, 1)
+        llr = zeros(Float32, 1)
+        chi2 = zeros(Float32, 1)
+        converged = zeros(UInt8, 1)
+        kernel(
+            results, uncertainties, covariances, llr, chi2, converged, data, psf, Val(true),
+            variance_map, Int32[1], Int32[1], constraints, GaussMLE._default_iterations(psf);
+            ndrange = 1
+        )
+        ka.synchronize(ka.CPU())
         @test all(k -> constraints.lower[k] < results[k, 1] < constraints.upper[k], 1:2)
         @test all(==(Inf32), uncertainties)
         @test all(iszero, covariances)
-        @test first(run_kernel(1000)) == results  # stopped on its test, not at the cap
+        @test converged == [0x01]
     end
 
     @testset "_invert_fisher fails singular matrices and inverts a good one" begin

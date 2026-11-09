@@ -68,6 +68,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
 
             kernel(
                 d_results, d_uncertainties, d_covariances, d_log_likelihoods, d_chi2,
+                to_gpu(zeros(UInt8, n_test_blobs)),
                 d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -117,7 +118,8 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             kernel_cpu = GaussMLE.unified_gaussian_mle_kernel!(backend_cpu)
             kernel_cpu(
                 results_cpu, uncertainties_cpu, covariances_cpu, log_likelihoods_cpu,
-                chi2_cpu, data, psf_model, Val(false), variance_map, x_corners, y_corners,
+                chi2_cpu, zeros(UInt8, n_test_blobs), data, psf_model, Val(false), variance_map,
+                x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
             )
@@ -137,6 +139,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
             kernel_gpu(
                 d_results, d_uncertainties, d_covariances, d_log_likelihoods, d_chi2,
+                to_gpu(zeros(UInt8, n_test_blobs)),
                 d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -201,6 +204,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             out = (
                 to(zeros(Float32, 4, n)), to(zeros(Float32, 4, n)),
                 to(zeros(Float32, 3, n)), to(zeros(Float32, n)), to(zeros(Float32, n)),
+                to(zeros(UInt8, n)),
             )
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
             kernel(

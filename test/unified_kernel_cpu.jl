@@ -60,6 +60,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
 
             kernel(
                 results, uncertainties, covariances, log_likelihoods, chi2,
+                zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
                 ndrange = n_test_blobs
@@ -93,6 +94,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
             chi2 = zeros(Float32, n)
             kernel(
                 results, uncertainties, covariances, log_likelihoods, chi2,
+                zeros(UInt8, size(results, 2)),
                 data, psf_model, camera, variance_map,
                 fill(Int32(1), n), fill(Int32(1), n),
                 GaussMLE.default_constraints(psf_model, size(data, 1)), iterations;
@@ -198,6 +200,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
         )
         kernel(
             results, uncertainties, covariances, log_likelihoods, chi2,
+            zeros(UInt8, size(results, 2)),
             data, psf_model, Val(false), zeros(Float32, 512, 512),
             Int32[1 + (k - 1) * roi for k in 1:n], fill(Int32(1), n),
             GaussMLE.default_constraints(psf_model, roi), iterations;

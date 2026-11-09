@@ -12,10 +12,11 @@ Metadata about a fit operation, returned as the second element of the fit() tupl
 - `backend::Symbol`: Actual execution backend (`:cpu` or `:gpu`, never `:auto`)
 - `device_id::Int`: GPU device index (0-based) or -1 for CPU
 - `n_fits::Int`: Number of ROIs attempted
-- `n_converged::Int`: Equals `n_fits`: not counted per fit. A Gaussian fit that reaches
-  the `iterations` cap without meeting its convergence test reports infinite
-  uncertainties, as does a fit whose Fisher matrix cannot be inverted or whose position
-  ends on a bound; SplinePSFModel runs every pass
+- `n_converged::Int`: Number of fits that met their convergence test. A Gaussian fit that
+  did not (it reached the `iterations` cap, or its next step rounded to its current point
+  in Float32) keeps the CRLB at its end point as its uncertainties; raise `iterations` if
+  many reach the cap. SplinePSFModel runs every pass on its fixed schedule and counts every
+  fit
 - `batch_size::Int`: Actual batch size used for processing
 - `n_batches::Int`: Number of batches processed (1 if all-at-once)
 - `memory_per_batch::Int`: Estimated memory bytes per batch, including a SplinePSFModel's

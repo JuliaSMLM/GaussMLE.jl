@@ -194,7 +194,7 @@ The base 2D emitter type (`Emitter2DFitGaussMLE`) contains:
 | `x`, `y` | Fitted position | microns |
 | `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
 | `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `σ_x`, `σ_y` | Position uncertainty (CRLB); `Inf` for a fit on a position bound, a Fisher matrix singular to working precision, or a Gaussian fit that reached the `iterations` cap before converging | microns |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB); `Inf` for a fit on a position bound or a Fisher matrix singular to working precision | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |

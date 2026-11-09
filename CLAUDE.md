@@ -237,8 +237,10 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      10× its Float32 rounding (its sign decides: added to `obj_acc` it rounds away for a
      mismatched bright fit, |obj| ~ 1e4 to 1e5); a non-finite objective is rejected; the whole step is scaled to `max_step` instead of
      clamping each component (`@noinline _adaptive_trial`, which skips non-finite
-     components); a fit capped without stopping gets `converged = false`, and the kernel
-     reports infinite uncertainties and zero covariances for it
+     components); a trial that rounds to `θ_acc` ends the fit (a fixed point: every later
+     pass repeats it); a fit that ends without the stop test gets `converged = false`,
+     which the kernel writes to its `converged` output (`UInt8`, after `chi2`) and
+     `GaussMLEFitInfo.n_converged` counts; its uncertainties stay the CRLB
    - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`: λ/10 on
      accept, per-component clamp, no stop, bit for bit as before the Gaussian change), from
      the scan start and then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N,
@@ -261,9 +263,7 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      fallback, because F is positive semidefinite by construction and LU there only turns
      rounding into a number. Failed inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
      diagonal entry that is not positive and finite (no `max(0, ...)` on a variance).
-     Failed means every uncertainty is `Inf` and covariances are zero; a Gaussian fit that
-     reached the `iterations` cap without stopping (`converged = false`) is reported the
-     same way
+     Failed means every uncertainty is `Inf` and covariances are zero
    - After the kernel, on the host (`_mark_pinned_fits!`, CPU and GPU alike), a fit whose
      x or y (and z for AstigmaticXYZNB and SplinePSFModel) ended exactly on a lower or
      upper bound of the constraints the kernel used did not localize an emitter inside the

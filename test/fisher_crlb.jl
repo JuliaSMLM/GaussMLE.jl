@@ -114,13 +114,13 @@ end
 
 # The Gaussian fits' step rules (gain_tol > 0) where they differ from SplinePSFModel's fixed
 # schedule (gain_tol = 0): the trial step is scaled whole to the step limits, a gain within
-# the objective's rounding is judged by the trapezoid of the gradients, and the damping
-# follows the ratio of actual to predicted gain. The SMLMSim ROIs below are ones earlier
-# rules fitted badly: bright XYNBS fits that ran to any cap without stopping (the objective
-# could not resolve their last gains), and low-count astigmatic fits that took 36 to 57
-# passes with lambda divided by 10 on every accepted pass and each step component clamped
-# alone, or ran to the cap of 50 through chains of trials accepted as ties at the rounding
-# level. Each stops within 6 to 14 passes now.
+# the objective's rounding is judged by the sign of the trapezoid of the gradients, and the
+# damping follows the ratio of actual to predicted gain. The SMLMSim ROIs below are ones
+# earlier rules fitted badly: bright XYNBS fits that ran to any cap without stopping (the
+# objective could not resolve their last gains), and low-count astigmatic fits that took 36
+# to 57 passes with lambda divided by 10 on every accepted pass and each step component
+# clamped alone, or ran to the cap of 50 through chains of trials accepted as ties at the
+# rounding level. Each stops within 6 to 15 passes now.
 @testset "Gaussian fit step rules" begin
     @testset "a trial step is scaled whole to the step limits" begin
         cons = GaussMLE.default_constraints(GaussianXYNBS(), 13)  # x, y: 1 px; σ: 0.5 px
@@ -131,11 +131,10 @@ end
         pred(s) = dot(g, s) - dot(s, F * s) / 2
         # x at 2.5 times its limit: every component scaled by 0.4
         Δ = SVector{5, Float32}(2.5, -0.5, 300.0, -3.0, 0.2)
-        θt, p = GaussMLE._adaptive_trial(Δ, θ, g, F, cons)
+        θt, _ = GaussMLE._adaptive_trial(Δ, θ, g, F, cons)
         s = θt - θ
         @test s ≈ 0.4f0 * Δ rtol = 1.0e-6
         @test all(abs.(s) .<= cons.max_step)
-        @test p ≈ pred(s) rtol = 1.0e-5
         # a non-finite component is bounded by its limit and does not scale the others
         θt, p = GaussMLE._adaptive_trial(
             SVector{5, Float32}(Inf, 0.5, 10.0, 1.0, 0.1), θ, g, F, cons
@@ -227,9 +226,9 @@ end
         # Noise-free SMLMSim ROI of a Gaussian PSF 0.18 um wide (300,000 photons, background
         # 50), fitted with the 0.13 um fixed-width model. The mismatch makes the objective
         # about -3.4e4, where the Float32 spacing (0.004) exceeds the last gains, so they are
-        # judged by the trapezoid's sign; added to the objective they rounded away and the
-        # fit ran to the cap. Bright real bead z stacks fitted with the Gaussian models did
-        # the same.
+        # judged by the trapezoid's sign. Accepting only a rise of the objective, or adding
+        # the trapezoid gain to the objective before comparing, rounds them away and the fit
+        # runs to the cap.
         psf = GaussianXYNB(0.13f0)
         pm = GaussMLE._model_for_camera(psf, camera)
         cons = GaussMLE.default_constraints(pm, box)
@@ -248,7 +247,34 @@ end
         @test all(k -> abs(θ[k] - θ_long[k]) <= 0.015 * sqrt(C[k, k]), 1:4)
     end
 
-    @testset "a fit capped before its stop reports infinite uncertainties" begin
+    @testset "a fit whose next step rounds away ends early" begin
+        # SMLMSim ROI of a narrow PSF (sigma 0.31 px, near its 0.3 px bound; 1e5 photons,
+        # background 5; 11 px box). Near the maximum the Float32 objective's noise exceeds
+        # the remaining gain, every trial is rejected until the step rounds to the accepted
+        # point, and from there each pass would repeat the last: the fit ends at once,
+        # without meeting the stop test, with the result a longer cap gives. 1 in 4,000 of
+        # these ROIs (simulated positions within 1 px of the center) ends this way.
+        b11 = 11
+        cam11 = IdealCamera(b11, b11, 0.1)
+        pm = GaussMLE._model_for_camera(GaussianXYNBS(), cam11)
+        cons = GaussMLE.default_constraints(pm, b11)
+        θt = SVector{5, Float32}(5.8400774f0, 6.8125696f0, 1.0f5, 5, 0.31f0)
+        mu = Float32[
+            first(GaussMLE.compute_pixel_derivatives(i, j, θt, pm)) for i in 1:b11, j in 1:b11
+        ]
+        Random.seed!(1729)
+        roi = Float32.(poisson_noise(mu))
+        v11 = zeros(Float32, b11, b11)
+        fit11(cap) = GaussMLE._lm_fit(
+            roi, b11, pm, Val(false), v11, Int32(1), Int32(1), cons, cap,
+            GaussMLE.simple_initialize(roi, b11, pm), tol
+        )
+        θ, _, passes, stopped = fit11(100)
+        @test !stopped && passes < 100
+        @test first(fit11(1000)) == θ
+    end
+
+    @testset "a fit capped before its stop is counted as not converged" begin
         psf = GaussianXYNB(0.13f0)
         pm = GaussMLE._model_for_camera(psf, camera)
         cons = GaussMLE.default_constraints(pm, box)
@@ -258,13 +284,13 @@ end
         )
         @test stopped && passes > 1
         batch = ROIBatch(reshape(roi, box, box, 1), Int32[1], Int32[1], Int32[1], camera)
-        fitted(iterations) = only(
-            first(fit(batch; psf_model = psf, backend = :cpu, iterations)).emitters
-        )
-        capped, done = fitted(passes - 1), fitted(passes)
-        @test (capped.σ_x, capped.σ_y, capped.σ_photons, capped.σ_bg) == ntuple(_ -> Inf32, 4)
-        @test capped.σ_xy == 0
-        @test isfinite(capped.x) && isfinite(capped.photons)
-        @test all(isfinite, (done.σ_x, done.σ_y, done.σ_photons, done.σ_bg))
+        fitted(iterations) = fit(batch; psf_model = psf, backend = :cpu, iterations)
+        (capped, capped_info), (done, done_info) = fitted(passes - 1), fitted(passes)
+        @test capped_info.n_converged == 0
+        @test done_info.n_converged == 1
+        # the uncertainties stay the CRLB at the end point
+        e = only(capped.emitters)
+        @test all(isfinite, (e.x, e.photons, e.σ_x, e.σ_y, e.σ_photons, e.σ_bg))
+        @test all(isfinite, (only(done.emitters).σ_x, only(done.emitters).σ_photons))
     end
 end

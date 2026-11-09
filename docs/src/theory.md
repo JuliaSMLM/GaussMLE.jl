@@ -82,8 +82,9 @@ is the expected curvature rather than the observed one, this is the Levenberg-Ma
 Fisher scoring. The objective is the
 Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood
 $(N + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS); $g$ is its exact
-gradient for both. A trial that raises the objective is kept; one that lowers it is discarded
-and $\lambda$ multiplied by 10 ($\lambda$ starts at $10^{-3}$). $F$ is the expected negative
+gradient for both. In `SplinePSFModel`'s schedule a trial that raises the objective is kept
+and one that lowers it is discarded with $\lambda$ multiplied by 10; the Gaussian models' rules
+follow below. $\lambda$ starts at $10^{-3}$. $F$ is the expected negative
 Hessian (below), positive semidefinite, so a small enough step along the damped solution raises
 the likelihood. A parameter that sits on a bound with the gradient pointing out of the box is
 held there: its row and column of the damped matrix are replaced by the identity and its
@@ -96,8 +97,12 @@ The Gaussian models run to convergence:
   covariance at $\theta$, so $g^\top F^{-1} g$ is the squared distance, in CRLB units, from
   $\theta$ to the maximum of the quadratic model with curvature $F$: the fit stops within
   $\sqrt{2 \times 10^{-4}} \approx 0.014$ CRLB of it. The likelihood's own maximum sits where
-  the observed curvature puts it, which differs from $F$ on noisy data; on simulated ROIs of
-  every Gaussian model, stopped fits were within 0.1 CRLB of their own maximum.
+  the observed curvature puts it, which differs from $F$ on noisy data. Where the observed
+  information is a small fraction of $F$ (z at low counts) or the likelihood has more than
+  one maximum (an emitter beyond the z range), a fit can stop farther from it: in
+  simulations of every Gaussian model that include such cases (156,000 fits), 103 stopped
+  more than 0.1 CRLB from the likelihood's maximum, nearly all at low counts or beyond the
+  z range, about as often as the earlier Newton-Raphson fit did.
 - **Damping.** On a kept trial, $\lambda$ follows the ratio $\rho$ of the actual to the
   predicted gain of the step (Nielsen's rule): it is multiplied by
   $\max(1/3,\ 1 - (2\rho - 1)^3)$. A discarded trial multiplies $\lambda$ by $\nu$, which
@@ -112,9 +117,13 @@ The Gaussian models run to convergence:
   discarded.
 - **Step limits.** The whole step is scaled so that no parameter exceeds its step limit,
   which keeps its direction; clamping one component alone breaks the coupled step.
-- **Capped fits.** A fit that reaches the `iterations` cap without meeting the stop test is
-  not at the maximum its CRLB describes: it reports infinite uncertainties and zero
-  covariances (see Stability Measures).
+- **Fits that end unconverged.** A fit ends without meeting the stop test when it reaches
+  the `iterations` cap, or when its next step rounds to its current point in Float32 (the
+  objective's rounding then exceeds the remaining gain, as for very bright or very narrow
+  PSFs; every later pass would repeat that step). Its uncertainties stay the CRLB at its end
+  point, and `GaussMLEFitInfo.n_converged` does not count it. The stop test measures distance
+  with $F$, so such a fit is often at its maximum all the same: in the simulations above
+  about half of the capped fits were within 0.1 CRLB of it.
 
 `SplinePSFModel` keeps the fixed schedule: a kept trial divides $\lambda$ by 10, each
 component is clamped to its step limit, and every pass runs from the scan start and from
@@ -314,7 +323,7 @@ To ensure numerical stability:
 - **Parameter constraints**: Restrict parameter updates with step limits and enforce bounds (positive intensity, bounded position, etc.)
 - **Fisher matrix scaling**: The Fisher Information Matrix is positive semidefinite and its entries span many orders of magnitude (the position entries grow like $N$, the photon entry shrinks like $1/N$). It is inverted after Jacobi scaling, $G = D I D$ with $D = \mathrm{diag}(I_{kk}^{-1/2})$, so $G$ has a unit diagonal, and $I^{-1} = D G^{-1} D$. Nothing is added to the diagonal, so the photon uncertainty stays at the Cramér-Rao bound for bright emitters
 - **Cholesky decomposition**: $G$ is inverted by Cholesky only. A Cholesky pivot (the squared diagonal of the factor) at or below $n_\mathrm{pix}\,\epsilon$, with $n_\mathrm{pix}$ the number of pixels of the box and $\epsilon$ the machine epsilon of the working precision, means $G$ is singular to working precision: the accumulation over the pixels perturbs the entries of $G$ by about that much, so a smaller pivot cannot be told from that of an exactly singular matrix; there is no LU fallback, since $I$ is positive semidefinite by construction and LU there only turns rounding into a number. If a diagonal entry of $I$ is not positive and finite, the Cholesky fails, or a diagonal entry of $I^{-1}$ is not positive and finite, the fitted parameters are retained with infinite uncertainties and zero covariances
-- **Fits that did not converge**: A Gaussian fit that used all `iterations` pixel passes without meeting its stop test (see Levenberg-Marquardt Optimization) reports infinite uncertainties and zero covariances; its parameters, log-likelihood and p-value are those of its last kept trial. `SplinePSFModel` runs every pass on its fixed schedule and has no such test
+- **Fits that did not converge**: A Gaussian fit that ended without meeting its stop test (see Levenberg-Marquardt Optimization) is left out of `GaussMLEFitInfo.n_converged`; its parameters, uncertainties, log-likelihood and p-value are those of its last kept trial. `SplinePSFModel` runs every pass on its fixed schedule and counts every fit
 - **Fits on a bound**: A fit whose x or y (and z, for `AstigmaticXYZNB` and `SplinePSFModel`) ends exactly on a lower or upper bound of its constraints did not localize an emitter inside the allowed region. After the kernel, on the host, it reports infinite uncertainties and zero covariances as well; its parameters, log-likelihood and p-value are unchanged. A parameter the caller holds fixed (equal lower and upper bounds) is not a bound hit
 
 With `constraints=nothing`, defaults are built at fit time from ROI size n, and the config retains `nothing`. Default x and y bounds are `[-1,n+2]` in ROI pixels, extending 1.5 pixels beyond each ROI edge.

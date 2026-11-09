@@ -94,8 +94,7 @@ functional.
 - `iterations::Int`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
   start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
   `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
-  stop earlier once converged; one that reaches the cap first reports infinite
-  uncertainties
+  stop earlier once converged; `n_converged` leaves out one that reaches the cap first
 - `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
   `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
@@ -134,8 +133,8 @@ Camera noise model is determined by the ROIBatch type:
 - `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
   start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
   `iterations - 1` steps and `iterations = 1` returns the start. Default 100 for the
-  Gaussian models, which stop earlier once converged (one that reaches the cap first
-  reports infinite uncertainties), and 20 for `SplinePSFModel`, which runs every pass
+  Gaussian models, which stop earlier once converged (`n_converged` leaves out one that
+  reaches the cap first), and 20 for `SplinePSFModel`, which runs every pass
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
@@ -242,6 +241,7 @@ Memory components:
 - covariances: batch_size × 3 × 4 bytes
 - log-likelihoods and Pearson statistics: batch_size × 2 × 4 bytes
 - corners: batch_size × 2 × 4 bytes
+- convergence flags: batch_size bytes
 - variance map: `map_bytes` (shared; the kernel receives the whole camera map, so pass
   `4 * length(variance_map)` for a sCMOS fit)
 """
@@ -255,8 +255,9 @@ function estimate_batch_memory(
     covariances_bytes = batch_size * 3 * 4
     statistics_bytes = batch_size * 2 * 4
     corners_bytes = batch_size * 2 * 4
+    converged_bytes = batch_size
     return data_bytes + results_bytes + uncertainties_bytes + covariances_bytes +
-        statistics_bytes + corners_bytes + map_bytes
+        statistics_bytes + corners_bytes + converged_bytes + map_bytes
 end
 
 # Goodness-of-fit p-values from the Pearson statistic `chi2` = sum (d - mu)^2 / variance
@@ -365,6 +366,8 @@ Handles all backend selection and batch management logic.
 - fitter: GaussMLEConfig with backend/batching configuration
 - vendor: the GPU vendor (`nothing` for none); defaults to `_gpu_vendor()` unless the
   backend is `:cpu`. A test passes a fake vendor to drive the retry loop.
+- converged: per-fit flags, 1 where the fit met its convergence test (SplinePSFModel:
+  always); the fit methods pass their own to count them
 
 # Returns
 Tuple of (actual_backend::Symbol, device_id::Int, actual_batch_size::Int,
@@ -383,7 +386,8 @@ function _run_mle_kernel!(
         x_corners::AbstractVector{Int32},
         y_corners::AbstractVector{Int32},
         fitter::GaussMLEConfig;
-        vendor = fitter.backend == :cpu ? nothing : _gpu_vendor()
+        vendor = fitter.backend == :cpu ? nothing : _gpu_vendor(),
+        converged::AbstractVector{UInt8} = Vector{UInt8}(undef, size(data, 3))
     )
     n_fits = size(data, 3)
     n_params = size(results, 1)
@@ -548,6 +552,9 @@ function _run_mle_kernel!(
                     d_chi2 = KernelAbstractions.allocate(
                         gpu_backend, Float32, batch_size_actual
                     )
+                    d_converged = KernelAbstractions.allocate(
+                        gpu_backend, UInt8, batch_size_actual
+                    )
 
                     workgroup = _gpu_workgroup_size(vendor)
                     kernel = workgroup === nothing ?
@@ -555,7 +562,8 @@ function _run_mle_kernel!(
                         unified_gaussian_mle_kernel!(gpu_backend, workgroup)
                     kernel(
                         d_results, d_uncertainties, d_covariances, d_log_likelihoods,
-                        d_chi2, d_batch_data, device_psf, use_scmos, d_variance_map,
+                        d_chi2, d_converged, d_batch_data, device_psf, use_scmos,
+                        d_variance_map,
                         d_x_corners, d_y_corners,
                         constraints, fitter.iterations,
                         ndrange = batch_size_actual
@@ -568,6 +576,7 @@ function _run_mle_kernel!(
                     covariances[:, batch_start:batch_end] = Array(d_covariances)
                     log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
                     chi2[batch_start:batch_end] = Array(d_chi2)
+                    converged[batch_start:batch_end] = Array(d_converged)
                 end
 
                 # All batches succeeded - reclaim pool memory so queries show it as free
@@ -677,7 +686,7 @@ function _run_mle_kernel!(
             actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2,
+                results, uncertainties, covariances, log_likelihoods, chi2, converged,
                 data, cpu_psf, use_scmos, variance_map, x_corners, y_corners,
                 constraints, fitter.iterations,
                 ndrange = n_fits
@@ -699,11 +708,13 @@ function _run_mle_kernel!(
                 batch_covariances = @view covariances[:, batch_start:batch_end]
                 batch_llr = @view log_likelihoods[batch_start:batch_end]
                 batch_chi2 = @view chi2[batch_start:batch_end]
+                batch_converged = @view converged[batch_start:batch_end]
 
                 kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
                 kernel(
                     batch_results, batch_uncertainties, batch_covariances, batch_llr,
-                    batch_chi2, batch_data, cpu_psf, use_scmos, variance_map,
+                    batch_chi2, batch_converged, batch_data, cpu_psf, use_scmos,
+                    variance_map,
                     batch_x_corners, batch_y_corners,
                     constraints, fitter.iterations,
                     ndrange = batch_size_actual
@@ -798,6 +809,7 @@ function fit(
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
+    converged = Vector{UInt8}(undef, n_fits)
 
     # Determine camera model from variance_map keyword
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
@@ -816,7 +828,7 @@ function fit(
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
         results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
-        fitter
+        fitter; converged
     )
 
     # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
@@ -846,7 +858,8 @@ function fit(
         actual_batch_size, box_size, n_params; map_bytes = sizeof(var_map)
     ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
-        elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
+        elapsed_s, actual_backend, device_id, n_fits, count(!iszero, converged),
+        actual_batch_size,
         actual_n_batches, memory_per_batch
     )
 
@@ -919,6 +932,7 @@ function fit(
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
+    converged = Vector{UInt8}(undef, n_fits)
 
     # IdealCamera: Poisson noise only (no variance map)
     use_scmos = Val(false)
@@ -933,7 +947,7 @@ function fit(
         results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
-        fitter
+        fitter; converged
     )
 
     # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
@@ -951,7 +965,8 @@ function fit(
         actual_batch_size, box_size, n_params; map_bytes = sizeof(variance_map)
     ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
-        elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
+        elapsed_s, actual_backend, device_id, n_fits, count(!iszero, converged),
+        actual_batch_size,
         actual_n_batches, memory_per_batch
     )
 
@@ -990,6 +1005,7 @@ function fit(
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
     log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
+    converged = Vector{UInt8}(undef, n_fits)
 
     # SCMOSCamera: Poisson + readnoise variance
     use_scmos = Val(true)
@@ -1002,7 +1018,7 @@ function fit(
         results, uncertainties, covariances, log_likelihoods, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
-        fitter
+        fitter; converged
     )
 
     # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
@@ -1021,7 +1037,8 @@ function fit(
         actual_batch_size, box_size, n_params; map_bytes = sizeof(variance_map)
     ) + _psf_table_bytes(psf_pixels)
     info = GaussMLEFitInfo(
-        elapsed_s, actual_backend, device_id, n_fits, n_fits, actual_batch_size,
+        elapsed_s, actual_backend, device_id, n_fits, count(!iszero, converged),
+        actual_batch_size,
         actual_n_batches, memory_per_batch
     )
 
@@ -1043,8 +1060,8 @@ Kwargs match GaussMLEConfig fields exactly.
 - `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
   start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
   `iterations - 1` steps and `iterations = 1` returns the start. Default 100 for the
-  Gaussian models, which stop earlier once converged (one that reaches the cap first
-  reports infinite uncertainties), and 20 for `SplinePSFModel`, which runs every pass
+  Gaussian models, which stop earlier once converged (`n_converged` leaves out one that
+  reaches the cap first), and 20 for `SplinePSFModel`, which runs every pass
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time

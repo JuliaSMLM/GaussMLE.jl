@@ -277,7 +277,8 @@ end
     # The positional form is the box-sized map of before, plus every output.
     @test GaussMLE.estimate_batch_memory(n, box, 4) ==
         GaussMLE.estimate_batch_memory(n, box, 4; map_bytes = 4 * box^2)
-    # data, results and uncertainties, covariances, log-likelihood and chi2, corners
-    outputs = 4 * n * (box^2 + 2 * 4 + 3 + 2 + 2)
+    # data, results and uncertainties, covariances, log-likelihood and chi2, corners, and
+    # one byte per fit for its convergence flag
+    outputs = 4 * n * (box^2 + 2 * 4 + 3 + 2 + 2) + n
     @test GaussMLE.estimate_batch_memory(n, box, 4; map_bytes) == outputs + map_bytes
 end

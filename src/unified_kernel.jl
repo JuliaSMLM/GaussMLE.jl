@@ -256,8 +256,10 @@ const _LM_GAIN_TOL = 1.0e-4
 
 # Fit one ROI from the start θ0 and return `(θ, converged)`: Levenberg-Marquardt on the full
 # Fisher matrix (`_lm_fit`), stopping once the predicted gain is below `_LM_GAIN_TOL`;
-# `converged = false` when the fit used all `iterations` pixel passes without stopping, and
-# the kernel then reports infinite uncertainties and zero covariances for it.
+# `converged = false` when the fit ended without meeting that test: it used all
+# `iterations` pixel passes, or its next step rounded to its current point in Float32. The
+# kernel records the flag (`GaussMLEFitInfo.n_converged` counts it); the uncertainties stay
+# the CRLB at the end point.
 # SplinePSFModel overrides this with several starts and a fixed schedule.
 @inline function _optimize(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -290,7 +292,9 @@ end
 #   taken, by Nielsen's rule: lambda * max(1/3, 1 - (2 rho - 1)^3), nu = 2; a rejected one
 #   multiplies lambda by nu and doubles nu (Fisher scoring overshoots where the observed
 #   curvature exceeds F, and this damps it without toggling);
-# - the whole step is scaled to the step limits instead of clamping each component.
+# - the whole step is scaled to the step limits instead of clamping each component;
+# - a trial that rounds to the accepted point ends the fit (every later pass would repeat
+#   it).
 # Returns the last accepted point, the objective there, the pixel passes made and whether
 # the stop test ended the fit,
 # `(θ_acc, obj_acc, passes, stopped)`: the first pass always accepts its start, so
@@ -416,6 +420,10 @@ end
         end
         if adaptive
             θ, pred = _adaptive_trial(Δ, θ_acc, g_acc, F_acc, constraints)
+            # A trial that rounds to the accepted point in Float32 is a fixed point: it is
+            # rejected, the larger lambda shrinks the step further, and every later pass
+            # repeats it. The fit ends here with the result the cap would give.
+            ok && θ == θ_acc && break
         else
             step = clamp.(Δ, -constraints.max_step, constraints.max_step)
             θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
@@ -493,6 +501,8 @@ end
         log_likelihoods::AbstractArray{T, 1},
         # Pearson statistic sum (d - mu)^2 / (mu + readout variance), the p-value's input
         chi2::AbstractArray{T, 1},
+        # 1 where the fit met its convergence test before the iterations cap, else 0
+        converged::AbstractArray{UInt8, 1},
         @Const(data::AbstractArray{T, 3}),
         @Const(psf_model::PSFModel{N, T}),
         @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
@@ -514,10 +524,11 @@ end
 
     # Immutable working vectors avoid heap allocation from bounds-check error paths.
     θ = simple_initialize(roi, box_size, psf_model)
-    θ, converged = _optimize(
+    θ, met = _optimize(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ
     )
+    @inbounds converged[idx] = met ? 0x01 : 0x00
 
     # Compute final log-likelihood ratio, Pearson statistic and full Fisher Information
     # Matrix for CRLB
@@ -562,10 +573,6 @@ end
     # precision, or a parameter with no Fisher information, gives infinite uncertainties
     # and zero covariances.
     ok, H_inv = _invert_fisher(H, box_size * box_size)
-    # A fit that used every pass without meeting its convergence test is not at the
-    # maximum its CRLB describes: infinite uncertainties and zero covariances, as for a
-    # Fisher matrix that cannot be inverted.
-    ok = ok && converged
     # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
     # covariances[3,idx] = σ_yz (3D only, zero otherwise)
     has_z = _has_axial_position(typeof(psf_model))

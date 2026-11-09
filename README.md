@@ -88,7 +88,7 @@ For IdealCamera fits, `photons` and `σ_photons` use photons, and `bg` and `σ_b
 | `backend` | `:cpu` or `:gpu` (never `:auto`) |
 | `device_id` | GPU index (0-based) or -1 for CPU |
 | `n_fits` | Number of ROIs processed |
-| `n_converged` | Equals `n_fits` (not counted per fit; a Gaussian fit capped before converging reports `Inf` uncertainties) |
+| `n_converged` | Number of fits that met their convergence test before the `iterations` cap (every fit, for `SplinePSFModel`) |
 | `batch_size` | Actual batch size used |
 | `n_batches` | Number of batches |
 | `memory_per_batch` | Estimated bytes per batch |
