@@ -79,7 +79,15 @@ end
 # Helper to extract variance map from SMLMData.SCMOSCamera
 function extract_variance_map(camera::SMLMData.SCMOSCamera, ::Type{T}) where {T}
     # SMLMData uses 'readnoise' field (std dev), we need variance (readnoise²)
-    # Handle both scalar and matrix readnoise
+    # Handle both scalar and matrix readnoise. A negative or non-finite read noise is
+    # refused before squaring, which would hide its sign.
+    k = findfirst(r -> !(isfinite(r) && r >= zero(r)), camera.readnoise)
+    k === nothing || throw(
+        ArgumentError(
+            "camera read noise $(camera.readnoise[k]) is not finite and non-negative \
+            (readnoise is the standard deviation in electrons)"
+        )
+    )
     variance = camera.readnoise .^ 2
     if variance isa Real
         # Scalar readnoise: expand to full sensor matrix

@@ -144,7 +144,7 @@ Using the new camera-aware simulator for reliable test data generation
             smld, batch, true_params, param_idx = 4, bias_tol = 2.0f0, verbose = verbose,
         )
 
-        @test x_val.bias_pass  # Always true for positions (see helper)
+        @test x_val.bias_pass
         @test y_val.bias_pass
         @test n_val.bias_pass
         @test b_val.bias_pass
@@ -199,7 +199,7 @@ Using the new camera-aware simulator for reliable test data generation
             bias_tol = 0.2f0, std_ratio_tol = 0.35f0,
         )
 
-        @test x_val.bias_pass  # Always true for positions
+        @test x_val.bias_pass
         @test x_val.std_pass
 
         # Check that uncertainties are appropriately larger
@@ -326,7 +326,7 @@ Using the new camera-aware simulator for reliable test data generation
             bias_tol = 0.1f0, std_ratio_tol = 0.25f0
         )
 
-        @test x_val.bias_pass  # Always true for positions
+        @test x_val.bias_pass
         @test x_val.std_pass
 
         # Uncertainties should be larger than ideal camera
@@ -410,7 +410,7 @@ Using the new camera-aware simulator for reliable test data generation
             smld_sxsy, batch_sxsy, true_params_sxsy, param_idx = 1,
             bias_tol = 0.15f0, std_ratio_tol = 0.35f0
         )
-        @test x_val_sxsy.bias_pass  # Always true for positions
+        @test x_val_sxsy.bias_pass
     end
 
     @testset "Photon Level Sensitivity" begin

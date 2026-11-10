@@ -294,4 +294,10 @@ end
         @test_throws ArgumentError fit(data, config; variance_map = vmap)
     end
     @test fit(data, config; variance_map = fill(1.0f0, 7, 7))[2].n_fits == 1
+    # A camera's read noise is checked before it is squared (-2 would pass as 4).
+    for bad in (-2.0f0, NaN32)
+        camera = SCMOSCamera(7, 7, 0.1f0, bad)
+        batch = ROIBatch(data, Int32[1], Int32[1], Int32[1], camera)
+        @test_throws ArgumentError fit(batch; backend = :cpu)
+    end
 end
