@@ -474,8 +474,8 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
             e = smld.emitters[k]
             @test abs(e.photons / 3.0e5 - 1) <= 0.005
             @test e.z ≈ z atol = 0.003
-            # fit(::Array) tiles the ROIs horizontally: ROI k starts (k - 1) boxes along x
-            @test e.x ≈ (x - 0.5 + (k - 1) * box) * px atol = 0.001
+            # fit(::Array) reports positions within each ROI
+            @test e.x ≈ (x - 0.5) * px atol = 0.001
             @test e.y ≈ (y - 0.5) * px atol = 0.001
         end
     end
@@ -485,15 +485,17 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         truth = ((6.2, 5.8, -0.3), (5.7, 6.4, 0.2), (6.0, 6.0, 0.35), (6.4, 5.6, -0.1))
         n = length(truth)
         Random.seed!(11)
-        # Counts at background 6 with 4 subtracted (an offset-subtracted camera): the
-        # background is 2 and over a tenth of the pixels are negative.
+        # Counts at background 6 with 5 subtracted (an offset-subtracted camera): the
+        # background is 1 and about a quarter of the pixels are negative (a background pixel
+        # is negative with probability P(Poisson(6) <= 4) = 0.29), far above the 5 % the
+        # check below needs under any noise stream.
         mu = zeros(Float32, box, box, n)
         for (k, (x, y, z)) in enumerate(truth), j in 1:box, i in 1:box
             mu[i, j, k] = GaussMLE.evaluate_psf(
                 gpsf, i, j, SVector{5, Float32}(x, y, z, 1000, 6)
             )
         end
-        data = Float32.(poisson_noise(mu)) .- 4
+        data = Float32.(poisson_noise(mu)) .- 5
         @test count(<(0), data) > 0.05 * length(data)
         corners = ones(Int32, n)
         roi_batch = ROIBatch(data, corners, corners, Int32.(1:n), IdealCamera(64, 64, px))

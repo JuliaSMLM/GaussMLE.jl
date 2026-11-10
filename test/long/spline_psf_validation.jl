@@ -50,7 +50,7 @@ using SMLMSim: poisson_noise
     @test abs(mean(dy)) <= 3
     @test abs(mean(dz)) <= 10
     # With 200 fits, a 30% two-sided tolerance allows sampling variation; observed
-    # SD/CRLB ratios on kitt were 0.88–1.12. Inflated or infinite CRLBs must fail too.
+    # SD/CRLB ratios measured 0.88–1.12. Inflated or infinite CRLBs must fail too.
     for field in (:σ_x, :σ_y, :σ_z)
         @test all(em -> isfinite(getproperty(em, field)) && getproperty(em, field) > 0, e)
     end

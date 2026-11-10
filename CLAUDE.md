@@ -167,7 +167,7 @@ The two camera models have **fundamentally different data flows**:
 | **Data units** | Photons (or ADU if gain=1) | Must convert ADU → electrons |
 | **Fit objective** | Poisson log-likelihood | Poisson-shifted: `(data+v) log(model+v) - (model+v)`, `v` = readnoise² |
 | **Gradient weight** | `(data-model)/model` | `(data-model)/total_var` |
-| **p-value statistic** | Pearson `Σ (data-model)²/model` against χ²(df) | Pearson `Σ (data-model)²/total_var` against χ²(df) (`-2×` the log-likelihood ratio) |
+| **p-value statistic** | Pearson `Σ (data-model)²/model` against χ²(df) | Pearson `Σ (data-model)²/total_var` against χ²(df) |
 | **Kernel indexing** | `data[i,j]` only | `data[i,j]` and `variance_map[cam_y, cam_x]` |
 
 **Key implementation difference**:
@@ -218,40 +218,43 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      variance from `_readout_variance`, zero for IdealCamera), gradient
      `g = Σ dudt (d - μ)/var` and Fisher `F = Σ dudt dudt'/var`; no second derivatives
    - Step: `(F_acc + λ diag F_acc) Δ = g_acc` (Fisher scoring: F is the expected curvature),
-     held to `max_step` and the bounds; a higher objective is accepted, a lower one rejected
-     (λ×10); factorizations in the `@noinline` `_lm_solve` and `_newton_gain` (POCL speed)
+     the whole step scaled to `max_step` (`@noinline _trial_step`, which skips non-finite
+     components) and bounded; factorizations in the `@noinline` `_lm_solve` and
+     `_newton_gain` (POCL speed)
    - A parameter on a bound whose gradient points out of the box, or one fixed by equal
      bounds whatever its gradient, is held (identity row and column via `_hold_rows`, zero
      gradient) while the rest take the step
    - `_fit_objective` takes the limit `-(mu + v)` when data + read-noise variance is 0
-     (else 0 * log(0) = NaN with a zero background); variance maps are checked finite and
-     non-negative on the host (`_validate_variance_values`)
+     (else 0 * log(0) = NaN with a zero background) and returns -Inf where `mu + v < 0`
+     (never a log of a negative number, which throws on the CPU); variance maps are checked
+     finite and non-negative on the host (`_validate_variance_values`), and photon and
+     background lower bounds must be at least 0 (`_validate_constraints`)
    - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
-   - `iterations` caps the pixel passes, the last only evaluating, so a fit takes at most
-     `iterations - 1` steps; default `_default_iterations`: 100 for the Gaussian models, 20 for
-     SplinePSFModel; `_lm_fit` returns `(θ_acc, obj_acc, passes, stopped)`, and `_optimize`
-     returns `(θ, converged)`
-   - Gaussian models (`_optimize` for `PSFModel`, `gain_tol = _LM_GAIN_TOL = 1e-4`, adaptive):
-     stop after an accepted pass whose predicted gain `g' F⁻¹ g / 2` over the free parameters
-     (undamped `F_acc`) is below 1e-4, i.e. within 0.014 CRLB of the maximum of the quadratic
-     model with curvature F (measured within 0.1 CRLB of the likelihood's own maximum on
-     simulated ROIs); λ by Nielsen's rule from the gain ratio ρ on accepted passes
-     (λ·max(1/3, 1 − (2ρ − 1)³), ν = 2) and λ·ν, ν·2 on rejected ones; a trial is kept on a
-     positive gain, the trapezoid `(g_acc + g)' s / 2` when the objective change is within
-     10× its Float32 rounding (its sign decides: added to `obj_acc` it rounds away for a
-     mismatched bright fit, |obj| ~ 1e4 to 1e5); a non-finite objective is rejected; the whole step is scaled to `max_step` instead of
-     clamping each component (`@noinline _adaptive_trial`, which skips non-finite
-     components); a trial that rounds to `θ_acc` with λ at its 1e7 cap ends the fit (a
-     fixed point: every later pass makes the same trial); a fit that ends without the stop test gets `converged = false`,
-     which the kernel writes to its `converged` output (`UInt8`, after `chi2`) and
-     `GaussMLEFitInfo.n_converged` counts; its uncertainties stay the CRLB
-   - SplinePSFModel: `_optimize(::SplinePSFModel)` runs every pass (`gain_tol = 0`: λ/10 on
-     accept, per-component clamp, no stop, bit for bit as before the Gaussian change), from
-     the scan start and then from `starts - 1` fixed z starts (`_spline_start_z`; x, y, N,
-     bg from the scan start; default count `_default_spline_starts`, one fixed start per
-     0.4 µm over the central 80 % of `z_range`), each with the full `iterations`, keeping
-     the strictly higher objective (the earlier start on a tie). `starts = 1` is the scan
-     start alone
+   - `iterations` caps the pixel passes of each start, the last only evaluating, so a start
+     takes at most `iterations - 1` steps; default `_default_iterations` 100;
+     `_lm_fit` returns `(θ_acc, obj_acc, passes, stopped)`, and `_optimize` returns
+     `(θ, converged)`
+   - One schedule for every model (`gain_tol = _LM_GAIN_TOL = 1e-4`, an optional last
+     argument of `_lm_fit` that tests lower for a fit that runs on): stop after an accepted
+     pass whose predicted gain `g' F⁻¹ g / 2` over the free parameters (undamped `F_acc`) is
+     below 1e-4, i.e. within 0.014 CRLB of the maximum of the quadratic model with curvature
+     F (measured within 0.1 CRLB of the likelihood's own maximum on simulated ROIs); λ by
+     Nielsen's rule from the gain ratio ρ on accepted passes (λ·max(1/3, 1 − (2ρ − 1)³),
+     ν = 2) and λ·ν, ν·2 on rejected ones; a trial is kept on a positive gain, the trapezoid
+     `(g_acc + g)' s / 2` when the objective change is within 10× its Float32 rounding (its
+     sign decides: added to `obj_acc` it rounds away for a mismatched bright fit, |obj| ~
+     1e4 to 1e5); a non-finite objective is rejected; a trial that rounds to `θ_acc` with λ
+     at its 1e7 cap ends the fit (a fixed point: every later pass makes the same trial); a
+     fit that ends without the stop test gets `converged = false`, which the kernel writes
+     to its `converged` output (`UInt8`, after `chi2`) and `GaussMLEFitInfo.n_converged`
+     counts; its uncertainties stay the CRLB
+   - Several starts, keeping the strictly higher objective (the earlier start on a tie) and
+     that start's `converged`: `_optimize(::AstigmaticXYZNB)` fits again from the first
+     fit's end point with z negated (the mirror-z maximum of weak astigmatism);
+     `_optimize(::SplinePSFModel)` fits from the scan start and then from `starts - 1` fixed
+     z starts (`_spline_start_z`; x, y, N, bg from the scan start; default count
+     `_default_spline_starts`, one fixed start per 0.4 µm over the central 80 % of
+     `z_range`). `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
@@ -331,7 +334,7 @@ The math is dimensionally consistent:
 - `src/interface.jl` - High-level `fit()` API and `GaussMLEConfig` type
 - `src/psf_models.jl` - PSF model definitions (Gaussian, Astigmatic)
 - `src/psf_derivatives.jl` - PSF derivative computations
-- `src/camera_models.jl` - Camera noise models (IdealCamera, SCMOSCameraInternal)
+- `src/camera_models.jl` - sCMOS calibration helpers (ADU to electrons)
 - `src/devices.jl` - Device abstraction (CPU/GPU auto-detection), GPU vendor interface; `_gpu_workgroup_size` fixes AMD launches at 64 (an unsized AMDGPU launch of a large batch hung on a Radeon 780M), CUDA sizes its own
 - `src/emitters.jl` - Custom emitter types (Emitter2DFitSigma, Emitter2DFitSigmaXY)
 - `src/results.jl` - Fit metadata and legacy result types

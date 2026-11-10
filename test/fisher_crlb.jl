@@ -112,9 +112,8 @@ using SMLMSim: poisson_noise, gen_images
     end
 end
 
-# The Gaussian fits' step rules (gain_tol > 0) where they differ from SplinePSFModel's fixed
-# schedule (gain_tol = 0): the trial step is scaled whole to the step limits, a gain within
-# the objective's rounding is judged by the sign of the trapezoid of the gradients, and the
+# The fit's step rules: the trial step is scaled whole to the step limits, a gain within the
+# objective's rounding is judged by the sign of the trapezoid of the gradients, and the
 # damping follows the ratio of actual to predicted gain. The SMLMSim ROIs below are ones
 # earlier rules fitted badly: bright XYNBS fits that ran to any cap without stopping (the
 # objective could not resolve their last gains), and low-count astigmatic fits that took 36
@@ -131,19 +130,19 @@ end
         pred(s) = dot(g, s) - dot(s, F * s) / 2
         # x at 2.5 times its limit: every component scaled by 0.4
         Δ = SVector{5, Float32}(2.5, -0.5, 300.0, -3.0, 0.2)
-        θt, _ = GaussMLE._adaptive_trial(Δ, θ, g, F, cons)
+        θt, _ = GaussMLE._trial_step(Δ, θ, g, F, cons)
         s = θt - θ
         @test s ≈ 0.4f0 * Δ rtol = 1.0e-6
         @test all(abs.(s) .<= cons.max_step)
         # a non-finite component is bounded by its limit and does not scale the others
-        θt, p = GaussMLE._adaptive_trial(
+        θt, p = GaussMLE._trial_step(
             SVector{5, Float32}(Inf, 0.5, 10.0, 1.0, 0.1), θ, g, F, cons
         )
         @test θt - θ ≈ SVector{5, Float32}(1.0, 0.5, 10.0, 1.0, 0.1) rtol = 1.0e-6
         @test isfinite(p)
         # a step past a bound ends on it, and the prediction is for the step taken
         θb = Base.setindex(θ, 14.6f0, 1)  # upper x bound of a 13 px box: 15 px
-        θt, p = GaussMLE._adaptive_trial(
+        θt, p = GaussMLE._trial_step(
             SVector{5, Float32}(0.8, 0, 0, 0, 0), θb, g, F, cons
         )
         @test θt[1] == cons.upper[1] && θt[2:5] == θb[2:5]
@@ -170,10 +169,10 @@ end
     )
     astig = AstigmaticXYZNB{Float32}(0.13, 0.13, 0.05, -0.05, 0.01, -0.01, 0.2, 0.5)
 
-    @testset "the first step: clamped per parameter or scaled whole" begin
+    @testset "the first step is scaled whole, not clamped per parameter" begin
         # Noise-free ROI at z = 0.3 um fitted from z = -0.1 um: the first step in z, 0.26 um,
-        # exceeds its 0.1 um limit. Clamping z alone keeps the photon and background steps
-        # made for the full z step; scaling shortens them all.
+        # exceeds its 0.1 um limit. Clamping z alone would keep the photon and background
+        # steps made for the full z step; scaling shortens them all.
         pm = GaussMLE._model_for_camera(astig, camera)
         cons = GaussMLE.default_constraints(pm, box)
         mu = expected_counts(pm, [6.2, 6.9, 0.3, 2000.0, 20.0])
@@ -192,7 +191,6 @@ end
         scaled = Float64.(θ0) .+ Δ .* (lim[3] / abs(Δ[3]))
         @test abs(clamped[4] - scaled[4]) > 100  # photons
         # iterations = 2: the start, then the first trial (accepted in both)
-        @test lm(mu, pm, cons, 2, θ0, 0.0f0)[1] ≈ clamped rtol = 1.0e-5
         @test lm(mu, pm, cons, 2, θ0, tol)[1] ≈ scaled rtol = 1.0e-5
     end
 

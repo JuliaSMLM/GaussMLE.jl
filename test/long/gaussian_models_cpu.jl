@@ -67,7 +67,6 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             results = Matrix{Float32}(undef, 5, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 5, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods = Vector{Float32}(undef, n_test_blobs)
             chi2 = Vector{Float32}(undef, n_test_blobs)
 
             backend = KernelAbstractions.CPU()
@@ -81,7 +80,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2,
+                results, uncertainties, covariances, chi2,
                 zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
@@ -91,7 +90,6 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
             @test all(isfinite.(chi2) .& (chi2 .>= 0))
         end
 
@@ -102,7 +100,6 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             results = Matrix{Float32}(undef, 6, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 6, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods = Vector{Float32}(undef, n_test_blobs)
             chi2 = Vector{Float32}(undef, n_test_blobs)
 
             backend = KernelAbstractions.CPU()
@@ -116,7 +113,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2,
+                results, uncertainties, covariances, chi2,
                 zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
@@ -126,7 +123,6 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
             @test all(isfinite.(chi2) .& (chi2 .>= 0))
         end
     end

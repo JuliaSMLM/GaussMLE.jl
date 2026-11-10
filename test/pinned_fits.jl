@@ -101,11 +101,10 @@ end
         results = zeros(Float32, 5, 1)
         uncertainties = zeros(Float32, 5, 1)
         covariances = zeros(Float32, 3, 1)
-        llr = zeros(Float32, 1)
         chi2 = zeros(Float32, 1)
         converged = zeros(UInt8, 1)
         kernel(
-            results, uncertainties, covariances, llr, chi2, converged, data, psf, Val(true),
+            results, uncertainties, covariances, chi2, converged, data, psf, Val(true),
             variance_map, Int32[1], Int32[1], constraints, GaussMLE._default_iterations(psf);
             ndrange = 1
         )

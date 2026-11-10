@@ -1,6 +1,9 @@
-# Compile the first CPU fit of every model and camera at package precompile time, so a fresh
-# process does not pay for it. Everything runs on `backend = :cpu` and never creates a GPU
-# context.
+# Compile the first CPU fit of the two models the lab's packages use most, GaussianXYNBS
+# (the standard analysis) and SplinePSFModel (learned PSFs), for both cameras at package
+# precompile time, so a fresh process does not pay for it; the other models compile at their
+# first fit. Each kernel specialization adds several seconds to every environment's
+# precompile, so the workload stays at these four. Everything runs on `backend = :cpu` and
+# never creates a GPU context.
 
 # A plain function standing in for a tabulated PSF: an astigmatic Gaussian.
 _precompile_psf(x, y, z) = exp(-x^2 / (2 * (0.13 + 0.1z)^2) - y^2 / (2 * (0.13 - 0.1z)^2))
@@ -11,7 +14,10 @@ const PRECOMPILE_WORKLOAD_RAN = Ref(false)
 
 # Whether the CPU backend of the installed KernelAbstractions can launch a kernel while
 # precompiling. Version 0.9 runs kernels on Julia threads. Version 0.10 compiles them
-# through POCL, which is absent on some platforms.
+# through POCL, which is absent on some platforms. Windows with Julia 1.11 is skipped as
+# KernelAbstractions skips its own workload there: on 1.11 the launch leaks GPUCompiler's
+# runtime into the package image, which then fails to link on Windows. Fits there still
+# run; they compile at the first fit.
 function _cpu_backend_precompilable()
     Sys.iswindows() && v"1.11-" <= VERSION < v"1.12-" && return false
     isdefined(KernelAbstractions, :POCL) || return true
@@ -39,15 +45,8 @@ end
     scmos = SCMOSCamera(
         32, 32, 0.1f0, fill(2.0f0, 32, 32); offset = 100.0f0, gain = 0.5f0, qe = 1.0f0
     )
-    models = (
-        (GaussianXYNB(0.13f0), SVector{4, Float32}(4, 4, 500, 5)),
-        (GaussianXYNBS(), SVector{5, Float32}(4, 4, 500, 5, 1.3)),
-        (GaussianXYNBSXSY(), SVector{6, Float32}(4, 4, 500, 5, 1.3, 1.3)),
-        (
-            AstigmaticXYZNB{Float32}(0.13, 0.13, 0.05, -0.05, 0.01, -0.01, 0.2, 0.5),
-            SVector{5, Float32}(4, 4, 0.1, 500, 5),
-        ),
-    )
+    gaussian = GaussianXYNBS()
+    θ_gaussian = SVector{5, Float32}(4, 4, 500, 5, 1.3)
     try
         if _cpu_backend_precompilable()
             # PoCL's kernel cache stays out of the user's cache directory, and it starts one
@@ -59,10 +58,10 @@ end
                 )
                 withenv(env...) do
                     @compile_workload begin
-                        for (model, θ0) in models, camera in (ideal, scmos)
+                        for camera in (ideal, scmos)
                             fit(
-                                _precompile_batch(camera, model, θ0);
-                                psf_model = model, backend = :cpu, iterations = 3
+                                _precompile_batch(camera, gaussian, θ_gaussian);
+                                psf_model = gaussian, backend = :cpu, iterations = 3
                             )
                         end
                         spline = SplinePSFModel(

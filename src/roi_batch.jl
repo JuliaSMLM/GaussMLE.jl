@@ -10,7 +10,6 @@ struct LocalizationResult{T, P <: PSFModel}
     parameters::Matrix{T}       # ROI coordinates (as before)
     uncertainties::Matrix{T}     # Uncertainties
     covariances::Matrix{T}       # Off-diagonal covariances [σ_xy, σ_xz, σ_yz] (3 x n_fits)
-    log_likelihoods::Vector{T}  # Log-likelihood ratios
     pvalues::Vector{T}          # Goodness-of-fit p-values
 
     # Camera coordinates (computed from ROI coords + corners)
@@ -41,7 +40,6 @@ function create_localization_result(
         parameters::Matrix{T},
         uncertainties::Matrix{T},
         covariances::Matrix{T},
-        log_likelihoods::Vector{T},
         pvalues::Vector{T},
         roi_batch::SMLMData.ROIBatch,
         psf_model::P
@@ -66,7 +64,6 @@ function create_localization_result(
         parameters,
         uncertainties,
         covariances,
-        log_likelihoods,
         pvalues,
         x_camera,
         y_camera,
@@ -87,7 +84,6 @@ function Base.iterate(r::LocalizationResult, state = 1)
         parameters = r.parameters[:, state],
         uncertainties = r.uncertainties[:, state],
         covariances = r.covariances[:, state],
-        log_likelihood = r.log_likelihoods[state],
         x_camera = r.x_camera[state],
         y_camera = r.y_camera[state],
         frame_index = r.frame_indices[state],
@@ -110,7 +106,6 @@ function Base.getindex(r::LocalizationResult, i::Int)
         parameters = r.parameters[:, i],
         uncertainties = r.uncertainties[:, i],
         covariances = r.covariances[:, i],
-        log_likelihood = r.log_likelihoods[i],
         x_camera = r.x_camera[i],
         y_camera = r.y_camera[i],
         frame_index = r.frame_indices[i],
@@ -339,18 +334,6 @@ function _to_emitter_xyznb(
         dataset, track_id, id
     )
 end
-
-# Legacy function names for backward compatibility
-to_emitter2dfit(
-    result::LocalizationResult, idx::Int, camera::SMLMData.AbstractCamera; kwargs...
-) =
-    to_emitter(GaussianXYNB(0.1f0), result, idx, camera; kwargs...)
-
-to_emitter3dfit(
-    result::LocalizationResult{T, <:AstigmaticXYZNB}, idx::Int,
-    camera::SMLMData.AbstractCamera; kwargs...
-) where {T} =
-    to_emitter(result.psf_model, result, idx, camera; kwargs...)
 
 # ===================================================================
 # Unified to_smld - Uses dispatch automatically

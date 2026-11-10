@@ -99,12 +99,12 @@ Levenberg-Marquardt on the full Fisher matrix, climbing the Poisson likelihood
 (IdealCamera) or the Poisson-shifted likelihood `(d + v) log(μ + v) - (μ + v)` with `v`
 the read-noise variance (sCMOS). The
 default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
-background steps are not capped (photons ≥ 1, background ≥ 0.01). For sCMOS the
-reported log-likelihood is the Gaussian approximation
-`-(d - μ)²/(2(μ + v))`, not the fitted objective; the p-value is the Pearson statistic
-`(d - μ)²/(μ + v)` as for every model. `iterations` counts
-Levenberg-Marquardt pixel passes per start: the last pass only evaluates, so the fit
-takes at most `iterations - 1` steps and `iterations = 1` returns the start. A parameter
+background steps are not capped (photons ≥ 1, background ≥ 0.01). The p-value is the
+Pearson statistic `(d - μ)²/(μ + v)`, as for every model. Each start stops once converged,
+as the Gaussian fits do, and the fit counts as converged when the start it keeps did.
+`iterations` caps the Levenberg-Marquardt pixel passes per start: the last pass only
+evaluates, so a start takes at most `iterations - 1` steps and `iterations = 1` returns
+it. A parameter
 on a bound whose gradient points out of the box is held there while the others take their
 step. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds use
 `z_range`.
@@ -703,37 +703,36 @@ function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y:
 end
 
 # Levenberg-Marquardt on the full Fisher matrix (the kernel's `_lm_fit`), as for every
-# model, with every pass run (no convergence stop) and no cap on the photon and background
-# steps. One LM fit climbs to the maximum of the basin it starts in, and the scan start θ0
-# is often in the wrong one for a defocused ROI.
-# So the fit also runs from `starts - 1` fixed z starts (x, y, N and bg from θ0), each with
-# the full `iterations`, and keeps the θ with the strictly higher objective; on a tie the
-# earlier start wins, the scan start first.
+# model. One fit climbs to the maximum of the basin it starts in, and the scan start θ0 is
+# often in the wrong one for a defocused ROI. So the fit also runs from `starts - 1` fixed
+# z starts (x, y, N and bg from θ0), each to convergence or the `iterations` cap, and keeps
+# the θ with the strictly higher objective; on a tie the earlier start wins, the scan start
+# first. The fit counts as converged when the start it keeps met the stop test.
 @inline function _optimize(
         roi, box_size::Int, psf_model::SplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {T}
-    θ_best, obj_best, _ = _lm_fit(
+    θ_best, obj_best, _, stopped_best = _lm_fit(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ0
     )
     m = psf_model.starts - 1
     for q in 0:(m - 1)
         θs = SVector{5, T}(θ0[1], θ0[2], _spline_start_z(psf_model, q, m), θ0[4], θ0[5])
-        θ, obj, _ = _lm_fit(
+        θ, obj, _, stopped = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
         if obj > obj_best
             θ_best = θ
             obj_best = obj
+            stopped_best = stopped
         end
     end
-    return θ_best, true  # a fixed schedule: no convergence test to fail
+    return θ_best, stopped_best
 end
 
-# Every pass runs from each start (no convergence stop), so the cap is the pass count.
-_default_iterations(::SplinePSFModel) = 20
+_photon_background_indices(::SplinePSFModel) = (4, 5)
 
 function default_constraints(model::SplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)

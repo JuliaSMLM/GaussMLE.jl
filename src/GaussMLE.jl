@@ -16,7 +16,6 @@ using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel
 using CUDA: CUDA, CUDABackend
 using StaticArrays: StaticArrays, @SVector, SMatrix, SVector
 using LinearAlgebra: LinearAlgebra
-using Statistics: Statistics, mean
 using SpecialFunctions: SpecialFunctions
 using SMLMData: SMLMData
 using Random: Random

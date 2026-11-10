@@ -215,15 +215,23 @@ end
 # (v = 0: the Poisson log-likelihood). Its gradient (d - mu) / (mu + v) and Fisher
 # 1 / (mu + v) are what the update uses. Written as the deviance s log(1 + r / s) - r,
 # s = d + v, r = mu - d, which has the same dependence on mu but a float32 error of about
-# eps * |r| rather than eps * d.
+# eps * |r| rather than eps * d. A pixel whose mu + v is negative has no likelihood: the
+# objective is -Inf there (the trial is rejected) instead of a log of a negative number,
+# which throws on the CPU. `fit` refuses the photon and background lower bounds below zero
+# that could lead there, so this guards the kernel, not a supported case.
 @inline function _fit_objective(data::T, model::T, v::T) where {T}
     s = data + v
     r = model - data
-    s > zero(T) && return s * log1p(r / s) - r
+    w = model + v
+    if s > zero(T)
+        # log1p(q) with q = r / s = w / s - 1 > -1 exactly when w > 0
+        q = r / s
+        return q >= -one(T) ? s * log1p(q) - r : T(-Inf)
+    end
     # s = 0 (no counts and no read noise): the limit of s log(mu + v) is 0, also at
     # mu + v = 0 (a fit whose background may be zero), where the product is NaN
-    s == zero(T) && return -(model + v)
-    return s * log(model + v) - (model + v)
+    s == zero(T) && return w >= zero(T) ? -w : T(-Inf)
+    return w > zero(T) ? s * log(w) - w : T(-Inf)
 end
 
 # Solve (L L') x = b for the Cholesky factor L (lower triangle) of
@@ -249,12 +257,12 @@ end
     return x
 end
 
-# Log-likelihood gain below which a Gaussian fit stops: the gain the undamped
-# Fisher-scoring step predicts, g' F⁻¹ g / 2 over the free parameters. F⁻¹ is the CRLB
-# covariance at θ, so g' F⁻¹ g is the squared distance, in CRLB units (Mahalanobis), to the
-# maximum of the quadratic model with curvature F; a gain of 1e-4 is a distance of
-# sqrt(2e-4) = 0.014 CRLB from it. The likelihood's own maximum is where the observed
-# curvature puts it, which differs from F on noisy data.
+# Log-likelihood gain below which a fit stops: the gain the undamped Fisher-scoring step
+# predicts, g' F⁻¹ g / 2 over the free parameters. F⁻¹ is the CRLB covariance at θ, so
+# g' F⁻¹ g is the squared distance, in CRLB units (Mahalanobis), to the maximum of the
+# quadratic model with curvature F; a gain of 1e-4 is a distance of sqrt(2e-4) = 0.014 CRLB
+# from it. The likelihood's own maximum is where the observed curvature puts it, which
+# differs from F on noisy data.
 const _LM_GAIN_TOL = 1.0e-4
 
 # Fit one ROI from the start θ0 and return `(θ, converged)`: Levenberg-Marquardt on the full
@@ -262,54 +270,70 @@ const _LM_GAIN_TOL = 1.0e-4
 # `converged = false` when the fit ended without meeting that test: it used all
 # `iterations` pixel passes, or its next step rounded to its current point in Float32. The
 # kernel records the flag (`GaussMLEFitInfo.n_converged` counts it); the uncertainties stay
-# the CRLB at the end point.
-# SplinePSFModel overrides this with several starts and a fixed schedule.
+# the CRLB at the end point. AstigmaticXYZNB and SplinePSFModel add further starts.
 @inline function _optimize(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {N, T}
     θ, _, _, stopped = _lm_fit(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
-        constraints, iterations, θ0, T(_LM_GAIN_TOL)
+        constraints, iterations, θ0
     )
     return θ, stopped
 end
 
-# Levenberg-Marquardt fit of one ROI on the full Fisher matrix, from the start θ0. Each
-# iteration makes one pixel pass at the trial point: the objective, the gradient
-# g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var (pixels whose variance is not
-# positive and finite add nothing). A trial that raises the objective is accepted (g and F
-# stored, lambda / 10); an equal objective is accepted with lambda unchanged; a lower one
-# is rejected (lambda * 10). The next trial is theta_acc + delta with
-# (F_acc + lambda diag(F_acc)) delta = g_acc, step-clamped and bounded, with a parameter
-# that sits on a bound and whose gradient points out of the box held fixed; if the
-# factorization fails, delta = 0 and lambda * 10. `gain_tol = 0` (SplinePSFModel) runs
-# every pass on that schedule. `gain_tol > 0` (the Gaussian models) runs to convergence:
-# - it stops after an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free
-#   parameters (undamped F_acc, held parameters removed) is below `gain_tol`;
-# - a trial is kept when its gain is positive: the objective change, or, when that is within
-#   10 times the sum's Float32 rounding, the trapezoid gain (g_acc + g)' s / 2 of the step s
-#   (bright emitters otherwise stall on gains the objective cannot resolve); a non-finite
-#   objective is rejected;
-# - an accepted pass sets lambda from rho, the actual over the predicted gain of the step
+# AstigmaticXYZNB: a fit climbs to the maximum of the basin it starts in, and the
+# likelihood of an astigmatic PSF has a second maximum near the mirrored z, where the two
+# widths swap. With weak astigmatism (a focal offset small against the depth scale) a few
+# percent of in-range fits ended there, z of the wrong sign, flagged converged. So the fit
+# runs a second time from the first fit's end point with z negated and keeps the higher
+# objective (the first on a tie). It costs a second fit per ROI.
+@inline function _optimize(
+        roi, box_size::Int, psf_model::AstigmaticXYZNB{T}, camera_model, variance_map,
+        corner_x, corner_y, constraints, iterations::Int, θ0
+    ) where {T}
+    θ1, obj1, _, stopped1 = _lm_fit(
+        roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+        constraints, iterations, θ0
+    )
+    θ2, obj2, _, stopped2 = _lm_fit(
+        roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
+        constraints, iterations, Base.setindex(θ1, -θ1[3], 3)
+    )
+    return obj2 > obj1 ? (θ2, stopped2) : (θ1, stopped1)
+end
+
+# Levenberg-Marquardt fit of one ROI on the full Fisher matrix (Fisher scoring), from the
+# start θ0. Each iteration makes one pixel pass at the trial point: the objective, the
+# gradient g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var (pixels whose
+# variance is not positive and finite add nothing). The next trial is theta_acc + delta
+# with (F_acc + lambda diag(F_acc)) delta = g_acc, the whole step scaled to the step
+# limits and bounded, with a parameter that sits on a bound and whose gradient points out
+# of the box held fixed; if the factorization fails, delta = 0 and lambda * 10.
+# - It stops after an accepted pass whose predicted gain g' F⁻¹ g / 2 over the free
+#   parameters (undamped F_acc, held parameters removed) is below `gain_tol`
+#   (`_LM_GAIN_TOL`; a test passes a smaller one for a fit that runs on).
+# - A trial is kept when its gain is positive: the objective change, or, when that is
+#   within 10 times the sum's Float32 rounding, the trapezoid gain (g_acc + g)' s / 2 of
+#   the step s (bright emitters otherwise stall on gains the objective cannot resolve); a
+#   non-finite objective is rejected.
+# - An accepted pass sets lambda from rho, the actual over the predicted gain of the step
 #   taken, by Nielsen's rule: lambda * max(1/3, 1 - (2 rho - 1)^3), nu = 2; a rejected one
 #   multiplies lambda by nu and doubles nu (Fisher scoring overshoots where the observed
-#   curvature exceeds F, and this damps it without toggling);
-# - the whole step is scaled to the step limits instead of clamping each component;
-# - a trial that rounds to the accepted point with lambda at its cap ends the fit (every
+#   curvature exceeds F, and this damps it without toggling).
+# - The whole step is scaled to the step limits instead of clamping each component.
+# - A trial that rounds to the accepted point with lambda at its cap ends the fit (every
 #   later pass would make the same trial).
 # Returns the last accepted point, the objective there, the pixel passes made and whether
-# the stop test ended the fit,
-# `(θ_acc, obj_acc, passes, stopped)`: the first pass always accepts its start, so
-# iterations = 1 returns the clamped start with its objective. The multi-start `_optimize`
-# of SplinePSFModel compares these objectives.
+# the stop test ended the fit, `(θ_acc, obj_acc, passes, stopped)`: the first pass always
+# accepts its start, so iterations = 1 returns the clamped start with its objective. The
+# multi-start `_optimize` methods compare these objectives.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
         corner_x, corner_y, constraints::ParameterConstraints{N}, iterations::Int, θ0,
-        gain_tol::T = zero(T)
+        gain_tol::T = T(_LM_GAIN_TOL)
     ) where {N, T}
-    adaptive = gain_tol > zero(T)
     θ = clamp.(θ0, constraints.lower, constraints.upper)
     θ_acc = θ
     g_acc = zero(SVector{N, T})
@@ -336,12 +360,10 @@ end
             var = model + v
             term = _fit_objective(d, model, v)
             obj += term
-            if adaptive
-                # Scale of the sum's Float32 error (the model's own error, from erf
-                # differences, can be several times eps * |model - d|; hence the factor 10
-                # in the window below)
-                rounding += abs(term) + abs(model - d)
-            end
+            # Scale of the sum's Float32 error (the model's own error, from erf
+            # differences, can be several times eps * |model - d|; hence the factor 10
+            # in the window below)
+            rounding += abs(term) + abs(model - d)
             if var > zero(T) && isfinite(var)
                 g = g + dudt * ((d - model) / var)
                 F = F + (dudt * dudt') * (one(T) / var)
@@ -350,7 +372,7 @@ end
 
         accepted = true
         gain = obj - obj_acc
-        if adaptive && iter > 1 && isfinite(obj) && abs(gain) <= 10 * eps(T) * rounding
+        if iter > 1 && isfinite(obj) && abs(gain) <= 10 * eps(T) * rounding
             # The change is within the objective's Float32 rounding, so the gain of the step
             # taken comes from the gradients instead: the trapezoid (g_acc + g)' s / 2 is
             # exact for a quadratic along the step and free of that cancellation (an
@@ -360,34 +382,21 @@ end
             s = θ - θ_acc
             gain = sum((g_acc + g) .* s) / 2
         end
-        better = adaptive ? isfinite(obj) && gain > zero(T) : obj > obj_acc
-        if iter == 1 || better
+        if iter == 1 || (isfinite(obj) && gain > zero(T))
             θ_acc = θ
             g_acc = g
             F_acc = F
             obj_acc = obj
             if iter > 1
-                if adaptive
-                    # Damping from rho, the actual over the predicted gain (Nielsen 1999)
-                    ρ = pred > zero(T) ? gain / pred : T(0.5)
-                    λ = max(λ * max(T(1 / 3), 1 - (2 * ρ - 1)^3), T(1.0e-7))
-                    ν = T(2)
-                else
-                    λ = max(λ / 10, T(1.0e-7))
-                end
+                # Damping from rho, the actual over the predicted gain (Nielsen 1999)
+                ρ = pred > zero(T) ? gain / pred : T(0.5)
+                λ = max(λ * max(T(1 / 3), 1 - (2 * ρ - 1)^3), T(1.0e-7))
+                ν = T(2)
             end
-        elseif !adaptive && obj == obj_acc
-            θ_acc = θ
-            g_acc = g
-            F_acc = F
         else
             accepted = false
-            if adaptive
-                λ = min(λ * ν, T(1.0e7))
-                ν = min(2 * ν, T(1.0e7))
-            else
-                λ = min(λ * 10, T(1.0e7))
-            end
+            λ = min(λ * ν, T(1.0e7))
+            ν = min(2 * ν, T(1.0e7))
         end
 
         # A parameter on a bound whose ascent gradient points out of the box is held, and
@@ -420,31 +429,26 @@ end
         # Stop test. The damped gain g' A⁻¹ g never exceeds the undamped Fisher-scoring gain
         # g' F⁻¹ g (A ⪰ F), so it is a necessary condition, and the undamped matrix is
         # factored only when it holds: the stop is exactly the undamped gain below gain_tol.
-        if accepted && ok && adaptive && sum(g_free .* Δ) < 2 * gain_tol &&
+        if accepted && ok && sum(g_free .* Δ) < 2 * gain_tol &&
                 _newton_gain(F_acc, held, g_free) < gain_tol
             stopped = true
             break
         end
-        if adaptive
-            θ, pred = _adaptive_trial(Δ, θ_acc, g_acc, F_acc, constraints)
-            # At the largest damping a trial that rounds to the accepted point in Float32 is
-            # a fixed point: it is rejected, lambda stays at its cap, and every later pass
-            # makes the same trial. The fit ends here with the result the cap would give.
-            # (Below the cap a larger lambda gives a new step, which can differ.)
-            ok && λ >= T(1.0e7) && θ == θ_acc && break
-        else
-            step = clamp.(Δ, -constraints.max_step, constraints.max_step)
-            θ = clamp.(θ_acc + step, constraints.lower, constraints.upper)
-        end
+        θ, pred = _trial_step(Δ, θ_acc, g_acc, F_acc, constraints)
+        # At the largest damping a trial that rounds to the accepted point in Float32 is a
+        # fixed point: it is rejected, lambda stays at its cap, and every later pass makes
+        # the same trial. The fit ends here with the result the cap would give. (Below the
+        # cap a larger lambda gives a new step, which can differ.)
+        ok && λ >= T(1.0e7) && θ == θ_acc && break
     end
     return θ_acc, obj_acc, passes, stopped
 end
 
-# Next trial of an adaptive (Gaussian) fit, `(θ, pred)`. The whole step is scaled so that no
+# Next trial of a fit, `(θ, pred)`. The whole step is scaled so that no
 # parameter exceeds its step limit, which keeps its direction: clamping one component alone
 # breaks the coupled step (photons and background assume z moves the full amount) and the
 # trial fails. `pred` is the gain the quadratic model predicts for the step taken.
-@noinline function _adaptive_trial(
+@noinline function _trial_step(
         Δ::SVector{N, T}, θ_acc::SVector{N, T}, g_acc::SVector{N, T},
         F_acc::SMatrix{N, N, T}, constraints::ParameterConstraints{N}
     ) where {N, T}
@@ -463,7 +467,7 @@ end
     return θ, sum(g_acc .* s) - sum(s .* (F_acc * s)) / 2
 end
 
-# The two factorizations of an LM pass and the adaptive trial step are separate,
+# The two factorizations of an LM pass and the trial step are separate,
 # non-inlined functions: inlined into the kernel, the POCL CPU kernel (KernelAbstractions
 # 0.10) ran Gaussian fits up to 8 times slower than with them as calls. Results are the
 # same either way.
@@ -506,7 +510,6 @@ end
         uncertainties::AbstractArray{T, 2},
         # Off-diagonal: [σ_xy, σ_xz, σ_yz] = H_inv[1,2], H_inv[1,3], H_inv[2,3]
         covariances::AbstractArray{T, 2},
-        log_likelihoods::AbstractArray{T, 1},
         # Pearson statistic sum (d - mu)^2 / (mu + readout variance), the p-value's input
         chi2::AbstractArray{T, 1},
         # 1 where the fit met its convergence test before the iterations cap, else 0
@@ -538,9 +541,7 @@ end
     )
     @inbounds converged[idx] = met ? 0x01 : 0x00
 
-    # Compute final log-likelihood ratio, Pearson statistic and full Fisher Information
-    # Matrix for CRLB
-    log_likelihood = zero(T)
+    # Pearson statistic and full Fisher Information Matrix for the CRLB at the end point
     chi2_sum = zero(T)
     H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
 
@@ -548,24 +549,12 @@ end
         model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
         data_ij = roi[i, j]
 
-        # Log-likelihood contribution (dispatch based on camera_model Val)
-        # camera_model is Val{false} for IdealCamera, Val{true} for sCMOS
-        log_likelihood += if camera_model isa Val{false}
-            compute_log_likelihood(data_ij, model, IdealCameraInternal())
-        else
-            # sCMOS: convert ROI-local (i,j) to camera coordinates
-            cam_i = corner_y + i - 1
-            cam_j = corner_x + j - 1
-            compute_log_likelihood(data_ij, model, variance_map, cam_i, cam_j)
-        end
-
         # variance = model + readout variance (zero for IdealCamera)
         variance = model + _readout_variance(
             camera_model, model, variance_map, corner_x, corner_y, i, j
         )
 
-        # Pearson statistic (d - mu)^2 / variance, for both cameras; for sCMOS it is
-        # -2 times the log-likelihood ratio above.
+        # Pearson statistic (d - mu)^2 / variance, for both cameras
         if variance > zero(T)
             chi2_sum += (data_ij - model)^2 / variance
         end
@@ -592,6 +581,5 @@ end
     @inbounds covariances[2, idx] = ok && has_z ? H_inv[1, 3] : zero(T)
     @inbounds covariances[3, idx] = ok && has_z ? H_inv[2, 3] : zero(T)
 
-    @inbounds log_likelihoods[idx] = log_likelihood
     @inbounds chi2[idx] = chi2_sum
 end

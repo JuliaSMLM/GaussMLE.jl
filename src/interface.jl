@@ -150,11 +150,10 @@ Camera noise model is determined by the ROIBatch type:
 # Keyword Arguments
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
-- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
-  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
-  `iterations - 1` steps and `iterations = 1` returns the start. Default 100 for the
-  Gaussian models, which stop earlier once converged (`n_converged` leaves out one that
-  reaches the cap first), and 20 for `SplinePSFModel`, which runs every pass
+- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each start for
+  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a fit takes at
+  most `iterations - 1` steps and `iterations = 1` returns the start. Default 100; a fit
+  stops earlier once converged (`n_converged` leaves out one that reaches the cap first)
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
@@ -259,7 +258,7 @@ Memory components:
 - results: batch_size × n_params × 4 bytes
 - uncertainties: batch_size × n_params × 4 bytes
 - covariances: batch_size × 3 × 4 bytes
-- log-likelihoods and Pearson statistics: batch_size × 2 × 4 bytes
+- Pearson statistics: batch_size × 4 bytes
 - corners: batch_size × 2 × 4 bytes
 - convergence flags: batch_size bytes
 - variance map: `map_bytes` (shared; the kernel receives the whole camera map, so pass
@@ -273,7 +272,7 @@ function estimate_batch_memory(
     results_bytes = batch_size * n_params * 4
     uncertainties_bytes = batch_size * n_params * 4
     covariances_bytes = batch_size * 3 * 4
-    statistics_bytes = batch_size * 2 * 4
+    statistics_bytes = batch_size * 4
     corners_bytes = batch_size * 2 * 4
     converged_bytes = batch_size
     return data_bytes + results_bytes + uncertainties_bytes + covariances_bytes +
@@ -315,7 +314,8 @@ end
 
 # KA's default can overflow POCL's work-group stack with few Julia threads;
 # small groups keep every thread busy.
-# Measured on kitt: ~34-42% higher XYNB throughput with 16-32 Julia threads.
+# Measured on a 32-thread workstation: ~34-42% higher XYNB throughput with 16-32 Julia
+# threads.
 const CPU_WORKGROUP_SIZE = 64
 
 # After a failed GPU attempt. A context that could not be created is released, so its
@@ -336,8 +336,8 @@ end
 # A fit whose x or y (and z, for a model with an axial position) ended exactly on a bound
 # of `constraints` did not localize an emitter inside the allowed region: its Fisher matrix
 # says nothing about where the emitter is. Its uncertainties become `Inf` and its
-# covariances zero, the convention of a failed inversion; fitted parameters, log-likelihood
-# and chi2 stay. The clamp returns the bound itself, so equality is exact. A parameter
+# covariances zero, the convention of a failed inversion; fitted parameters and chi2
+# stay. The clamp returns the bound itself, so equality is exact. A parameter
 # the caller holds fixed (equal bounds) is skipped.
 function _mark_pinned_fits!(
         uncertainties::Matrix{Float32}, covariances::Matrix{Float32},
@@ -370,7 +370,7 @@ const ONE_ROI_OOM_PAUSE = 0.5
 _validate_psf_box(::Any, ::Integer) = nothing
 
 """
-    _run_mle_kernel!(results, uncertainties, covariances, log_likelihoods, chi2,
+    _run_mle_kernel!(results, uncertainties, covariances, chi2,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
                      fitter; vendor) -> (actual_backend, device_id, actual_batch_size,
                      actual_n_batches)
@@ -379,7 +379,7 @@ Internal helper that runs the MLE kernel on CPU or GPU with appropriate batching
 Handles all backend selection and batch management logic.
 
 # Arguments
-- Pre-allocated output arrays: results, uncertainties, covariances, log_likelihoods, chi2
+- Pre-allocated output arrays: results, uncertainties, covariances, chi2
   (the Pearson statistic the p-values come from)
 - Input data and parameters: data, psf_pixels, use_scmos, variance_map, x_corners,
   y_corners
@@ -397,7 +397,6 @@ function _run_mle_kernel!(
         results::Matrix{Float32},
         uncertainties::Matrix{Float32},
         covariances::Matrix{Float32},
-        log_likelihoods::Vector{Float32},
         chi2::Vector{Float32},
         data::Array{Float32, 3},
         psf_pixels,
@@ -423,6 +422,7 @@ function _run_mle_kernel!(
     # variance would make the kernel throw or return nonsense, so it is refused here.
     use_scmos isa Val{true} && _validate_variance_values(variance_map)
     constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
+    _validate_constraints(constraints, fitter.psf_model)
 
     # Track for GaussMLEFitInfo
     actual_backend = :cpu
@@ -569,9 +569,6 @@ function _run_mle_kernel!(
                     d_covariances = KernelAbstractions.allocate(
                         gpu_backend, Float32, (3, batch_size_actual)
                     )
-                    d_log_likelihoods = KernelAbstractions.allocate(
-                        gpu_backend, Float32, batch_size_actual
-                    )
                     d_chi2 = KernelAbstractions.allocate(
                         gpu_backend, Float32, batch_size_actual
                     )
@@ -584,7 +581,7 @@ function _run_mle_kernel!(
                         unified_gaussian_mle_kernel!(gpu_backend) :
                         unified_gaussian_mle_kernel!(gpu_backend, workgroup)
                     kernel(
-                        d_results, d_uncertainties, d_covariances, d_log_likelihoods,
+                        d_results, d_uncertainties, d_covariances,
                         d_chi2, d_converged, d_batch_data, device_psf, use_scmos,
                         d_variance_map,
                         d_x_corners, d_y_corners,
@@ -597,7 +594,6 @@ function _run_mle_kernel!(
                     results[:, batch_start:batch_end] = Array(d_results)
                     uncertainties[:, batch_start:batch_end] = Array(d_uncertainties)
                     covariances[:, batch_start:batch_end] = Array(d_covariances)
-                    log_likelihoods[batch_start:batch_end] = Array(d_log_likelihoods)
                     chi2[batch_start:batch_end] = Array(d_chi2)
                     converged[batch_start:batch_end] = Array(d_converged)
                 end
@@ -709,7 +705,7 @@ function _run_mle_kernel!(
             actual_n_batches = 1
             kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2, converged,
+                results, uncertainties, covariances, chi2, converged,
                 data, cpu_psf, use_scmos, variance_map, x_corners, y_corners,
                 constraints, fitter.iterations,
                 ndrange = n_fits
@@ -729,13 +725,12 @@ function _run_mle_kernel!(
                 batch_results = @view results[:, batch_start:batch_end]
                 batch_uncertainties = @view uncertainties[:, batch_start:batch_end]
                 batch_covariances = @view covariances[:, batch_start:batch_end]
-                batch_llr = @view log_likelihoods[batch_start:batch_end]
                 batch_chi2 = @view chi2[batch_start:batch_end]
                 batch_converged = @view converged[batch_start:batch_end]
 
                 kernel = unified_gaussian_mle_kernel!(ka_backend, CPU_WORKGROUP_SIZE)
                 kernel(
-                    batch_results, batch_uncertainties, batch_covariances, batch_llr,
+                    batch_results, batch_uncertainties, batch_covariances,
                     batch_chi2, batch_converged, batch_data, cpu_psf, use_scmos,
                     variance_map,
                     batch_x_corners, batch_y_corners,
@@ -771,12 +766,12 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
   read noise
 
 Array input assumes 0.1 μm pixels (a `SplinePSFModel` keeps its own `pixel_size`, so
-emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI
-corners.
+emitter x, y in microns follow the model's pixel). Emitter x and y are positions within
+each ROI: microns from the ROI's top-left edge, so pixel 1's center is at half a pixel.
 For n ROIs of side b, `variance_map` is one of
 - a `(b, b)` map, used for every ROI;
 - a `(b, b, n)` array, one map per ROI;
-- a `(b, b*n)` map tiled horizontally like the ROI corners (ROI k reads columns
+- a `(b, b*n)` map with the ROIs' maps side by side (ROI k reads columns
   `(k-1)*b+1:k*b`); a larger map that covers rows `1:b` and columns `1:b*n` is also read
   that way.
 
@@ -787,8 +782,8 @@ Use `ROIBatch` for real camera calibration and coordinates.
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
 
 A fit with a singular Fisher matrix, or whose x, y (or z) ended exactly on a bound of its
-constraints, reports `Inf` for every uncertainty and zero covariances; its parameters,
-log-likelihood and p-value are as fitted.
+constraints, reports `Inf` for every uncertainty and zero covariances; its parameters and
+p-value are as fitted.
 
 # Examples
 ```julia
@@ -832,14 +827,14 @@ function fit(
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
-    log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
     converged = Vector{UInt8}(undef, n_fits)
 
     # Determine camera model from variance_map keyword
     use_scmos = isnothing(variance_map) ? Val(false) : Val(true)
     # Kernel corners index the map: tiled for a `(box, box * n)` map, 1 for every ROI when
-    # one `(box, box)` map serves all. The output coordinates use `x_corners_smld` below.
+    # one `(box, box)` map serves all. The output coordinates do not use them: every ROI is
+    # placed at corner (1, 1) below.
     x_corners = Int32[1 + (i - 1) * box_size for i in 1:n_fits]
     y_corners = fill(Int32(1), n_fits)
     if isnothing(variance_map)
@@ -851,7 +846,7 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods, chi2,
+        results, uncertainties, covariances, chi2,
         data_f32, psf_pixels, use_scmos, var_map, x_corners, y_corners,
         fitter; converged
     )
@@ -859,11 +854,11 @@ function fit(
     # Goodness-of-fit p-values: Pearson statistic against χ²(df), df = n_pixels - n_params
     pvalues = _gof_pvalues(chi2, box_size^2 - n_params)
 
-    # Create minimal ROIBatch for SMLD conversion
-    roi_size = size(data_f32, 1)
-    # [1, 1+roi_size, ...] (1-indexed for Julia)
-    x_corners_smld = Int32[1 + (i - 1) * roi_size for i in 1:n_fits]
-    y_corners_smld = fill(Int32(1), n_fits)  # All at y=1
+    # Minimal ROIBatch for the SMLD conversion, every ROI at corner (1, 1): emitter x, y
+    # are positions within the ROI. (Tiled corners put ROI k at x of (k - 1) boxes, where
+    # Float32 loses position precision after tens of thousands of ROIs.)
+    x_corners_smld = ones(Int32, n_fits)
+    y_corners_smld = ones(Int32, n_fits)
     frame_indices = ones(Int32, n_fits)
 
     # Create minimal camera for SMLD conversion (fit(Array) has no real camera)
@@ -873,7 +868,7 @@ function fit(
         data_f32, x_corners_smld, y_corners_smld, frame_indices, camera_smld
     )
     loc_result = create_localization_result(
-        results, uncertainties, covariances, log_likelihoods, pvalues, batch,
+        results, uncertainties, covariances, pvalues, batch,
         fitter.psf_model
     )
 
@@ -955,7 +950,6 @@ function fit(
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
-    log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
     converged = Vector{UInt8}(undef, n_fits)
 
@@ -969,7 +963,7 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods, chi2,
+        results, uncertainties, covariances, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
         fitter; converged
@@ -980,7 +974,7 @@ function fit(
 
     # Use real ROIBatch for coordinate conversion (preserves corners!)
     loc_result = create_localization_result(
-        results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch,
+        results, uncertainties, covariances, pvalues, roi_batch,
         fitter.psf_model
     )
 
@@ -1028,7 +1022,6 @@ function fit(
     results = Matrix{Float32}(undef, n_params, n_fits)
     uncertainties = Matrix{Float32}(undef, n_params, n_fits)
     covariances = Matrix{Float32}(undef, 3, n_fits)  # [σ_xy, σ_xz, σ_yz]
-    log_likelihoods = Vector{Float32}(undef, n_fits)
     chi2 = Vector{Float32}(undef, n_fits)
     converged = Vector{UInt8}(undef, n_fits)
 
@@ -1040,7 +1033,7 @@ function fit(
 
     # Run MLE kernel with batching
     actual_backend, device_id, actual_batch_size, actual_n_batches = _run_mle_kernel!(
-        results, uncertainties, covariances, log_likelihoods, chi2,
+        results, uncertainties, covariances, chi2,
         data_f32, psf_pixels, use_scmos, variance_map, roi_batch.x_corners,
         roi_batch.y_corners,
         fitter; converged
@@ -1052,7 +1045,7 @@ function fit(
     # Use original ROIBatch for coordinate conversion (preserves corners and original
     # camera!)
     loc_result = create_localization_result(
-        results, uncertainties, covariances, log_likelihoods, pvalues, roi_batch,
+        results, uncertainties, covariances, pvalues, roi_batch,
         fitter.psf_model
     )
 
@@ -1082,11 +1075,10 @@ Kwargs match GaussMLEConfig fields exactly.
 
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
-- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
-  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
-  `iterations - 1` steps and `iterations = 1` returns the start. Default 100 for the
-  Gaussian models, which stop earlier once converged (`n_converged` leaves out one that
-  reaches the cap first), and 20 for `SplinePSFModel`, which runs every pass
+- `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each start for
+  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a fit takes at
+  most `iterations - 1` steps and `iterations = 1` returns the start. Default 100; a fit
+  stops earlier once converged (`n_converged` leaves out one that reaches the cap first)
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time
@@ -1104,8 +1096,8 @@ ROI, before any kernel launch.
 - `Tuple{BasicSMLD, GaussMLEFitInfo}`: Fitted localizations and fit metadata
 
 A fit with a singular Fisher matrix, or whose x, y (or z) ended exactly on a bound of its
-constraints, reports `Inf` for every uncertainty and zero covariances; its parameters,
-log-likelihood and p-value are as fitted.
+constraints, reports `Inf` for every uncertainty and zero covariances; its parameters and
+p-value are as fitted.
 
 # Examples
 Fit 10 simulated ROIs on the CPU:

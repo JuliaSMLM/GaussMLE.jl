@@ -261,12 +261,14 @@ band. Independent spline Monte Carlo validation remains in the Long group on CPU
 
 `SplinePSFModel` fits each ROI from several z starts by default (six for a ±1 µm
 `z_range`), so a spline fit costs several Levenberg-Marquardt fits; `starts = 1` fits from
-the scan start alone. On kitt's CPU (8 threads, load average about 27 from other users),
-10,000 simulated ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of
-an astigmatic Gaussian PSF and `z_range = (-1, 1)`, ran at 8,300 fits/s with `starts = 1`
-and 1,760 fits/s with the default six starts (4.7 times the time), against 47,600 fits/s
-for `AstigmaticXYZNB`, whose fit stops once converged. The multi-start cost is a ratio on one machine and was not measured on a
-GPU.
+the scan start alone. `AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored
+z. On an 8-thread workstation CPU (load average about 8 from other users), 10,000 simulated
+ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of an astigmatic
+Gaussian PSF and `z_range = (-1, 1)`, ran at 26,600 fits/s with `starts = 1` and 3,900
+fits/s with the default six starts (6.8 times the time), against 18,100 fits/s for
+`AstigmaticXYZNB` with the same widths (focal offset 0.25 µm). Its second start costs 3.5
+times the time of one start with that strong astigmatism and 2.1 times with a focal offset
+of 0.05 µm. These ratios are on one machine and were not measured on a GPU.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
@@ -291,13 +293,16 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 
 ## Result Consistency
 
-The same unified kernel runs on every device via KernelAbstractions.jl. Agreement between GPU and CPU results depends on the model:
+The same unified kernel runs on every device via KernelAbstractions.jl. The fit's
+accept/reject decisions and its stop test branch on Float32 values near the maximum, so two
+devices can end a fit at slightly different points within the stop tolerance. Results
+therefore agree to the stop tolerance, not to rounding:
 
-- Gaussian models: differences are float32 rounding (about 1e-6 microns).
-- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 differ by
-  1 to 2 ulp, because POCL computes `log`, `pow` and `sqrt` with OpenCL builtins. Under
-  KernelAbstractions 0.9, Gaussian CPU results are bit for bit those of GaussMLE 0.4.2.
-- `SplinePSFModel`: the Levenberg-Marquardt accept/reject test branches on objective differences at float32 resolution near the optimum, so the two devices can stop at slightly different points along flat directions. CPU and GPU results differ by at most about 0.01 CRLB in any parameter (measured 0.009 on an RTX 4090 over 20,000 values of the GPU test group's design), not machine precision.
+- CPU and GPU: within about 0.02 CRLB in any parameter, for every model (largest measured
+  on an RTX 4090: 0.018 CRLB). At a few hundred photons, where the likelihood can have
+  more than one maximum, a few fits in 50,000 end in different maxima.
+- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 agree to the
+  same tolerance (POCL computes `log`, `pow` and `sqrt` with OpenCL builtins).
 
 ## Troubleshooting
 

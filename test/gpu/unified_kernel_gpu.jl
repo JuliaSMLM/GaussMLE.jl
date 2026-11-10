@@ -54,7 +54,6 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             d_results = to_gpu(zeros(Float32, 4, n_test_blobs))
             d_uncertainties = to_gpu(zeros(Float32, 4, n_test_blobs))
             d_covariances = to_gpu(zeros(Float32, 3, n_test_blobs))
-            d_log_likelihoods = to_gpu(zeros(Float32, n_test_blobs))
             d_chi2 = to_gpu(zeros(Float32, n_test_blobs))
 
             # Create dummy corners and variance for new kernel signature
@@ -67,7 +66,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)
 
             kernel(
-                d_results, d_uncertainties, d_covariances, d_log_likelihoods, d_chi2,
+                d_results, d_uncertainties, d_covariances, d_chi2,
                 to_gpu(zeros(UInt8, n_test_blobs)),
                 d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                 constraints, iterations,
@@ -81,14 +80,12 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             results = Array(d_results)
             uncertainties = Array(d_uncertainties)
             covariances = Array(d_covariances)
-            log_likelihoods = Array(d_log_likelihoods)
             chi2 = Array(d_chi2)
 
             # Check results
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
             @test all(isfinite.(chi2) .& (chi2 .>= 0))
 
             # Check parameters are in expected ranges
@@ -111,13 +108,12 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             results_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
             uncertainties_cpu = Matrix{Float32}(undef, 4, n_test_blobs)
             covariances_cpu = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods_cpu = Vector{Float32}(undef, n_test_blobs)
             chi2_cpu = Vector{Float32}(undef, n_test_blobs)
 
             backend_cpu = KernelAbstractions.CPU()
             kernel_cpu = GaussMLE.unified_gaussian_mle_kernel!(backend_cpu)
             kernel_cpu(
-                results_cpu, uncertainties_cpu, covariances_cpu, log_likelihoods_cpu,
+                results_cpu, uncertainties_cpu, covariances_cpu,
                 chi2_cpu, zeros(UInt8, n_test_blobs), data, psf_model, Val(false), variance_map,
                 x_corners, y_corners,
                 constraints, iterations,
@@ -129,7 +125,6 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             d_results = to_gpu(zeros(Float32, 4, n_test_blobs))
             d_uncertainties = to_gpu(zeros(Float32, 4, n_test_blobs))
             d_covariances = to_gpu(zeros(Float32, 3, n_test_blobs))
-            d_log_likelihoods = to_gpu(zeros(Float32, n_test_blobs))
             d_chi2 = to_gpu(zeros(Float32, n_test_blobs))
             d_x_corners = to_gpu(x_corners)
             d_y_corners = to_gpu(y_corners)
@@ -138,7 +133,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             backend_gpu = gpu_backend()
             kernel_gpu = GaussMLE.unified_gaussian_mle_kernel!(backend_gpu)
             kernel_gpu(
-                d_results, d_uncertainties, d_covariances, d_log_likelihoods, d_chi2,
+                d_results, d_uncertainties, d_covariances, d_chi2,
                 to_gpu(zeros(UInt8, n_test_blobs)),
                 d_data, psf_model, Val(false), d_variance_map, d_x_corners, d_y_corners,
                 constraints, iterations,
@@ -150,7 +145,6 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             results_gpu = Array(d_results)
             uncertainties_gpu = Array(d_uncertainties)
             covariances_gpu = Array(d_covariances)
-            log_likelihoods_gpu = Array(d_log_likelihoods)
             chi2_gpu = Array(d_chi2)
 
             # Compare results (should be very close)
@@ -160,7 +154,6 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             # it on the scale of the x/y variances rather than relative to itself.
             var_xy = maximum(abs2, uncertainties_cpu[1:2, :])
             @test covariances_cpu ≈ covariances_gpu rtol = 1.0e-3 atol = 1.0e-3 * var_xy
-            @test log_likelihoods_cpu ≈ log_likelihoods_gpu rtol = 1.0e-4
             @test chi2_cpu ≈ chi2_gpu rtol = 1.0e-4
         end
     end
@@ -203,7 +196,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
         function kernel_cov_xy(backend, to)
             out = (
                 to(zeros(Float32, 4, n)), to(zeros(Float32, 4, n)),
-                to(zeros(Float32, 3, n)), to(zeros(Float32, n)), to(zeros(Float32, n)),
+                to(zeros(Float32, 3, n)), to(zeros(Float32, n)),
                 to(zeros(UInt8, n)),
             )
             kernel = GaussMLE.unified_gaussian_mle_kernel!(backend)

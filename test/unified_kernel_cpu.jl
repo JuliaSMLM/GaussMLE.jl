@@ -44,7 +44,6 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
             results = Matrix{Float32}(undef, 4, n_test_blobs)
             uncertainties = Matrix{Float32}(undef, 4, n_test_blobs)
             covariances = Matrix{Float32}(undef, 3, n_test_blobs)
-            log_likelihoods = Vector{Float32}(undef, n_test_blobs)
             chi2 = Vector{Float32}(undef, n_test_blobs)
 
             # Run unified kernel on CPU
@@ -59,7 +58,7 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
             variance_map = zeros(Float32, 512, 512)
 
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2,
+                results, uncertainties, covariances, chi2,
                 zeros(UInt8, size(results, 2)),
                 data, psf_model, Val(false), variance_map, x_corners, y_corners,
                 constraints, iterations,
@@ -70,7 +69,6 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
             @test all(isfinite.(results))
             @test all(uncertainties .> 0)
             @test all(isfinite.(covariances))
-            @test all(isfinite.(log_likelihoods))
             @test all(isfinite.(chi2) .& (chi2 .>= 0))
 
             # Check parameters are in expected ranges
@@ -90,17 +88,16 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
             results = zeros(Float32, length(psf_model), n)
             uncertainties = zeros(Float32, length(psf_model), n)
             covariances = zeros(Float32, 3, n)
-            log_likelihoods = zeros(Float32, n)
             chi2 = zeros(Float32, n)
             kernel(
-                results, uncertainties, covariances, log_likelihoods, chi2,
+                results, uncertainties, covariances, chi2,
                 zeros(UInt8, size(results, 2)),
                 data, psf_model, camera, variance_map,
                 fill(Int32(1), n), fill(Int32(1), n),
                 GaussMLE.default_constraints(psf_model, size(data, 1)), iterations;
                 ndrange = n
             )
-            return log_likelihoods, chi2
+            return results, chi2
         end
 
         # A 3x3 ROI with no iterations, so the model is the initial guess: background the
@@ -108,24 +105,30 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
         # background-subtracted sum, 9.5, is below it); sigma = 1.3 px. The model is
         # mu = 1.5 + 100 gx gy with gx = (0.22598, 0.29948, 0.22598) the pixel integrals of
         # the Gaussian, so mu = 6.6067 (corners), 8.2676 (edges), 10.4687 (center). Pearson:
-        # sum (d - mu)^2 / mu = 38.2438. The Poisson deviance of the same ROI is 57.3987.
+        # sum (d - mu)^2 / mu = 38.2438.
         roi = reshape(Float32[1, 2, 1, 2, 9, 2, 1, 2, 1], 3, 3, 1)
-        llr, chi2 = run_kernel(
+        _, chi2 = run_kernel(
             GaussMLE.GaussianXYNB(1.3f0), roi, Val(false), zeros(Float32, 3, 3);
             iterations = 0
         )
         @test chi2[1] ≈ 38.2438 rtol = 1.0e-5
-        @test llr[1] ≈ -57.3987 / 2 rtol = 1.0e-5  # log_likelihoods keeps the deviance
 
-        # For sCMOS the Pearson statistic with variance mu + readnoise^2 is -2 times the
-        # log-likelihood ratio, so its p-values do not change.
+        # For sCMOS the Pearson statistic uses the variance mu + readnoise^2 of each pixel at
+        # the fitted parameters.
         Random.seed!(3)
         data = 10 .+ 100 .* rand(Float32, 7, 7, 20)
         variance_map = 1 .+ 4 .* rand(Float32, 7, 7)
-        llr, chi2 = run_kernel(
-            GaussMLE.GaussianXYNB(1.3f0), data, Val(true), variance_map; iterations = 20
-        )
-        @test chi2 == -2 .* llr
+        psf = GaussMLE.GaussianXYNB(1.3f0)
+        θs, chi2 = run_kernel(psf, data, Val(true), variance_map; iterations = 20)
+        reference = map(1:20) do k
+            θ = GaussMLE.SVector{4, Float32}(θs[:, k])
+            sum(
+                let mu = GaussMLE.compute_pixel_derivatives(i, j, θ, psf)[1]
+                    Float64(data[i, j, k] - mu)^2 / (mu + variance_map[i, j])
+                end for i in 1:7, j in 1:7
+            )
+        end
+        @test chi2 ≈ reference rtol = 1.0e-4
         @test all(chi2 .> 0)
 
         # chi-squared with 2 degrees of freedom has survival function exp(-x / 2); `ccdf`
@@ -193,13 +196,12 @@ using Test, GaussMLE, KernelAbstractions, LinearAlgebra, Random
         results = zeros(Float32, 4, n)
         uncertainties = zeros(Float32, 4, n)
         covariances = zeros(Float32, 3, n)
-        log_likelihoods = zeros(Float32, n)
         chi2 = zeros(Float32, n)
         kernel = GaussMLE.unified_gaussian_mle_kernel!(
             KernelAbstractions.CPU(), GaussMLE.CPU_WORKGROUP_SIZE
         )
         kernel(
-            results, uncertainties, covariances, log_likelihoods, chi2,
+            results, uncertainties, covariances, chi2,
             zeros(UInt8, size(results, 2)),
             data, psf_model, Val(false), zeros(Float32, 512, 512),
             Int32[1 + (k - 1) * roi for k in 1:n], fill(Int32(1), n),

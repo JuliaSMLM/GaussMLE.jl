@@ -216,11 +216,14 @@ end
         smld, _ = fit(data, config; variance_map = vm)
         @test length(smld.emitters) == n
         @test all(isfinite, [e.x for e in smld.emitters])
-        # Array input carries its own stand-in camera: compare the fitted values only.
-        for f in (:x, :y, :photons, :bg, :σ_x, :σ_y, :σ_photons, :σ_bg, :pvalue)
+        # Array input carries its own stand-in camera: compare the fitted values only. Its x
+        # is within each ROI, the reference's on the sensor, (k - 1) boxes of 0.1 um along.
+        for f in (:y, :photons, :bg, :σ_x, :σ_y, :σ_photons, :σ_bg, :pvalue)
             @test [getfield(e, f) for e in smld.emitters] ==
                 [getfield(e, f) for e in reference.emitters]
         end
+        @test [e.x for e in smld.emitters] ≈
+            [e.x - (k - 1) * box * 0.1f0 for (k, e) in enumerate(reference.emitters)] atol = 1.0f-5
     end
 
     # One (box, box) map for every ROI equals the same map tiled and as (box, box, n).
@@ -236,9 +239,14 @@ end
     )
     batch_one = ROIBatch(data, corners, ones(Int32, n), Int32.(1:n), camera_one)
     reference_one, _ = fit(batch_one, config)
-    for smld in (from_one, from_tiled, from_cube), f in (:x, :y, :photons, :bg, :σ_x, :σ_y)
-        @test [getfield(e, f) for e in smld.emitters] ==
-            [getfield(e, f) for e in reference_one.emitters]
+    for smld in (from_one, from_tiled, from_cube)
+        for f in (:y, :photons, :bg, :σ_x, :σ_y)
+            @test [getfield(e, f) for e in smld.emitters] ==
+                [getfield(e, f) for e in reference_one.emitters]
+        end
+        @test [e.x for e in smld.emitters] ≈ [
+            e.x - (k - 1) * box * 0.1f0 for (k, e) in enumerate(reference_one.emitters)
+        ] atol = 1.0f-5
     end
 
     # A (box, box) map is used as is, not copied n times: the estimate counts its real size
@@ -277,9 +285,9 @@ end
     # The positional form is the box-sized map of before, plus every output.
     @test GaussMLE.estimate_batch_memory(n, box, 4) ==
         GaussMLE.estimate_batch_memory(n, box, 4; map_bytes = 4 * box^2)
-    # data, results and uncertainties, covariances, log-likelihood and chi2, corners, and
-    # one byte per fit for its convergence flag
-    outputs = 4 * n * (box^2 + 2 * 4 + 3 + 2 + 2) + n
+    # data, results and uncertainties, covariances, chi2, corners, and one byte per fit for
+    # its convergence flag
+    outputs = 4 * n * (box^2 + 2 * 4 + 3 + 1 + 2) + n
     @test GaussMLE.estimate_batch_memory(n, box, 4; map_bytes) == outputs + map_bytes
 end
 

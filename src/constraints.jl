@@ -63,11 +63,29 @@ end
 # photons) needed more than 20 passes. At 100, up to 0.3 % of emitters inside the z range
 # had not stopped (PSFs at 1e6 photons or more, narrow PSFs, low-count astigmatic fits
 # with 5 e- read noise), about half of them within 0.1 CRLB of their maximum; near the
-# ends of the z range up to 8.5 % had not. SplinePSFModel runs every pass from each start (its own method).
+# ends of the z range up to 8.5 % had not. AstigmaticXYZNB and SplinePSFModel apply the
+# cap to each of their starts.
 _default_iterations(::PSFModel) = 100
 
 _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = constraints
 
 function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)
     return default_constraints(psf_model, box_size)
+end
+
+# Positions of the photon count and the background in a model's parameter vector
+_photon_background_indices(::PSFModel) = (3, 4)
+_photon_background_indices(::AstigmaticXYZNB) = (4, 5)
+
+# The fit takes the log of each pixel's expected count plus read-noise variance, which a
+# negative photon count or background can make negative, so lower bounds below zero (or
+# NaN) are refused before the kernel runs.
+function _validate_constraints(constraints::ParameterConstraints, psf_model::PSFModel)
+    for (k, name) in zip(_photon_background_indices(psf_model), ("photon", "background"))
+        lo = constraints.lower[k]
+        lo >= 0 || throw(
+            ArgumentError("the $name lower bound must be at least 0, got $lo")
+        )
+    end
+    return nothing
 end

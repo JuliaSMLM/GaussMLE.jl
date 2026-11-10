@@ -102,7 +102,11 @@ The Gaussian models run to convergence:
   one maximum (an emitter beyond the z range), a fit can stop farther from it: in
   simulations of every Gaussian model that include such cases (156,000 fits), 103 stopped
   more than 0.1 CRLB from the likelihood's maximum, nearly all at low counts or beyond the
-  z range.
+  z range. The Long test group checks this against an independent Float64 maximizer of the
+  same objective, started from the fit and from the truth: in 64 conditions (the four
+  Gaussian models, both cameras, 500 to 100,000 photons, 2,000 simulated fits each), at
+  least 99.95 % of the fits that pass the usual filter end within 0.1 CRLB of the higher
+  maximum.
 - **Damping.** On a kept trial, $\lambda$ follows the ratio $\rho$ of the actual to the
   predicted gain of the step (Nielsen's rule): it is multiplied by
   $\max(1/3,\ 1 - (2\rho - 1)^3)$. A discarded trial multiplies $\lambda$ by $\nu$, which
@@ -125,14 +129,18 @@ The Gaussian models run to convergence:
   with $F$, so such a fit is often at its maximum all the same: in the simulations above
   about half of the capped fits were within 0.1 CRLB of it.
 
-`SplinePSFModel` keeps the fixed schedule: a kept trial divides $\lambda$ by 10, each
-component is clamped to its step limit, and every pass runs from the scan start and from
-`starts - 1` fixed z starts (see the model guide), keeping the start with the highest
-objective. `iterations` caps the pixel passes of every fit (see Iteration Strategy).
+Every model uses these rules. One fit climbs to the maximum of the basin it starts in, so
+two models fit from more than one start and keep the one with the highest objective; the
+fit counts as converged when that start did. `AstigmaticXYZNB` fits a second time from the
+first fit's end point with z negated: its likelihood has a second maximum near the mirrored
+z, where the two widths swap, and with weak astigmatism (a focal offset of 0.05 µm against a
+depth scale of 0.4 µm) a single start ended there for 1 to 12 % of in-range emitters at 300
+to 1,000 photons, with z of the wrong sign; the second start removes those, at about twice
+the fit time. `SplinePSFModel` fits from the scan start and from `starts - 1` fixed z
+starts (see the model guide). `iterations` caps the pixel passes of every start (see
+Iteration Strategy).
 
-The full Fisher matrix at the final $\theta$ is inverted once for uncertainties. The reported
-log-likelihood ratio is the one given above for both cameras; for sCMOS that is the Gaussian
-approximation $-(N-\mu)^2 / (2(\mu+v))$, not the Poisson-shifted objective the fit maximizes. The
+The full Fisher matrix at the final $\theta$ is inverted once for uncertainties. The
 p-value uses the Pearson statistic for every model (see Goodness of Fit).
 
 ## Derivatives
@@ -299,18 +307,19 @@ X^2 = \sum_{i,j:\,\mathrm{Var}_{i,j} > 0} \frac{(N_{i,j} - \mu(\hat\theta)_{i,j}
 \qquad \mathrm{df} = n_{\text{pixels}} - n_{\text{params}}
 ```
 
-with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout term is zero for `IdealCamera`), the same statistic for both cameras and every PSF model. For sCMOS it equals $-2$ times the reported log-likelihood ratio. The Poisson deviance, $-2$ times the log-likelihood ratio of `IdealCamera`, is not $\chi^2$-distributed at low counts: at 1 to 2 photons per pixel a 0.05 cut on its p-value rejected 17 to 32 % of correct fits. The Pearson statistic is calibrated there (0.045 to 0.061 of correct fits below 0.05 in the 24 conditions measured on SMLMSim boxes), and rejects wrong-width and two-emitter ROIs as often as a moment-matched deviance. The p-value is computed with `ccdf`, so a poor fit does not round to exactly zero in Float32.
+with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout term is zero for `IdealCamera`), the same statistic for both cameras and every PSF model. The Poisson deviance, $-2$ times the log-likelihood ratio of `IdealCamera`, is not $\chi^2$-distributed at low counts: at 1 to 2 photons per pixel a 0.05 cut on its p-value rejected 17 to 32 % of correct fits. The Pearson statistic is calibrated there (0.045 to 0.061 of correct fits below 0.05 in the 24 conditions measured on SMLMSim boxes), and rejects wrong-width and two-emitter ROIs as often as a moment-matched deviance. The p-value is computed with `ccdf`, so a poor fit does not round to exactly zero in Float32.
 
 ## Numerical Considerations
 
 ### Iteration Strategy
 
-`iterations` caps the Levenberg-Marquardt pixel passes of a fit: by default 100 for the
-Gaussian models, which converge in fewer for most fits, and 20 for `SplinePSFModel`. Each pass
+`iterations` caps the Levenberg-Marquardt pixel passes of a fit: by default 100, and most fits
+converge in far fewer. Each pass
 evaluates the objective, gradient and Fisher matrix at one trial point; the first evaluates the
 start and the last only evaluates, so a fit takes at most `iterations - 1` steps and
-`iterations = 1` returns the start. The Gaussian models stop before the cap once converged (see
-Levenberg-Marquardt Optimization); each of the spline's `starts` runs the full count. Photon and
+`iterations = 1` returns the start. A fit stops before the cap once converged (see
+Levenberg-Marquardt Optimization); for a model fitted from several starts the cap applies to
+each start. Photon and
 background steps have no default step limit: the damped step and the likelihood check keep them
 in place, where the diagonal Newton-Raphson update of GaussMLE 0.4.2 and earlier limited them to
 100 photons and 2 background photons per iteration and fell short of the maximum for bright
@@ -323,8 +332,8 @@ To ensure numerical stability:
 - **Parameter constraints**: Restrict parameter updates with step limits and enforce bounds (positive intensity, bounded position, etc.)
 - **Fisher matrix scaling**: The Fisher Information Matrix is positive semidefinite and its entries span many orders of magnitude (the position entries grow like $N$, the photon entry shrinks like $1/N$). It is inverted after Jacobi scaling, $G = D I D$ with $D = \mathrm{diag}(I_{kk}^{-1/2})$, so $G$ has a unit diagonal, and $I^{-1} = D G^{-1} D$. Nothing is added to the diagonal, so the photon uncertainty stays at the Cramér-Rao bound for bright emitters
 - **Cholesky decomposition**: $G$ is inverted by Cholesky only. A Cholesky pivot (the squared diagonal of the factor) at or below $n_\mathrm{pix}\,\epsilon$, with $n_\mathrm{pix}$ the number of pixels of the box and $\epsilon$ the machine epsilon of the working precision, means $G$ is singular to working precision: the accumulation over the pixels perturbs the entries of $G$ by about that much, so a smaller pivot cannot be told from that of an exactly singular matrix; there is no LU fallback, since $I$ is positive semidefinite by construction and LU there only turns rounding into a number. If a diagonal entry of $I$ is not positive and finite, the Cholesky fails, or a diagonal entry of $I^{-1}$ is not positive and finite, the fitted parameters are retained with infinite uncertainties and zero covariances
-- **Fits that did not converge**: A Gaussian fit that ended without meeting its stop test (see Levenberg-Marquardt Optimization) is left out of `GaussMLEFitInfo.n_converged`; its parameters, uncertainties, log-likelihood and p-value are those of its last kept trial. `SplinePSFModel` runs every pass on its fixed schedule and counts every fit
-- **Fits on a bound**: A fit whose x or y (and z, for `AstigmaticXYZNB` and `SplinePSFModel`) ends exactly on a lower or upper bound of its constraints did not localize an emitter inside the allowed region. After the kernel, on the host, it reports infinite uncertainties and zero covariances as well; its parameters, log-likelihood and p-value are unchanged. A parameter the caller holds fixed (equal lower and upper bounds) is not a bound hit
+- **Fits that did not converge**: A fit that ended without meeting its stop test (see Levenberg-Marquardt Optimization) is left out of `GaussMLEFitInfo.n_converged`; its parameters, uncertainties and p-value are those of its last kept trial. A model fitted from several starts counts as converged when the start it keeps did
+- **Fits on a bound**: A fit whose x or y (and z, for `AstigmaticXYZNB` and `SplinePSFModel`) ends exactly on a lower or upper bound of its constraints did not localize an emitter inside the allowed region. After the kernel, on the host, it reports infinite uncertainties and zero covariances as well; its parameters and p-value are unchanged. A parameter the caller holds fixed (equal lower and upper bounds) is not a bound hit
 
 With `constraints=nothing`, defaults are built at fit time from ROI size n, and the config retains `nothing`. Default x and y bounds are `[-1,n+2]` in ROI pixels, extending 1.5 pixels beyond each ROI edge.
 

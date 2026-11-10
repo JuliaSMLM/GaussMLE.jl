@@ -592,7 +592,7 @@ function run_spline_comparison_benchmark()
     rows = NamedTuple[]
     println(
         "\nSpline / AstigmaticXYZNB comparison: 10,000 ROIs, at most 20 Levenberg-Marquardt \
-        passes (AstigmaticXYZNB stops once converged; SplinePSFModel runs every pass)"
+        passes per start (each start stops once converged)"
     )
     println("Times include host/device transfers; table construction is excluded.")
     @printf("%-18s %3s %-7s %-6s %12s\n", "Model", "Box", "Camera", "Device", "fits/s")
