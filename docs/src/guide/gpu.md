@@ -214,7 +214,7 @@ If other processes are present but memory is sufficient and compute utilization 
 
 ### CUDA Context Lifecycle
 
-**On failure:** `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`. The context and its reserved memory are freed when the last reference is released. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
+**On failure:** when the context could not be created, `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`, so its reservation cannot block other processes; `CUDA.reclaim()` is not called then, because it requires an active context and would either hang or silently re-create the released context. A live context is kept: releasing it under CUDA.jl makes every later call in the process fail with `CONTEXT_IS_DESTROYED`, so a retry with a smaller batch could not run. Instead the failed attempt's arrays are collected (`GC.gc(true)`) and the pool's memory is returned (`CUDA.reclaim()`).
 
 **On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
 

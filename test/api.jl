@@ -49,6 +49,26 @@ end
         @test batch.camera === scmos
     end
 
+    @testset "sCMOS simulation reads calibration maps as (y, x)" begin
+        # A 64 x 32 sensor (x by y) whose read noise is 0 left of column 40 and 50 e- from
+        # it on, stored as a (32, 64) map. A ROI at x = 50 must take the noisy patch, one at
+        # x = 1 the noise-free one. Indexing the map as (x, y) read past its 32 rows.
+        nx, ny = 64, 32
+        readnoise = zeros(Float32, ny, nx)
+        readnoise[:, 40:end] .= 50.0f0
+        scmos = SMLMData.SCMOSCamera(
+            nx, ny, 0.1f0, readnoise; offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
+        )
+        corners = Int32[50 1; 1 1]  # (x, y) per column: ROI 1 at x = 50, ROI 2 at x = 1
+        batch = GaussMLE.generate_roi_batch(
+            scmos, GaussMLE.GaussianXYNB(0.13f0); n_rois = 2, roi_size = 7, corners,
+            seed = 3
+        )
+        noisy, clean = batch.data[:, :, 1], batch.data[:, :, 2]
+        @test all(isinteger, clean)  # Poisson counts only
+        @test count(!isinteger, noisy) > 40  # read noise on (nearly) every pixel
+    end
+
     @testset "Fitting with ROIBatch" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)

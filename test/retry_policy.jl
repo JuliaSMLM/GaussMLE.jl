@@ -120,6 +120,10 @@ function run_retry_loop(vendor, backend; timeout = 0.4)
 end
 
 @testset "GPU retry policy" begin
+    # Compile the fake vendor's kernel launch once, so the timed testsets below measure the
+    # retry loop and not that first compilation (minutes on a cold Julia 1.11 build).
+    @test run_retry_loop(FakeVendor(), :gpu; timeout = 30.0).outcome === :gpu
+
     @testset "deterministic error under :gpu rethrows at once" begin
         r = run_retry_loop(FakeVendor(; failure = ErrorException("compile error")), :gpu)
         @test r.outcome isa ErrorException

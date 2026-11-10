@@ -64,12 +64,7 @@ Using the new camera-aware simulator for reliable test data generation
         mean_reported_std = mean(uncertainties)
         std_ratio = empirical_std / mean_reported_std
 
-        # Bias test: always pass for positions
-        if param_idx <= 2
-            bias_pass = true
-        else
-            bias_pass = abs(bias) < bias_tol
-        end
+        bias_pass = abs(bias) < bias_tol
 
         # Tests
         std_pass = abs(1.0f0 - std_ratio) < std_ratio_tol

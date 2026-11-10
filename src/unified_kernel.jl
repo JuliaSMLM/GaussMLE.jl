@@ -219,8 +219,11 @@ end
 @inline function _fit_objective(data::T, model::T, v::T) where {T}
     s = data + v
     r = model - data
-    s > zero(T) || return s * log(model + v) - (model + v)
-    return s * log1p(r / s) - r
+    s > zero(T) && return s * log1p(r / s) - r
+    # s = 0 (no counts and no read noise): the limit of s log(mu + v) is 0, also at
+    # mu + v = 0 (a fit whose background may be zero), where the product is NaN
+    s == zero(T) && return -(model + v)
+    return s * log(model + v) - (model + v)
 end
 
 # Solve (L L') x = b for the Cholesky factor L (lower triangle) of
@@ -387,12 +390,16 @@ end
             end
         end
 
-        # A parameter on a bound whose ascent gradient points out of the box is held:
-        # its row and column become the identity and its gradient zero, so the solve
-        # moves only the free parameters (the coupled photon and background steps
-        # otherwise assume the held one moves, and the clamped trial is rejected).
+        # A parameter on a bound whose ascent gradient points out of the box is held, and
+        # so is one the caller fixes (equal bounds), whatever its gradient: a fixed
+        # parameter with no information otherwise leaves a zero row that fails every
+        # factorization. A held parameter's row and column become the identity and its
+        # gradient zero, so the solve moves only the free parameters (the coupled photon
+        # and background steps otherwise assume the held one moves, and the clamped trial
+        # is rejected).
         held = map(
-            (θk, gk, lo, hi) -> (θk <= lo && gk < zero(T)) || (θk >= hi && gk > zero(T)),
+            (θk, gk, lo, hi) -> lo == hi || (θk <= lo && gk < zero(T)) ||
+                (θk >= hi && gk > zero(T)),
             θ_acc, g_acc, constraints.lower, constraints.upper
         )
         g_free = g_acc

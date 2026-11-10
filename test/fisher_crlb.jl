@@ -275,6 +275,55 @@ end
         @test first(fit11(1000)) == θ
     end
 
+    @testset "a fit with its background held at zero" begin
+        # Noise-free ROI without background, the background fixed at 0 (equal bounds):
+        # pixels far from the emitter have data, model and read-noise variance all 0. Their
+        # objective term is the limit 0; written as 0 * log(0) it was NaN, the start was
+        # kept and no later trial could beat it.
+        b21 = 21
+        cam21 = IdealCamera(b21, b21, 0.1)
+        pm = GaussMLE._model_for_camera(GaussianXYNB(0.13f0), cam21)
+        θt = SVector{4, Float32}(1.2, 11.4, 2000, 0)
+        mu = Float32[
+            first(GaussMLE.compute_pixel_derivatives(i, j, θt, pm)) for i in 1:b21, j in 1:b21
+        ]
+        @test any(iszero, mu)
+        d = GaussMLE.default_constraints(pm, b21)
+        cons = GaussMLE.ParameterConstraints{4}(
+            Base.setindex(d.lower, 0.0f0, 4), Base.setindex(d.upper, 0.0f0, 4), d.max_step
+        )
+        θ, obj, passes, stopped = GaussMLE._lm_fit(
+            mu, b21, pm, Val(false), zeros(Float32, b21, b21), Int32(1), Int32(1), cons,
+            100, GaussMLE.simple_initialize(mu, b21, pm), tol
+        )
+        @test isfinite(obj) && stopped
+        @test abs(θ[1] - 1.2f0) < 1.0e-3 && abs(θ[2] - 11.4f0) < 1.0e-3
+        @test θ[3] ≈ 2000 rtol = 1.0e-3
+        @test θ[4] == 0
+    end
+
+    @testset "a parameter fixed by equal bounds is held even with no information" begin
+        # An astigmatic model with both widths symmetric about z = 0 (gamma = 0) has no
+        # information about z at z = 0: its z row of the Fisher matrix is zero. Fixed there
+        # by equal bounds, z was held only when its gradient pointed out of the box, which a
+        # zero gradient never does, so every factorization failed and no parameter moved.
+        pm = GaussMLE._model_for_camera(
+            AstigmaticXYZNB{Float32}(0.13, 0.13, 0.0, 0.0, 0.0, 0.0, 0.0, 0.4), camera
+        )
+        θt = SVector{5, Float32}(6.2, 6.9, 0.0, 2000.0, 10.0)
+        mu = expected_counts(pm, θt)
+        d = GaussMLE.default_constraints(pm, box)
+        cons = GaussMLE.ParameterConstraints{5}(
+            Base.setindex(d.lower, 0.0f0, 3), Base.setindex(d.upper, 0.0f0, 3), d.max_step
+        )
+        θ0 = SVector{5, Float32}(6.6, 6.5, 0.0, 1500.0, 20.0)
+        θ, _, passes, stopped = lm(mu, pm, cons, 100, θ0, tol)
+        @test stopped
+        @test abs(θ[1] - 6.2f0) < 1.0e-3 && abs(θ[2] - 6.9f0) < 1.0e-3
+        @test θ[4] ≈ 2000 rtol = 1.0e-3
+        @test θ[5] ≈ 10 rtol = 1.0e-2
+    end
+
     @testset "a fit capped before its stop is counted as not converged" begin
         psf = GaussianXYNB(0.13f0)
         pm = GaussMLE._model_for_camera(psf, camera)

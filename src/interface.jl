@@ -8,6 +8,18 @@ High-level API for Gaussian MLE fitting
 # does not lie on a sensor of `sensor_size = (rows, columns)`: 1 <= corner and
 # corner + box - 1 <= sensor size on both axes. A device-side lookup outside the sensor is
 # a kernel exception, not a clear error.
+# A read-noise variance map must be finite and non-negative everywhere.
+function _validate_variance_values(variance_map::AbstractArray)
+    k = findfirst(v -> !(isfinite(v) && v >= zero(v)), variance_map)
+    k === nothing || throw(
+        ArgumentError(
+            "read-noise variance $(variance_map[k]) at index $(Tuple(k)) is not finite and \
+            non-negative (variance = readnoise^2 in electrons^2)"
+        )
+    )
+    return nothing
+end
+
 function _validate_roi_corners(
         box::Integer, x_corners::AbstractVector, y_corners::AbstractVector,
         sensor_size::Tuple{Int, Int}
@@ -399,6 +411,9 @@ function _run_mle_kernel!(
     # map by corner, so every ROI must lie on the map's sensor.
     use_scmos isa Val{true} &&
         _validate_roi_corners(box_size, x_corners, y_corners, size(variance_map))
+    # The objective takes the log of model + read-noise variance: a negative or non-finite
+    # variance would make the kernel throw or return nonsense, so it is refused here.
+    use_scmos isa Val{true} && _validate_variance_values(variance_map)
     constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
 
     # Track for GaussMLEFitInfo
@@ -743,7 +758,9 @@ Fit Gaussian blobs to a stack of ROIs using Maximum Likelihood Estimation.
 
 # Keyword Arguments
 - `variance_map=nothing`: Poisson noise when `nothing`; a supplied readnoise-variance map
-  (electrons²) selects the sCMOS path for data already calibrated in electrons
+  (electrons²) selects the sCMOS path for data already calibrated in electrons. Every value
+  must be finite and non-negative (an `ArgumentError` otherwise), as must a camera's
+  read noise
 
 Array input assumes 0.1 μm pixels (a `SplinePSFModel` keeps its own `pixel_size`, so
 emitter x, y in microns follow the model's pixel) and synthetic horizontally tiled ROI

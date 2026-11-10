@@ -220,8 +220,12 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
    - Step: `(F_acc + λ diag F_acc) Δ = g_acc` (Fisher scoring: F is the expected curvature),
      held to `max_step` and the bounds; a higher objective is accepted, a lower one rejected
      (λ×10); factorizations in the `@noinline` `_lm_solve` and `_newton_gain` (POCL speed)
-   - A parameter on a bound whose gradient points out of the box is held (identity row and
-     column via `_hold_rows`, zero gradient) while the rest take the step
+   - A parameter on a bound whose gradient points out of the box, or one fixed by equal
+     bounds whatever its gradient, is held (identity row and column via `_hold_rows`, zero
+     gradient) while the rest take the step
+   - `_fit_objective` takes the limit `-(mu + v)` when data + read-noise variance is 0
+     (else 0 * log(0) = NaN with a zero background); variance maps are checked finite and
+     non-negative on the host (`_validate_variance_values`)
    - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
    - `iterations` caps the pixel passes, the last only evaluating, so a fit takes at most
      `iterations - 1` steps; default `_default_iterations`: 100 for the Gaussian models, 20 for

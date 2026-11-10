@@ -282,3 +282,16 @@ end
     outputs = 4 * n * (box^2 + 2 * 4 + 3 + 2 + 2) + n
     @test GaussMLE.estimate_batch_memory(n, box, 4; map_bytes) == outputs + map_bytes
 end
+
+@testset "a negative or non-finite read-noise variance is refused before the fit" begin
+    # The objective takes log(model + variance); a negative variance made the kernel throw
+    # (DomainError) and a non-finite one would poison the fit.
+    config = GaussMLEConfig(; psf_model = GaussianXYNB(0.13f0), backend = :cpu)
+    data = fill(10.0f0, 7, 7, 1)
+    for bad in (-100.0f0, NaN32, Inf32)
+        vmap = fill(1.0f0, 7, 7)
+        vmap[4, 4] = bad
+        @test_throws ArgumentError fit(data, config; variance_map = vmap)
+    end
+    @test fit(data, config; variance_map = fill(1.0f0, 7, 7))[2].n_fits == 1
+end
