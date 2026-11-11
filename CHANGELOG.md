@@ -47,6 +47,8 @@ uncertainties and p-values of every model change.
   the mirror-z maximum, z of the wrong sign, for 1 to 12 % of in-range simulated emitters at
   300 to 1,000 photons. The second start removes those, at 2 to 3.5 times the fit time.
 - Julia 1.10 is no longer supported; the oldest supported Julia is 1.11.
+- CUDA must be 5.9 or a later 5.x, or 6.5 or a later 6.x (0.4.2 allowed 4 and 5), so an
+  environment held to an older CUDA cannot install this release.
 
 ### Added
 
@@ -84,8 +86,8 @@ uncertainties and p-values of every model change.
 
 - The `device` keyword of `GaussMLEConfig`, deprecated since 0.3 for `backend`, with the
   `GaussMLE.CPU` and `GaussMLE.GPU` types it took: pass `backend = :cpu`, `:gpu` or `:auto`.
-- The generic function `GaussMLE.initialize_parameters`, which had no methods and which
-  GaussMLE never called.
+- The unexported `GaussMLE.initialize_parameters`, a center-of-mass start for each Gaussian
+  model in 0.4.2, which `fit` never called (it starts from its own estimate).
 - The kernel's log-likelihood output, which no function returned, and the internal
   `GaussMLEResults` type, which nothing constructed.
 

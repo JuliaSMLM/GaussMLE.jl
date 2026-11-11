@@ -82,15 +82,14 @@ is the expected curvature rather than the observed one, this is the Levenberg-Ma
 Fisher scoring. The objective is the
 Poisson log-likelihood (IdealCamera) or the Poisson-shifted likelihood
 $(N + v)\log(\mu + v) - (\mu + v)$ with $v$ the read-noise variance (sCMOS); $g$ is its exact
-gradient for both. In `SplinePSFModel`'s schedule a trial that raises the objective is kept
-and one that lowers it is discarded with $\lambda$ multiplied by 10; the Gaussian models' rules
-follow below. $\lambda$ starts at $10^{-3}$. $F$ is the expected negative
+gradient for both. Every model, `SplinePSFModel` included, follows the stop and damping
+rules below. $\lambda$ starts at $10^{-3}$. $F$ is the expected negative
 Hessian (below), positive semidefinite, so a small enough step along the damped solution raises
 the likelihood. A parameter that sits on a bound with the gradient pointing out of the box is
 held there: its row and column of the damped matrix are replaced by the identity and its
 gradient set to zero, so the solve moves only the free parameters.
 
-The Gaussian models run to convergence:
+Every model runs to convergence (each start, for a model with several):
 
 - **Stop.** A fit stops once the gain the undamped Fisher-scoring step predicts,
   $g^\top F^{-1} g / 2$ over the free parameters, is below $10^{-4}$. $F^{-1}$ is the CRLB
