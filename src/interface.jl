@@ -218,7 +218,6 @@ fitter = GaussMLEConfig(
 function GaussMLEConfig(;
         psf_model = GaussianXYNB(0.13f0),
         backend::Symbol = :auto,
-        device = nothing,  # deprecated, use backend
         iterations = _default_iterations(psf_model),
         constraints = nothing,
         batch_size = 10_000,
@@ -226,20 +225,6 @@ function GaussMLEConfig(;
         gpu_timeout = Inf,
         on_wait = nothing
     )
-    # Handle deprecated device kwarg
-    if device !== nothing
-        @warn "device kwarg is deprecated, use backend instead" maxlog = 1
-        backend = if device isa Symbol
-            device
-        elseif device isa CPU
-            :cpu
-        elseif device isa GPU
-            :gpu
-        else
-            :auto
-        end
-    end
-
     backend in (:cpu, :gpu, :auto) || error("backend must be :cpu, :gpu, or :auto")
 
     return GaussMLEConfig(

@@ -65,7 +65,7 @@ function validate_roibatch_fitting(
         psf_model::GaussMLE.PSFModel,
         n_rois::Int = 1000;
         box_size::Int = 15,
-        device = GaussMLE.CPU(),
+        backend = :cpu,
         n_photons::Float32 = 2000.0f0,
         background::Float32 = 1.0f0,
         verbose::Bool = false,
@@ -84,7 +84,7 @@ function validate_roibatch_fitting(
 
     # Fit (data-first API, returns tuple)
     fitter = GaussMLE.GaussMLEConfig(
-        psf_model = psf_model, backend = device isa GaussMLE.CPU ? :cpu : :gpu,
+        psf_model = psf_model, backend = backend,
     )
     smld, _info = GaussMLE.fit(roi_batch, fitter)
 

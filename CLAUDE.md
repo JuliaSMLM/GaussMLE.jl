@@ -335,7 +335,7 @@ The math is dimensionally consistent:
 - `src/psf_models.jl` - PSF model definitions (Gaussian, Astigmatic)
 - `src/psf_derivatives.jl` - PSF derivative computations
 - `src/camera_models.jl` - sCMOS calibration helpers (ADU to electrons)
-- `src/devices.jl` - Device abstraction (CPU/GPU auto-detection), GPU vendor interface; `_gpu_workgroup_size` fixes AMD launches at 64 (an unsized AMDGPU launch of a large batch hung on a Radeon 780M), CUDA sizes its own
+- `src/devices.jl` - GPU detection and memory queries, GPU vendor interface; `_gpu_workgroup_size` fixes AMD launches at 64 (an unsized AMDGPU launch of a large batch hung on a Radeon 780M), CUDA sizes its own
 - `src/emitters.jl` - Custom emitter types (Emitter2DFitSigma, Emitter2DFitSigmaXY)
 - `src/results.jl` - Fit metadata and legacy result types
 - `src/precompile.jl` - PrecompileTools workload: a few CPU fits per model and camera (never a GPU context; skipped where KernelAbstractions 0.10's POCL is unavailable)

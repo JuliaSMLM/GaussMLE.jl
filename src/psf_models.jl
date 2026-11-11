@@ -11,7 +11,7 @@ The type parameter `NParams` specifies the number of fitting parameters at compi
 enabling type-stable code generation. The type parameter `T` specifies the numeric type.
 
 # Custom models
-Since 0.4.3 the kernel receives every model through `Adapt.adapt_structure`, on GPUs and on
+Since 0.5 the kernel receives every model through `Adapt.adapt_structure`, on GPUs and on
 the CPU backend of KernelAbstractions 0.10 (POCL), so a model defined outside this package
 must be `isbits` after Adapt there (the CPU backend of KernelAbstractions 0.9 does not
 require it):
@@ -222,10 +222,6 @@ end
     psf_y = integral_gaussian_1d(i, y, σy)
     return bg + N * psf_x * psf_y
 end
-
-# GaussMLE does not call `initialize_parameters`; the generic function stays with no methods
-# so packages that extend it still load. It goes in 0.5.
-function initialize_parameters end
 
 # Note: compute_pixel_derivatives is implemented in psf_derivatives.jl for each model type
 

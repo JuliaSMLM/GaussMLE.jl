@@ -17,7 +17,7 @@ using Test, GaussMLE, SMLMData, KernelAbstractions
         for psf in psf_models
             batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 5, seed = 42)
             fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, device = GaussMLE.CPU(),
+                psf_model = psf, backend = :cpu,
             )
             smld, _info = GaussMLE.fit(batch, fitter)
 

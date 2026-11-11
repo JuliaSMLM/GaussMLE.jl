@@ -47,13 +47,10 @@ for i in 1:n_emitters
     y = rand() * 25.0
     frame = rand(1:n_frames)
 
+    # Positional: x, y, photons, bg, then uncertainties (unknown for ground truth)
     push!(
         emitters_true, SMLMData.Emitter2DFit{Float64}(
-            x = x, y = y,
-            photons = 1500.0,
-            bg = 10.0,
-            # uncertainties (unknown for ground truth)
-            σ_x = 0.0, σ_y = 0.0, σ_photons = 0.0, σ_bg = 0.0,
+            x, y, 1500.0, 10.0, 0.0, 0.0, 0.0, 0.0;
             frame = frame, dataset = 1, track_id = 0, id = i
         )
     )
@@ -65,7 +62,7 @@ println("  ✓ Created ground truth: $n_emitters emitters")
 # Generate image stack using SMLMSim
 println("  Generating image stack with SMLMSim...")
 psf = MicroscopePSFs.GaussianPSF(0.13)  # 130nm PSF
-imagestack = SMLMSim.gen_images(smld_true, psf, poisson_noise = true, bg = 10.0)
+imagestack, _ = SMLMSim.gen_images(smld_true, psf, poisson_noise = true, bg = 10.0)
 println("  ✓ Image stack: $(size(imagestack))")
 println("  Mean intensity: $(round(mean(imagestack), digits = 2))")
 
@@ -73,7 +70,7 @@ println("  Mean intensity: $(round(mean(imagestack), digits = 2))")
 println("\nStep 2: Detect Spots (SMLMBoxer)")
 println("-"^50)
 
-batch = getboxes(
+batch, boxer_info = getboxes(
     imagestack,
     camera;
     boxsize = 11,
@@ -81,7 +78,7 @@ batch = getboxes(
     sigma_small = 1.0,
     sigma_large = 2.0,
     minval = 5.0,
-    use_gpu = false
+    backend = :cpu
 )
 
 n_detected = length(batch)
@@ -95,13 +92,14 @@ println("-"^50)
 
 fitter = GaussMLE.GaussMLEConfig(
     psf_model = GaussMLE.GaussianXYNB(0.13f0),
-    device = :cpu
+    backend = :cpu
 )
 
-println("  Fitter: GaussianXYNB(σ=1.3), default cap of 100 passes")
+println("  Fitter: GaussianXYNB(σ=0.13 μm = 1.3 pixels), default cap of 100 iterations")
 
-smld_output = fit(fitter, batch)
+smld_output, fit_info = fit(batch, fitter)
 println("  ✓ Fitted $(length(smld_output.emitters)) localizations → BasicSMLD")
+println("  $(fit_info.n_converged) of $(fit_info.n_fits) fits converged")
 
 # Step 4: Analyze Results
 println("\nStep 4: Analyze Results")
@@ -128,6 +126,33 @@ println("  Fitted: $(length(smld_output.emitters)) localizations")
 println(
     "  Recovery: $(round(length(smld_output.emitters) / n_emitters * 100, digits = 1))%",
 )
+
+# Match each localization to the nearest true emitter in the same frame (within 0.3 μm)
+dx = Float64[]
+dy = Float64[]
+for e in smld_output.emitters
+    best = nothing
+    best_d = 0.3
+    for t in emitters_true
+        t.frame == e.frame || continue
+        d = hypot(e.x - t.x, e.y - t.y)
+        if d < best_d
+            best = t
+            best_d = d
+        end
+    end
+    if best !== nothing
+        push!(dx, e.x - best.x)
+        push!(dy, e.y - best.y)
+    end
+end
+println("  Matched to a true emitter: $(length(dx)) of $(length(smld_output.emitters))")
+if !isempty(dx)
+    # The median is robust to the occasional pair of emitters that land within one PSF
+    println("  Median |position error| (nm): x = \
+        $(round(median(abs.(dx)) * 1000, digits = 1)), \
+        y = $(round(median(abs.(dy)) * 1000, digits = 1))")
+end
 
 println("\n" * "="^60)
 println("✅ COMPLETE PIPELINE SUCCESS!")

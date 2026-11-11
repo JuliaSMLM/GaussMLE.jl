@@ -12,6 +12,7 @@ roi_size = 11
 n_samples = 500  # Moderate size for comprehensive testing
 verbose = true
 output_format = "txt"
+scmos_qe = 0.82f0  # quantum efficiency of the simulated sCMOS camera
 
 # Output directory
 output_dir = joinpath(@__DIR__, "output")
@@ -33,6 +34,44 @@ struct BenchmarkResult
     convergence_rate::Float64
 end
 
+# Convert emitters (microns on the sensor) back to the model's parameter order in
+# ROI-local pixels (z in microns, widths in pixels), with matching uncertainties.
+function extract_fit(smld, batch, psf_model, pixel_size)
+    es = smld.emitters
+    n = length(es)
+    ps = Float32(pixel_size)
+    cam_x = [e.x / ps + 0.5f0 for e in es]
+    cam_y = [e.y / ps + 0.5f0 for e in es]
+    x = cam_x .- batch.x_corners .+ 1
+    y = cam_y .- batch.y_corners .+ 1
+    photons = [e.photons for e in es]
+    bg = [e.bg for e in es]
+    σx = [e.σ_x / ps for e in es]
+    σy = [e.σ_y / ps for e in es]
+    σn = [e.σ_photons for e in es]
+    σb = [e.σ_bg for e in es]
+    if psf_model isa GaussMLE.GaussianXYNB
+        return Float32.(vcat(x', y', photons', bg')), Float32.(vcat(σx', σy', σn', σb'))
+    elseif psf_model isa GaussMLE.GaussianXYNBS
+        s = [e.σ / ps for e in es]
+        σs = [e.σ_σ / ps for e in es]
+        return Float32.(vcat(x', y', photons', bg', s')),
+            Float32.(vcat(σx', σy', σn', σb', σs'))
+    elseif psf_model isa GaussMLE.GaussianXYNBSXSY
+        sx = [e.σx / ps for e in es]
+        sy = [e.σy / ps for e in es]
+        σsx = [e.σ_σx / ps for e in es]
+        σsy = [e.σ_σy / ps for e in es]
+        return Float32.(vcat(x', y', photons', bg', sx', sy')),
+            Float32.(vcat(σx', σy', σn', σb', σsx', σsy'))
+    else  # AstigmaticXYZNB: parameter order x, y, z, photons, background (z in microns)
+        z = [e.z for e in es]
+        σz = [e.σ_z for e in es]
+        return Float32.(vcat(x', y', z', photons', bg')),
+            Float32.(vcat(σx', σy', σz', σn', σb'))
+    end
+end
+
 function run_single_benchmark(psf_model, device, camera_type)
     try
         # Create camera
@@ -45,9 +84,11 @@ function run_single_benchmark(psf_model, device, camera_type)
                 256, 256, 0.1f0, readnoise,
                 offset = 100.0f0,
                 gain = 0.5f0,
-                qe = 0.82f0
+                qe = scmos_qe
             )
         end
+
+        pixel_size = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
 
         # Generate known true parameters with some variation
         Random.seed!(42)
@@ -67,10 +108,13 @@ function run_single_benchmark(psf_model, device, camera_type)
             sigma_y_vals = 1.3f0 .+ 0.15f0 * randn(Float32, n_samples)'
             true_params = vcat(true_params, sigma_x_vals, sigma_y_vals)
         elseif psf_model isa GaussMLE.AstigmaticXYZNB
-            z_vals = 200.0f0 * randn(Float32, n_samples)'
+            z_vals = 0.2f0 * randn(Float32, n_samples)'  # microns
             # Insert z after y (x, y, z, photons, background)
             true_params = vcat(true_params[1:2, :], z_vals, true_params[3:4, :])
         end
+
+        # sCMOS photons and background are electrons, i.e. the simulated photons times QE
+        qe = camera_type == :scmos ? scmos_qe : 1.0f0
 
         # Generate ROI batch using new simulator
         batch = GaussMLE.generate_roi_batch(
@@ -82,20 +126,19 @@ function run_single_benchmark(psf_model, device, camera_type)
         )
 
         # Create fitter
-        device_obj = device == :cpu ? GaussMLE.CPU() : GaussMLE.GPU()
         fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf_model,
-            device = device_obj
+            backend = device
         )
 
-        # Run fitting with timing
+        # Run fitting with timing (the first fit of a model compiles its kernel)
+        GaussMLE.fit(batch, fitter)
         t_start = time()
-        results = GaussMLE.fit(fitter, batch)
+        smld, info = GaussMLE.fit(batch, fitter)
         t_elapsed = time() - t_start
 
-        # Extract and analyze results
-        params = results.parameters
-        uncertainties = results.uncertainties
+        # Extract fitted parameters (ROI-local pixels) and uncertainties from the emitters
+        params, uncertainties = extract_fit(smld, batch, psf_model, pixel_size)
 
         # Parameter names based on model
         param_names = if psf_model isa GaussMLE.GaussianXYNB
@@ -114,6 +157,9 @@ function run_single_benchmark(psf_model, device, camera_type)
             fitted = params[i, :]
             uncertainty = uncertainties[i, :]
             true_vals = true_params[i, :]
+            if name in (:photons, :background)
+                true_vals = qe .* true_vals
+            end
 
             # Calculate errors
             errors = fitted .- true_vals
@@ -124,11 +170,11 @@ function run_single_benchmark(psf_model, device, camera_type)
             param_stats[name] = (bias = bias, std = std_dev, crlb = mean_crlb)
         end
 
-        # Calculate convergence rate (no infinite uncertainties)
-        n_converged = sum(isfinite.(uncertainties[1, :]))
+        # Convergence rate: the fits that met the convergence test
+        n_converged = info.n_converged
         convergence_rate = n_converged / n_samples
 
-        model_name = split(string(typeof(psf_model)), ".")[end]
+        model_name = string(nameof(typeof(psf_model)))
         return BenchmarkResult(
             model_name, device, camera_type, n_samples / t_elapsed, param_stats,
             convergence_rate,
@@ -150,8 +196,8 @@ psf_models = [
         0.13f0, 0.13f0,  # σx₀, σy₀ (microns)
         0.0f0, 0.0f0,    # Ax, Ay
         0.0f0, 0.0f0,    # Bx, By
-        250.0f0,         # γ
-        400.0f0          # d
+        0.25f0,          # γ (microns)
+        0.4f0            # d (microns)
     ),
 ]
 
@@ -161,7 +207,7 @@ cameras = [:ideal, :scmos]
 results = BenchmarkResult[]
 
 println("Running comprehensive comparison...")
-println("Models: ", [split(string(typeof(p)), ".")[end] for p in psf_models])
+println("Models: ", join([string(nameof(typeof(p))) for p in psf_models], ", "))
 println("Devices: ", join(devices, ", "))
 println("Cameras: ", join(cameras, ", "))
 println("\nProgress:")
@@ -173,7 +219,7 @@ for psf_model in psf_models
     for device in devices
         for camera in cameras
             global current += 1
-            model_name = split(string(typeof(psf_model)), ".")[end]
+            model_name = string(nameof(typeof(psf_model)))
             print("  [$current/$total_configs] $model_name-$device-$camera... ")
 
             result = run_single_benchmark(psf_model, device, camera)
@@ -227,7 +273,7 @@ end
 push!(output_lines, "="^130)
 
 # Additional parameter table for models with extra parameters
-push!(output_lines, "\nAdditional Parameters:")
+push!(output_lines, "\nAdditional Parameters (widths in pixels, z in microns):")
 push!(output_lines, "-"^100)
 push!(
     output_lines, @sprintf(
@@ -316,12 +362,12 @@ if !isempty(results)
     if !isempty(crlb_ratios)
         sort!(crlb_ratios)
         best_crlb = crlb_ratios[1][2]
-        x_stats = get(best_crlb.param_stats, :x, (std = NaN32, crlb = NaN32))
+        best_x = get(best_crlb.param_stats, :x, (std = NaN32, crlb = NaN32))
         push!(
             output_lines, @sprintf(
                 "Best CRLB match (X): %s-%s-%s (ratio=%.3f)",
                 best_crlb.psf_model, best_crlb.device, best_crlb.camera,
-                x_stats.std / x_stats.crlb
+                best_x.std / best_x.crlb
             )
         )
     end

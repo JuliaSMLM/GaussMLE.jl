@@ -4,13 +4,12 @@ Shows how to fit ROIs with proper coordinate tracking and sCMOS support
 """
 
 using Pkg
-Pkg.activate(".")  # Use main project environment
+Pkg.activate(@__DIR__)
 
 using GaussMLE
 using SMLMData
 using Random
 using Statistics
-using StaticArrays
 using Printf
 
 println("=== ROIBatch Demo with SMLMData Integration ===\n")
@@ -39,12 +38,22 @@ ideal_camera = SMLMData.IdealCamera(camera_size, camera_size, pixel_size_um)
 # PSF model
 psf_model = GaussMLE.GaussianXYNB(0.13f0)
 
+# True parameters (rows: x, y, photons, background). x and y are ROI-local pixels;
+# photons vary between ROIs so that the photon filter below selects a subset.
+true_params = Float32[
+    6.0 .+ 0.5f0 * randn(Float32, n_rois)';
+    6.0 .+ 0.5f0 * randn(Float32, n_rois)';
+    range(600.0f0, 1400.0f0; length = n_rois)';
+    fill(10.0f0, 1, n_rois)
+]
+
 # Generate ROI batch with simulator
 roi_batch = generate_roi_batch(
     ideal_camera,
     psf_model;
     n_rois = n_rois,
     roi_size = roi_size,
+    true_params = true_params,
     corner_mode = :random,
     seed = 42
 )
@@ -59,21 +68,26 @@ println("\n2. Fitting with ideal camera model...")
 
 fitter = GaussMLEConfig(
     psf_model = psf_model,
-    device = CPU()
+    backend = :cpu
 )
 
-results_ideal = fit(fitter, roi_batch)
-println("  Fitting complete!")
+smld_ideal, info_ideal = fit(roi_batch, fitter)
+println("  Fitting complete: $(info_ideal.n_converged) of $(info_ideal.n_fits) converged")
+
+# Emitters are in the order of the ROIs. Positions are microns on the sensor;
+# camera pixel k spans (k-1)*pixel_size to k*pixel_size.
+cam_x(e) = e.x / pixel_size_um + 0.5
+cam_y(e) = e.y / pixel_size_um + 0.5
 
 # Show results for first few ROIs
 println("\n  First 3 ROI results (ideal camera):")
-println("  ROI | X (cam) | Y (cam) | Photons | Background")
-println("  ----|---------|---------|---------|------------")
+println("  ROI | X (cam) | Y (cam) | Photons (true) | Background")
+println("  ----|---------|---------|----------------|------------")
 for i in 1:min(3, n_rois)
+    e = smld_ideal.emitters[i]
     @printf(
-        "   %2d | %7.2f | %7.2f | %7.0f | %10.1f\n",
-        i, results_ideal.x_camera[i], results_ideal.y_camera[i],
-        results_ideal.parameters[3, i], results_ideal.parameters[4, i]
+        "   %2d | %7.2f | %7.2f | %7.0f (%5.0f) | %10.1f\n",
+        i, cam_x(e), cam_y(e), e.photons, true_params[3, i], e.bg
     )
 end
 
@@ -109,41 +123,36 @@ roi_batch_scmos = generate_roi_batch(
     psf_model;
     n_rois = n_rois,
     roi_size = roi_size,
-    corners = roi_batch.corners,  # Use same positions as ideal
+    true_params = true_params,
+    corners = vcat(roi_batch.x_corners', roi_batch.y_corners'),  # Same as ideal
     frame_indices = roi_batch.frame_indices,
     seed = 43
 )
 
 # Fit with sCMOS model
-results_scmos = fit(fitter, roi_batch_scmos)
-println("  sCMOS fitting complete!")
+smld_scmos, info_scmos = fit(roi_batch_scmos, fitter)
+println(
+    "  sCMOS fitting complete: $(info_scmos.n_converged) of $(info_scmos.n_fits) converged",
+)
 
 # Compare uncertainties
 println("\n  Uncertainty comparison (first 3 ROIs):")
 println("  ROI | σ_x (ideal) | σ_x (sCMOS) | σ_y (ideal) | σ_y (sCMOS)")
 println("  ----|-------------|-------------|-------------|-------------")
 for i in 1:min(3, n_rois)
+    ei = smld_ideal.emitters[i]
+    es = smld_scmos.emitters[i]
     @printf(
         "   %2d |    %.4f   |    %.4f   |    %.4f   |    %.4f\n",
-        i,
-        results_ideal.uncertainties[1, i],
-        results_scmos.uncertainties[1, i],
-        results_ideal.uncertainties[2, i],
-        results_scmos.uncertainties[2, i]
+        i, ei.σ_x, es.σ_x, ei.σ_y, es.σ_y
     )
 end
 
-# 4. Convert to SMLMData format
-println("\n4. Converting to SMLMData format...")
+# 4. The fit returns SMLMData format directly
+println("\n4. The fit result is a BasicSMLD")
 
-# Convert results to SMLD using the camera from roi_batch
-smld = to_smld(
-    results_ideal, roi_batch;
-    dataset = 1,
-    metadata = Dict{String, Any}("experiment" => "ROIBatch Demo")
-)
-
-println("  Converted to BasicSMLD:")
+smld = smld_ideal
+println("  BasicSMLD from the ideal camera fit:")
 println("    - $(length(smld)) emitters")
 println("    - $(smld.n_frames) frames")
 println("    - Camera: $(camera_size)×$(camera_size) pixels")
@@ -152,20 +161,25 @@ println("    - Camera: $(camera_size)×$(camera_size) pixels")
 println("\n5. Coordinate transformations:")
 for i in 1:min(3, n_rois)
     emitter = smld.emitters[i]
-    roi_x = results_ideal.parameters[1, i]
-    roi_y = results_ideal.parameters[2, i]
-    cam_x = results_ideal.x_camera[i]
-    cam_y = results_ideal.y_camera[i]
+    cx = cam_x(emitter)
+    cy = cam_y(emitter)
+    cx_corner = roi_batch.x_corners[i]
+    cy_corner = roi_batch.y_corners[i]
+    # ROI-local pixel position: camera position minus corner offset
+    roi_x = cx - cx_corner + 1
+    roi_y = cy - cy_corner + 1
 
     println("\n  ROI $i:")
-    println("    Corner (pixels): ($(roi_batch.corners[1, i]), $(roi_batch.corners[2, i]))")
+    println("    Corner (pixels): ($cx_corner, $cy_corner)")
     println(
         "    ROI coords: ($(round(roi_x, digits = 2)), \
-            $(round(roi_y, digits = 2))) pixels",
+            $(round(roi_y, digits = 2))) pixels \
+            (true: $(round(true_params[1, i], digits = 2)), \
+            $(round(true_params[2, i], digits = 2)))",
     )
     println(
-        "    Camera coords: ($(round(cam_x, digits = 2)), \
-            $(round(cam_y, digits = 2))) pixels",
+        "    Camera coords: ($(round(cx, digits = 2)), \
+            $(round(cy, digits = 2))) pixels",
     )
     println(
         "    Physical coords: ($(round(emitter.x, digits = 3)), \
@@ -177,8 +191,8 @@ end
 println("\n6. Using SMLMData filtering capabilities...")
 
 # Filter by photon count
-bright_emitters = SMLMData.@filter(smld, photons > 1400)
-println("  Bright emitters (>1400 photons): $(length(bright_emitters))")
+bright_emitters = SMLMData.@filter(smld, photons > 1000)
+println("  Bright emitters (>1000 photons): $(length(bright_emitters))")
 
 # Filter by frame
 frame1_emitters = SMLMData.filter_frames(smld, 1)

@@ -326,7 +326,7 @@ function run_model_validation(
         psf_model::GaussMLE.PSFModel,
         n_blobs::Int = 1000;
         box_size::Int = 11,
-        device = GaussMLE.CPU(),
+        backend = :cpu,
         verbose::Bool = false,
         kwargs...
     )
@@ -338,7 +338,7 @@ function run_model_validation(
     # Create fitter
     fitter = GaussMLE.GaussMLEConfig(
         psf_model = psf_model,
-        backend = device isa GaussMLE.CPU ? :cpu : :gpu
+        backend = backend
     )
 
     # Fit the data (data-first API, returns tuple)

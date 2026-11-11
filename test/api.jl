@@ -96,6 +96,12 @@ end
         @test all(0.002 .< σ_x_vals .< 0.02)
     end
 
+    @testset "the removed device keyword is refused" begin
+        # 0.5 removed `device` (deprecated for `backend`) with its CPU and GPU types
+        @test_throws MethodError GaussMLE.GaussMLEConfig(device = :cpu)
+        @test !isdefined(GaussMLE, :ComputeDevice)
+    end
+
     @testset "SMLMData Conversion" begin
         camera = SMLMData.IdealCamera(256, 256, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
@@ -111,7 +117,7 @@ end
         )
 
         fitter = GaussMLE.GaussMLEConfig(
-            psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
+            psf_model = psf, backend = :cpu, iterations = 20,
         )
         smld, _info = GaussMLE.fit(batch, fitter)
 

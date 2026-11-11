@@ -50,7 +50,7 @@ end
     end
 
     @testset "Symmetric bounds preserve other limits and step sizes" begin
-        # Snapshot of the non-position bounds (version 0.4.0) and the max steps (0.4.3: photon
+        # Snapshot of the non-position bounds (version 0.4.0) and the max steps (0.5: photon
         # and background steps uncapped for the Levenberg-Marquardt fit).
         cases = (
             (

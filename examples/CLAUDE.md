@@ -12,15 +12,13 @@ This directory contains user-facing examples demonstrating how to use the packag
 
 ### Examples Environment
 - The four short scripts (`basic_fitting.jl`, `scmos_camera.jl`, `gpu_acceleration.jl`,
-  `astigmatic_3d.jl`) use the repository's active project without environment activation.
-  They do not use `examples/Project.toml` because it includes SMLMBoxer, which caps
-  KernelAbstractions at 0.9, so that environment cannot load GaussMLE 0.4.3 (which needs
-  KernelAbstractions 0.10) until SMLMBoxer moves.
-- Extended examples activate `examples/` with `using Pkg; Pkg.activate(@__DIR__)`.
-  That environment has example-specific packages:
-  - CairoMakie (for plotting - NOT Plots.jl)
-  - Any packages users might commonly use alongside this package
-  - Visualization and output tools
+  `astigmatic_3d.jl`) use the repository's active project without environment activation,
+  so they need nothing beyond GaussMLE and SMLMData.
+- The three extended examples (`full_pipeline.jl`, `roi_batch_demo.jl`,
+  `comprehensive_comparison.jl`) activate `examples/` with
+  `using Pkg; Pkg.activate(@__DIR__)`. That environment adds SMLMSim, SMLMBoxer and
+  MicroscopePSFs; `Pkg.develop(path = "..")` in it fits with this checkout. Plots in new
+  examples use CairoMakie (not Plots.jl), added to that environment.
 
 ### Running Example Files (For Code Agents/Claude)
 

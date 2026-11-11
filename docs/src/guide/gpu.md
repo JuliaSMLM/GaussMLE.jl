@@ -354,8 +354,10 @@ end
 ```
 
 With KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
-runtime. The first CPU fit of each PSF model in a session takes a few seconds longer
-for compilation; subsequent fits reuse the compiled kernel. With KernelAbstractions 0.9,
+runtime. The first two CPU fits of each PSF model in a session take seconds longer for
+compilation (on one workstation with KernelAbstractions 0.10.7, about 4.5 s together for
+`GaussianXYNBS`, which the package precompiles, and 6 s for `GaussianXYNB`); later fits
+reuse the compiled kernel. With KernelAbstractions 0.9,
 which environments with Reactant resolve, the CPU backend is KernelAbstractions' native
 one and needs no POCL.
 The CPU path uses work-groups of 64 fits.

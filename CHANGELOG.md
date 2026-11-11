@@ -9,8 +9,9 @@ Releases before this file are described on the GitHub releases page.
 
 ### Changed: what existing settings and outputs mean
 
-The way `fit` is called is unchanged, but these settings and outputs change their meaning or
-default, and the fitted values, uncertainties and p-values of every model change.
+The way `fit` is called is unchanged (apart from the `device` keyword, removed below), but
+these settings and outputs change their meaning or default, and the fitted values,
+uncertainties and p-values of every model change.
 
 - **Gaussian models fitted to convergence.** The four Gaussian models use Levenberg-Marquardt
   on the full Fisher matrix (Fisher scoring) in place of 20 diagonal Newton-Raphson steps
@@ -44,7 +45,7 @@ default, and the fitted values, uncertainties and p-values of every model change
 - `AstigmaticXYZNB` fits each ROI a second time from the first fit's end point with z
   negated and keeps the higher likelihood. With weak astigmatism a single start ended in
   the mirror-z maximum, z of the wrong sign, for 1 to 12 % of in-range simulated emitters at
-  300 to 1,000 photons. The second start removes those, at about twice the fit time.
+  300 to 1,000 photons. The second start removes those, at 2 to 3.5 times the fit time.
 - Julia 1.10 is no longer supported; the oldest supported Julia is 1.11.
 
 ### Added
@@ -81,6 +82,10 @@ default, and the fitted values, uncertainties and p-values of every model change
 
 ### Removed
 
+- The `device` keyword of `GaussMLEConfig`, deprecated since 0.3 for `backend`, with the
+  `GaussMLE.CPU` and `GaussMLE.GPU` types it took: pass `backend = :cpu`, `:gpu` or `:auto`.
+- The generic function `GaussMLE.initialize_parameters`, which had no methods and which
+  GaussMLE never called.
 - The kernel's log-likelihood output, which no function returned, and the internal
   `GaussMLEResults` type, which nothing constructed.
 
@@ -89,5 +94,7 @@ default, and the fitted values, uncertainties and p-values of every model change
 - A custom `PSFModel` must be isbits after Adapt to run on the CPU (POCL).
 - CPU results under KernelAbstractions 0.9 and 0.10, and CPU and GPU results, agree to the
   stop tolerance (about 0.02 CRLB), not to rounding.
-- The first fit in a session of a model outside the precompile workload compiles its
-  kernel (seconds).
+- Under KernelAbstractions 0.10 the first two CPU fits of a model in a session take
+  seconds (on one workstation with 0.10.7, about 4.5 s together for `GaussianXYNBS`, which
+  the workload precompiles, and 6 s for `GaussianXYNB`): the CPU kernel runs through POCL,
+  which compiles at run time. Under 0.9 only the first fit compiles.

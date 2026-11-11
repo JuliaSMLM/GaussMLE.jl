@@ -1,11 +1,4 @@
-"""
-Device abstraction with automatic GPU detection
-"""
-
-# Device abstraction
-abstract type ComputeDevice end
-struct CPU <: ComputeDevice end
-struct GPU <: ComputeDevice end
+# GPU detection, vendor routing and memory queries for the fit's backend selection.
 
 # GPU vendor interface; ROCm methods live in GaussMLEAMDGPUExt.
 abstract type GPUVendor end

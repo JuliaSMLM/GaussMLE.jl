@@ -1,4 +1,4 @@
-# SplinePSFModel fits of defocused ROIs whose box cuts off much of the PSF. Guards the 0.4.3
+# SplinePSFModel fits of defocused ROIs whose box cuts off much of the PSF. Guards the 0.5
 # Levenberg-Marquardt fit reaching the maximum at the public default iterations. PSFLearning
 # measured the 0.4.2-era spline fit (diagonal Newton at fixed iterations) stopping 3 to 9
 # log-likelihood units short on such ROIs. Scene: a scalar PSF with 0.8 rad astigmatism and

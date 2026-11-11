@@ -81,7 +81,7 @@ box_size = 15
         seed = 123
     )
 
-    fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, device = GaussMLE.CPU())
+    fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, backend = :cpu)
     smld, _info = GaussMLE.fit(batch, fitter)
 
     # Extract uncertainties for each group
