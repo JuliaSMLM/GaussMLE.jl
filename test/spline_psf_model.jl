@@ -233,9 +233,11 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
     # fit started at z = 0 cannot leave it)
     zc = ZernikeCoefficients(15)
     zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
+    # Tabulated to ±1.4 um, so the model's default lateral_range (1.3 um at 0.1 um pixels,
+    # less at larger camera pixels) covers the 13 and 15 px boxes below
     astig_spline = SplinePSF(
         ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc);
-        lateral_range = 1.0, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
+        lateral_range = 1.4, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
     )
     gpsf = SplinePSFModel(astig_spline; pixel_size = 0.1)
     box, n = 11, 4
@@ -611,10 +613,10 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         cpu_fit(b, mdl) = fit(b; psf_model = mdl, backend = :cpu)
         camera = IdealCamera(64, 64, 0.1)
         wide = SplinePSFModel(
-            astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 2.2
+            astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 2.2
         )
         narrow = SplinePSFModel(
-            astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 1.5
+            astig_shape; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 1.5
         )
 
         # 31 px of 0.1 um pixels: half-diagonal 2.19 um
@@ -648,7 +650,7 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         px = (0.1313, 0.1258)  # 21 px: 1.91 um
         rect_camera = IdealCamera(64, 64, px)
         rect(lr) = SplinePSFModel(
-            astig_spline; pixel_size = px, z_range = (-0.5, 0.5), lateral_range = lr
+            astig_shape; pixel_size = px, z_range = (-0.5, 0.5), lateral_range = lr
         )
         rect_data = rois(rect(2.0), 21)
         err = try
@@ -669,7 +671,7 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         edge_px = (0.09, 0.12)
         edge_camera = IdealCamera(64, 64, edge_px)
         edge(lr) = SplinePSFModel(
-            astig_spline; pixel_size = edge_px, z_range = (-0.5, 0.5), lateral_range = lr
+            astig_shape; pixel_size = edge_px, z_range = (-0.5, 0.5), lateral_range = lr
         )
         data20 = rois(edge(2.0), 20)
         smld, _ = cpu_fit(ideal_batch(data20, edge_camera), edge(1.5))
@@ -686,6 +688,54 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         # One pixel more (21 px, 1.575 um) is still refused at 1.5
         @test_throws ArgumentError cpu_fit(
             ideal_batch(rois(edge(2.0), 21), edge_camera), edge(1.5)
+        )
+    end
+
+    @testset "a SplinePSF must cover lateral_range plus one pixel" begin
+        # A SplinePSF is zero outside its own lateral grid (here ±1.4 um), so a table that
+        # reaches beyond it would fit a truncated PSF.
+        flat_batch(box, px) = ROIBatch(
+            fill(10.0f0, box, box, 2), ones(Int32, 2), ones(Int32, 2), Int32.(1:2),
+            IdealCamera(64, 64, px)
+        )
+        build(; kwargs...) = SplinePSFModel(
+            astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5), kwargs...
+        )
+        # The default is the largest lateral_range the grid covers: 1.4 - 0.1
+        @test build().lateral_range ≈ 1.3f0
+        @test build(lateral_range = 1.3).lateral_range == 1.3f0
+        err = try
+            build(lateral_range = 2.2)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("truncated", err.msg) && occursin("lateral_range <= 1.3 ", err.msg)
+        @test_throws ArgumentError build(lateral_range = 1.35)
+        # At larger camera pixels the grid covers less: the rescaled model's lateral_range
+        # shrinks to 1.4 - 0.15, and a 12 px box of 0.15 um pixels (half-diagonal 1.27 um,
+        # within the 1.3 built) is refused, while a 7 px box fits
+        @test GaussMLE.to_pixel_units(build(), 0.15).lateral_range ≈ 1.25f0
+        @test_throws ArgumentError fit(
+            flat_batch(12, 0.15); psf_model = build(), backend = :cpu
+        )
+        smld, _ = fit(flat_batch(7, 0.15); psf_model = build(), backend = :cpu)
+        @test length(smld.emitters) == 2
+
+        # A spline narrower than the ROI: ±0.6 um against a 13 px box of 0.1 um pixels
+        # (half-diagonal 0.92 um) is refused, at the default and at the former 1.5 default
+        narrow_spline = SplinePSF(
+            ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc);
+            lateral_range = 0.6, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
+        )
+        narrow = SplinePSFModel(narrow_spline; pixel_size = 0.1)
+        @test narrow.lateral_range ≈ 0.5f0
+        @test_throws ArgumentError fit(
+            flat_batch(13, 0.1); psf_model = narrow, backend = :cpu
+        )
+        @test_throws ArgumentError SplinePSFModel(
+            narrow_spline; pixel_size = 0.1, lateral_range = 1.5
         )
     end
 

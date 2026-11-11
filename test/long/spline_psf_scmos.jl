@@ -11,7 +11,7 @@ include(joinpath(@__DIR__, "utils", "spline_psf_helpers.jl"))
     zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
     astig_spline = SplinePSF(
         ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc);
-        lateral_range = 1.0, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
+        lateral_range = 1.2, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
     )
     gpsf = SplinePSFModel(astig_spline; pixel_size = 0.1)
 

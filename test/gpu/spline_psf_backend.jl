@@ -8,9 +8,11 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
     @test gpu_backend() !== nothing
     zc = ZernikeCoefficients(15)
     zc.phase[6] = 0.5
+    # Tabulated to ±1.6 um: the 15 px box of 0.1313 x 0.1258 um pixels has a half-diagonal
+    # of 1.36 um, and the grid must reach that plus one pixel
     spline = SplinePSF(
         ScalarPSF(1.4, 0.6, 1.518; zernike_coeffs = zc);
-        lateral_range = 1.0, axial_range = 0.8, lateral_step = 0.05, axial_step = 0.05
+        lateral_range = 1.6, axial_range = 0.8, lateral_step = 0.05, axial_step = 0.05
     )
     # Rectangular pixels exercise both lateral derivative scales on each backend.
     px_x, px_y = 0.1313, 0.1258
@@ -156,9 +158,10 @@ end
 # fit refuses a ROI beyond the lateral range before any launch; a covering model fits it.
 @testset "SplinePSFModel lateral range on the GPU" begin
     @test gpu_backend() !== nothing
+    # Tabulated to ±2.4 um, so a lateral_range of 2.2 (a 31 px box) is within its grid
     spline = SplinePSF(
         ScalarPSF(1.4, 0.68, 1.518);
-        lateral_range = 1.0, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
+        lateral_range = 2.4, axial_range = 0.5, lateral_step = 0.05, axial_step = 0.1
     )
     model(lateral_range) = SplinePSFModel(
         spline; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range

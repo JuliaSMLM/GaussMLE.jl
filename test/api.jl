@@ -5,6 +5,39 @@ Consolidated test of new simulator and ROIBatch features. The Long group fits th
 Gaussian models (test/long/gaussian_models_cpu.jl).
 """
 
+# A model defined outside the package, as the Custom PSF Models guide describes: a 3D model
+# in the x, y, z, N, bg order (here wrapping AstigmaticXYZNB), which declares neither
+# optional trait.
+struct CustomXYZNB <: GaussMLE.PSFModel{5, Float32}
+    inner::GaussMLE.AstigmaticXYZNB{Float32}
+end
+GaussMLE.to_pixel_units(m::CustomXYZNB, px::Real) =
+    CustomXYZNB(GaussMLE.to_pixel_units(m.inner, px))
+GaussMLE.compute_pixel_derivatives(i, j, θ::GaussMLE.Params{5}, m::CustomXYZNB) =
+    GaussMLE.compute_pixel_derivatives(i, j, θ, m.inner)
+GaussMLE.evaluate_psf(m::CustomXYZNB, i, j, θ::GaussMLE.Params{5}) =
+    GaussMLE.evaluate_psf(m.inner, i, j, θ)
+GaussMLE.simple_initialize(roi, box_size::Int, m::CustomXYZNB) =
+    GaussMLE.simple_initialize(roi, box_size, m.inner)
+GaussMLE.default_constraints(m::CustomXYZNB, box_size) =
+    GaussMLE.default_constraints(m.inner, box_size)
+GaussMLE.to_emitter(m::CustomXYZNB, result, idx::Int, camera; kwargs...) =
+    GaussMLE.to_emitter(m.inner, result, idx, camera; kwargs...)
+
+@testset "a custom 3D model fits; its z bound is not a photon bound" begin
+    inner = GaussMLE.AstigmaticXYZNB{Float32}(
+        0.13f0, 0.13f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 0.2f0, 0.5f0
+    )
+    camera = SMLMData.IdealCamera(64, 64, 0.1f0)
+    batch = GaussMLE.generate_roi_batch(camera, inner; n_rois = 20, roi_size = 11, seed = 3)
+    # Its z lower bound is negative; without the trait it is not read as a photon bound
+    @test GaussMLE.default_constraints(inner, 11).lower[3] < 0
+    smld, info = GaussMLE.fit(batch; psf_model = CustomXYZNB(inner), backend = :cpu)
+    @test length(smld.emitters) == 20
+    @test all(e -> isfinite(e.z) && isfinite(e.photons), smld.emitters)
+    @test info.n_converged >= 18
+end
+
 @testset "precompile workload" begin
     # A KernelAbstractions that cannot launch a CPU kernel while precompiling skips it.
     if GaussMLE._cpu_backend_precompilable()

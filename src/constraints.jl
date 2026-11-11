@@ -73,8 +73,13 @@ function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)
     return default_constraints(psf_model, box_size)
 end
 
-# Positions of the photon count and the background in a model's parameter vector
-_photon_background_indices(::PSFModel) = (3, 4)
+# Positions of the photon count and the background in a model's parameter vector, for the
+# models that declare them. A custom model declares nothing by default, so its bounds are
+# not checked here (the objective is -Inf wherever the expected count plus read-noise
+# variance is negative, so the fit stays defined either way); see the Custom PSF Models
+# guide.
+_photon_background_indices(::PSFModel) = ()
+_photon_background_indices(::Union{GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY}) = (3, 4)
 _photon_background_indices(::AstigmaticXYZNB) = (4, 5)
 
 # The fit takes the log of each pixel's expected count plus read-noise variance, which a

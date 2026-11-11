@@ -162,8 +162,14 @@ to the camera's own spacing. This rectangular-pixel support is specific to `Spli
 `lateral_range` must cover the half-diagonal of the ROI,
 `sqrt((box * pixel_size_x / 2)^2 + (box * pixel_size_y / 2)^2)`. The table ends at
 `lateral_range` plus one pixel and is zero beyond it, so `fit` throws `ArgumentError`
-for a larger ROI instead of fitting a truncated PSF. A 31 px box of 0.1 µm pixels has a
-half-diagonal of 2.19 µm and needs `lateral_range >= 2.19`; the default is 1.5 µm.
+for a larger ROI instead of fitting a truncated PSF. A SplinePSF is itself zero outside its
+own lateral grid, so `lateral_range` plus one pixel must lie within that grid: by default the
+model takes the largest `lateral_range` that does, and refuses a larger one. A 31 px box of
+0.1 µm pixels has a half-diagonal of 2.19 µm, so it needs `lateral_range >= 2.19` and a
+SplinePSF tabulated to at least ±2.29 µm (MicroscopePSFs' `SplinePSF(psf; lateral_range =
+2.3, ...)`); a spline tabulated to ±1.5 µm covers boxes up to 19 px of 0.1 µm pixels. A plain
+callable has no grid GaussMLE can check: its default `lateral_range` is 1.5 µm, and it must
+describe the PSF out to `lateral_range` plus one pixel.
 
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
 quadrature with five sub-intervals per lateral axis. The lateral table spacings are
@@ -231,7 +237,10 @@ whose gradient points out of the box is held there while the others take their s
 Each start stops once converged, as the Gaussian fits do, and the fit counts as converged
 when the start it keeps did. `iterations` caps the Levenberg-Marquardt pixel passes of each
 start: the last pass only evaluates, so a start takes at most `iterations - 1` steps and
-`iterations = 1` returns it. The p-value is the Pearson statistic
+`iterations = 1` returns it. A PSF with no z information at some plane (one symmetric in z
+about focus, such as an unaberrated PSF at z = 0) leaves z undetermined there: about half of
+such fits never meet the stop test and run to the cap, though x, y, N and the background
+still reach their CRLB. The p-value is the Pearson statistic
 (d - μ)²/(μ + v), as for every model. `fit` on a bare `Array` uses this model's own `pixel_size`, not the 0.1 µm
 of the Gaussian models.
 
@@ -249,6 +258,19 @@ arrays that Adapt moves to the device, and drop host-only fields (a callable, a 
 in `adapt_structure`, as `SplinePSFModel` does with its point PSF. `simple_initialize` must
 return an `SVector`, as `SplinePSFModel`'s does, not an `MVector`. Otherwise the fit fails
 with a `GPUCompiler.KernelError` ("passing non-bitstype argument").
+
+Two optional methods give the roles of a model's parameters. Both are internal names, and
+without them a model is treated as 2D and its bounds are not checked:
+
+- `GaussMLE._has_axial_position(::Type{<:MyModel}) = true` when parameter 3 is z (the
+  x, y, z, N, bg order of `AstigmaticXYZNB` and `SplinePSFModel`). The fit then reports the
+  x-z and y-z covariances, and a fit whose z ends on a bound gets infinite uncertainties,
+  as one on an x or y bound does. Without it those covariances are zero and a z bound is
+  not marked.
+- `GaussMLE._photon_background_indices(::MyModel) = (4, 5)`, the positions of the photon
+  count and the background. The fit then refuses a negative lower bound on either with an
+  `ArgumentError`. Without it no bound is checked; where the expected count plus the
+  read-noise variance is negative, the objective is minus infinity, so a fit stays defined.
 
 ## Model Comparison
 

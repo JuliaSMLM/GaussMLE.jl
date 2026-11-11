@@ -10,7 +10,7 @@ using SMLMSim: poisson_noise
     zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
     spline = SplinePSF(
         ScalarPSF(1.4, 0.6, 1.518; zernike_coeffs = zc);
-        lateral_range = 1.0, axial_range = 0.6, lateral_step = 0.05, axial_step = 0.05
+        lateral_range = 1.2, axial_range = 0.6, lateral_step = 0.05, axial_step = 0.05
     )
     px, box, n = 0.1, 13, 200
     n_photons, bg = 2000.0f0, 10.0f0
@@ -70,7 +70,7 @@ end
     zc.phase[6] = 0.5  # vertical astigmatism, 0.5 rad RMS
     spline = SplinePSF(
         ScalarPSF(1.4, 0.6, 1.518; zernike_coeffs = zc);
-        lateral_range = 1.0, axial_range = 0.8, lateral_step = 0.05, axial_step = 0.05
+        lateral_range = 1.2, axial_range = 0.8, lateral_step = 0.05, axial_step = 0.05
     )
     px, box, n = 0.1, 15, 200
     n_photons, bg = 3000.0f0, 10.0f0

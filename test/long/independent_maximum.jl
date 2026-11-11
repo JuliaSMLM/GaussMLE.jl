@@ -11,9 +11,11 @@
 # default bounds, to a Newton decrement below 1e-12. It starts from the fit's end point and
 # from the truth; the higher objective is the maximum. A fit's distance is the largest
 # |fit_k - max_k| / CRLB_k over its parameters, with the CRLB from the Float64 Fisher matrix
-# at the maximum. Fits are scored if they have 500 photons or more, a position CRLB of at
-# most 0.2 px, a p-value of at least 0.001 and finite uncertainties; in every condition
-# 99.9 % of those must lie within 0.1 CRLB of the maximum.
+# at the maximum. A fit is scored when its simulated emitter has 500 photons or more and a
+# position CRLB at the truth (the Float64 Fisher matrix) of at most 0.2 px: the selection
+# uses the truth alone, so it cannot depend on the fit under test. Every condition must
+# score at least min_scored of its fits, and 99.9 % of the scored ones must lie within
+# 0.1 CRLB of the maximum.
 using Test, GaussMLE, SMLMData, SMLMSim, Random, LinearAlgebra, SpecialFunctions
 using StaticArrays, Printf
 
@@ -24,6 +26,11 @@ const N_ROIS = 2000
 const CENTER = (BOX + 1) / 2
 const MAX_DISTANCE = 0.1
 const MIN_SHARE = 0.999
+# Share of a condition's fits that must be scored. The selection uses the truth alone, so
+# the count is fixed by the simulation: every fit at 2,000 photons and above, but at 500
+# photons and background 10 the defocused astigmatic emitters (13 to 18 % of them) have a
+# position CRLB above 0.2 px.
+min_scored(photons) = photons >= 2000 ? 0.99 : 0.8
 
 # ---- Float64 reference model ----------------------------------------------------------------
 
@@ -259,15 +266,11 @@ function fitted_parameters(e, kind, camera, corner_x, corner_y)
     return Float64[x, y, e.z, e.photons, e.bg]
 end
 
-# Whether a fit is scored: 500 photons or more, a position CRLB of at most 0.2 px, a
-# p-value of at least 0.001, and finite uncertainties (none on a bound)
-function scored(e, px)
-    finite = all(
-        f -> isfinite(getfield(e, f)),
-        [f for f in fieldnames(typeof(e)) if startswith(String(f), "σ_")]
-    )
-    return finite && e.photons >= 500 && e.σ_x / px <= 0.2 && e.σ_y / px <= 0.2 &&
-        e.pvalue >= 0.001
+# Whether a fit is scored, decided on the simulated truth alone: 500 photons or more and a
+# position CRLB at the truth of at most 0.2 px
+function scored(truth, kind, crlb_truth)
+    photons = truth[kind === :astig ? 4 : 3]
+    return photons >= 500 && crlb_truth[1] <= 0.2 && crlb_truth[2] <= 0.2
 end
 
 struct Result
@@ -336,8 +339,10 @@ function run_condition(spec::Spec, camera_kind::Symbol, photons, bg, seed)
         θmax, Lmax = pick_b ? (θb, Lb) : (θa, La)
         CRLB = sqrt.(diag(inv(Symmetric(fisher(ref, θmax, vk)))))
         distance = maximum(abs.(clamp.(θfit, lo, hi) .- θmax) ./ CRLB)
+        crlb_truth = sqrt.(diag(inv(Symmetric(fisher(ref, truth[:, k], vk)))))
         results[k] = Result(
-            isnan(distance) ? Inf : distance, scored(e, PIXEL), okb && Lb - La > 1.0e-6,
+            isnan(distance) ? Inf : distance, scored(truth[:, k], spec.kind, crlb_truth),
+            okb && Lb - La > 1.0e-6,
             oka || okb,
             Lmax - objgrad(ref, clamp.(θfit, lo, hi), roi, vk)[1], θfit, θmax, CRLB
         )
@@ -399,7 +404,7 @@ end
                     end
                 end
                 @testset "photons $photons, bg $bg" begin
-                    @test length(kept) >= 100  # a condition that scores few fits tests nothing
+                    @test length(kept) >= min_scored(photons) * length(results)
                     @test all(r -> r.reference_ok, kept)
                     @test share >= MIN_SHARE
                 end

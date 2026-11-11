@@ -23,7 +23,8 @@ uncertainties and p-values of every model change.
   (the trapezoid along the step), and the whole step is scaled to its limits.
 - `iterations` caps the Levenberg-Marquardt pixel passes of a fit (of each start for
   `AstigmaticXYZNB` and `SplinePSFModel`): `iterations = k` takes at most k - 1 steps and
-  `iterations = 1` returns the start, where 0.4.2 took exactly k steps. Its default is 100;
+  `iterations = 1` returns the start (the best of its starts, for those two models), where
+  0.4.2 took exactly k steps. Its default is 100;
   a fit stops earlier once converged. `iterations = 20`, the 0.4.2 default that scripts
   and packages often pass explicitly, is now a cap that some fits reach before converging:
   on simulated low-count astigmatic ROIs (300 to 500 photons) up to 5 % of the fits need
@@ -49,6 +50,13 @@ uncertainties and p-values of every model change.
 - Julia 1.10 is no longer supported; the oldest supported Julia is 1.11.
 - CUDA must be 5.9 or a later 5.x, or 6.5 or a later 6.x (0.4.2 allowed 4 and 5), so an
   environment held to an older CUDA cannot install this release.
+- Invalid input fails at once: an sCMOS ROI that reaches beyond the camera's sensor throws
+  an `ArgumentError`, and under `backend = :gpu` a request that no idle GPU can hold
+  errors instead of waiting (even with `gpu_timeout = Inf`), as does a third one-ROI
+  out-of-memory failure in a row.
+- `GaussMLEFitInfo.memory_per_batch` also counts the covariances, the Pearson statistics,
+  the convergence flags and the whole sCMOS variance map (16 MiB more for a 2048 x 2048
+  camera).
 
 ### Added
 
@@ -62,17 +70,16 @@ uncertainties and p-values of every model change.
   integrals, with rectangular pixels and analytic spline derivatives, by the same
   Levenberg-Marquardt fit (Poisson objective; Poisson-shifted for sCMOS). By default it also
   fits from fixed z starts, one per 0.4 um of the central 80 % of `z_range`, and keeps the
-  highest likelihood.
+  highest likelihood. A MicroscopePSFs spline is zero outside its own grid, so its
+  `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
+  ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
+  fitted.
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.
 - A precompile workload compiles the first CPU fit of `GaussianXYNBS` and `SplinePSFModel`
   for both cameras.
 
 ### Fixed
 
-- A parameter fixed by equal bounds is always held out of the step (before, one with no
-  information in the data could stop every parameter from moving).
-- A fit whose background may be zero no longer gets a NaN objective from pixels with no
-  counts.
 - A read-noise variance map, or a camera's read noise, must be finite and non-negative;
   `fit` throws an `ArgumentError` where the kernel threw or returned nonsense. So must a
   photon or background lower bound in user constraints be at least 0; a negative one could
@@ -93,9 +100,13 @@ uncertainties and p-values of every model change.
 
 ### Notes
 
-- A custom `PSFModel` must be isbits after Adapt to run on the CPU (POCL).
-- CPU results under KernelAbstractions 0.9 and 0.10, and CPU and GPU results, agree to the
-  stop tolerance (about 0.02 CRLB), not to rounding.
+- A custom `PSFModel` must be isbits after Adapt to run on the CPU (POCL); a 3D one, or
+  one whose photon and background bounds should be checked, declares two optional methods
+  (the Custom PSF Models guide).
+- CPU results under KernelAbstractions 0.9 and 0.10, and CPU and GPU results, agree to what
+  the stop rule allows, not to rounding: each fit stops within about 0.014 CRLB of the
+  maximum of its quadratic model, so two fits of one ROI can end a few hundredths of a CRLB
+  apart (measured figures in the GPU guide).
 - Under KernelAbstractions 0.10 the first two CPU fits of a model in a session take
   seconds (on one workstation with 0.10.7, about 4.5 s together for `GaussianXYNBS`, which
   the workload precompiles, and 6 s for `GaussianXYNB`): the CPU kernel runs through POCL,

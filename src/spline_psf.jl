@@ -34,22 +34,31 @@ one fixed z start per 0.4 µm over the central 80 % of `z_range`: 6 for ±1 µm,
 `ArgumentError`.
 
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
-                   z_range = (psf.z_min, psf.z_max), lateral_range = 1.5,
+                   z_range = (psf.z_min, psf.z_max), lateral_range = nothing,
                    starts = nothing)
 
 Available when MicroscopePSFs is loaded (package extension). `psf` must be 3D, and `z_range`
 must lie within the spline's own `(z_min, z_max)` (the spline is zero outside it), else
-`ArgumentError`.
+`ArgumentError`. The spline is also zero outside its own lateral grid, so `lateral_range`
+plus one pixel must lie within it on each axis: `lateral_range = nothing` (the default)
+takes the largest value that does at `pixel_size`, and a larger one throws `ArgumentError`.
+When `fit` rescales the model to larger camera pixels the grid covers less, so the rescaled
+model's `lateral_range` shrinks to what it covers, and the ROI check below applies to that.
+A plain callable
+has no extent GaussMLE can check; its default `lateral_range` is 1.5 µm, and it must
+describe the PSF out to `lateral_range` plus one pixel.
 
 `pixel_size` is the camera pixel size in microns: a `Real` for square pixels or a tuple
 `(x, y)` for rectangular pixels. `fit` rescales the model to both camera pixel sizes.
 `lateral_range` must cover the half-diagonal of the ROI, `sqrt((box * pixel_size_x / 2)^2 +
 (box * pixel_size_y / 2)^2)`: the table ends at `lateral_range` plus one pixel and is zero
 beyond it, so `fit` throws `ArgumentError` for a larger ROI instead of fitting a truncated
-PSF. Each component and `lateral_range` must be finite and positive before and after Float32
-conversion. Construction builds a Float32 table of pixel averages using composite
-two-point Gauss-Legendre quadrature on five sub-intervals per axis. Its lateral nodes have
-spacing `pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least
+PSF. A 31 px box of 0.1 µm pixels (half-diagonal 2.19 µm) therefore needs a SplinePSF
+tabulated to at least ±2.29 µm. Each component and `lateral_range` must be finite and
+positive before and after Float32 conversion. Construction builds a Float32 table of pixel
+averages using composite two-point Gauss-Legendre quadrature on five sub-intervals per
+axis. Its lateral nodes have spacing `pixel_size_x / 5` and `pixel_size_y / 5`, extending
+to at least
 `±(lateral_range + pixel_size_axis)` on each axis; its axial nodes span `z_range` with
 spacing at most 0.02 µm.
 A natural cubic B-spline interpolates the table, returning zero outside its lateral range.
@@ -191,6 +200,56 @@ function _spline_pixel_size(::Type{T}, pixel_size::Union{Real, Tuple{Real, Real}
     return px
 end
 
+# Lateral extent (x_min, x_max, y_min, y_max) in µm beyond which a tabulated PSF is zero, or
+# `nothing` for a plain callable, whose extent GaussMLE cannot know. The MicroscopePSFs
+# extension returns a SplinePSF's own grid.
+_lateral_limits(spline) = nothing
+
+# How far the PSF reaches from its center on each axis (the nearer edge), or `nothing`.
+function _lateral_reach(spline)
+    lim = _lateral_limits(spline)
+    lim === nothing && return nothing
+    return (
+        min(-Float64(lim[1]), Float64(lim[2])), min(-Float64(lim[3]), Float64(lim[4])),
+    )
+end
+
+# The largest lateral_range a tabulated PSF covers at pixel size `px`: the table reaches
+# lateral_range plus one pixel on each axis.
+function _largest_lateral_range(reach, px)
+    return min(reach[1] - Float64(px[1]), reach[2] - Float64(px[2]))
+end
+
+# The pixel table reaches lateral_range plus one pixel on each axis (the extra pixel serves
+# an emitter off the ROI center), so a tabulated PSF must reach that far, or the fit uses a
+# PSF cut off at the edge of its grid. The two-ulp slack absorbs the Float32 storage of the
+# pixel sizes and lateral_range, as in the box check.
+function _check_lateral_extent(spline, px::NTuple{2, T}, lateral::T) where {T}
+    reach = _lateral_reach(spline)
+    reach === nothing && return nothing
+    slack = 1 + 2 * Float64(eps(T))
+    need = (Float64(lateral) + Float64(px[1]), Float64(lateral) + Float64(px[2]))
+    (need[1] <= reach[1] * slack && need[2] <= reach[2] * slack) && return nothing
+    largest = _largest_lateral_range(reach, px)
+    lim = _lateral_limits(spline)
+    throw(
+        ArgumentError(
+            "lateral_range $(lateral) um with $(px[1]) x $(px[2]) um pixels needs " *
+                "the PSF tabulated to ±$(round(need[1]; digits = 3)) um in x and " *
+                "±$(round(need[2]; digits = 3)) um in y (lateral_range plus one " *
+                "pixel), but the SplinePSF covers x $(lim[1]) to $(lim[2]) and " *
+                "y $(lim[3]) to $(lim[4]) um and is zero beyond, so the fit would use a " *
+                "truncated PSF. " *
+                (
+                largest > 0 ?
+                "Use lateral_range <= $(floor(largest * slack; digits = 3)) with a ROI " *
+                    "whose half-diagonal is within it, or tabulate the PSF wider." :
+                "Tabulate the PSF wider than one pixel."
+            )
+        )
+    )
+end
+
 # Shared by the core constructor and the MicroscopePSFs extension. `limits` has the spline's
 # own `z_min`/`z_max`.
 function _spline_psf_model(
@@ -207,6 +266,7 @@ function _spline_psf_model(
     (isfinite(lateral) && lateral > zero(T)) || throw(
         ArgumentError("lateral_range must be finite and positive after Float32 conversion")
     )
+    _check_lateral_extent(spline, px, lateral)
 
     # The model clamps z into z_range, so both Float32 bounds must lie inside the spline's
     # own range: clamp to it, then round inward (a bound rounded outward evaluates to 0).
@@ -269,7 +329,8 @@ function _validate_psf_box(model::SplinePSFModel{T}, box_size::Integer) where {T
                 "the model is zero beyond its lateral range plus one pixel, so the fit " *
                 "would use a truncated PSF. Build the model with lateral_range >= " *
                 "$(ceil(half_diagonal * (1 - rel); digits = 2)) " *
-                "(SplinePSFModel(...; lateral_range = ...)) or use a smaller box."
+                "(SplinePSFModel(...; lateral_range = ...); a SplinePSF must be " *
+                "tabulated to at least that plus one pixel) or use a smaller box."
         )
     )
 end
@@ -690,17 +751,26 @@ function to_pixel_units(
     ) where {T}
     new_px = _spline_pixel_size(T, pixel_size)
     new_px == model.pixel_size && return model
-    new_scale = _compute_psf_scale(
-        model.spline_psf, new_px, model.lateral_range, model.z_ref
-    )
-    pixel_psf = _build_pixel_psf(
-        model.spline_psf, new_px, model.lateral_range, model.z_range
-    )
+    lateral = _rescaled_lateral_range(model.spline_psf, new_px, model.lateral_range)
+    new_scale = _compute_psf_scale(model.spline_psf, new_px, lateral, model.z_ref)
+    pixel_psf = _build_pixel_psf(model.spline_psf, new_px, lateral, model.z_range)
     return SplinePSFModel{T, typeof(model.spline_psf), typeof(pixel_psf)}(
         model.spline_psf, pixel_psf, new_px,
-        model.z_range, model.lateral_range,
+        model.z_range, lateral,
         new_scale, model.z_ref, model.starts
     )
+end
+
+# The table reaches lateral_range plus one pixel, so at larger pixels a tabulated PSF covers
+# a smaller lateral_range: the rescaled model keeps the smaller of its own and the largest
+# the grid covers, and the box check then refuses a ROI beyond it. (A MicroscopePSFs PSF's
+# signal scale is the pixel area, which lateral_range does not change.)
+function _rescaled_lateral_range(spline, px::NTuple{2, T}, lateral::T) where {T}
+    reach = _lateral_reach(spline)
+    reach === nothing && return lateral
+    largest = _largest_lateral_range(reach, px)
+    largest > 0 || _check_lateral_extent(spline, px, lateral)  # throws
+    return min(lateral, T(largest))
 end
 
 function to_pixel_units(model::SplinePSFModel, pixel_size_x::Real, pixel_size_y::Real)

@@ -559,8 +559,10 @@ end
             chi2_sum += (data_ij - model)^2 / variance
         end
 
-        # Fisher Information Matrix (for CRLB) - need full matrix here
-        if model > zero(T)
+        # Fisher Information Matrix (for CRLB) - need full matrix here, over the pixels the
+        # fit's own Fisher matrix uses (for sCMOS that includes a pixel whose expected
+        # count is zero, which the read-noise variance still makes informative)
+        if variance > zero(T) && isfinite(variance)
             # Whole-matrix operations preserve multiply/divide/add order per element.
             H = H + (dudt * dudt') / variance
         end

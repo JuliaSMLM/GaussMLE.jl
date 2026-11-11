@@ -111,10 +111,8 @@ functional.
 # Fields
 - `backend::Symbol`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `psf_model::P<:PSFModel`: Point spread function model
-- `iterations::Int`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each
-  start for `SplinePSFModel`); the last pass only evaluates, so a fit takes at most
-  `iterations - 1` steps and `iterations = 1` returns the start. The Gaussian models
-  stop earlier once converged; `n_converged` leaves out one that reaches the cap first
+- `iterations::Int`: Cap on the pixel passes of each fit start (the `iterations` keyword
+  below)
 - `constraints::PC<:Union{Nothing, ParameterConstraints}`: Parameter bounds and step limits;
   `nothing` builds defaults from the ROI size at fit time
 - `batch_size::Int`: Batch size for GPU processing
@@ -151,9 +149,10 @@ Camera noise model is determined by the ROIBatch type:
 - `psf_model = GaussianXYNB(0.13f0)`: PSF model to use
 - `backend = :auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each start for
-  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a fit takes at
-  most `iterations - 1` steps and `iterations = 1` returns the start. Default 100; a fit
-  stops earlier once converged (`n_converged` leaves out one that reaches the cap first)
+  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a start takes
+  at most `iterations - 1` steps, and `iterations = 1` returns the start (for a model with
+  several starts, the best of them). Default 100; a fit stops earlier once converged
+  (`n_converged` leaves out one that reaches the cap first)
 - `constraints = nothing`: Parameter constraints; `nothing` builds defaults from the
   ROI size at fit time
 - `batch_size = 10_000`: Number of ROIs to process per GPU batch; a GPU out-of-memory
@@ -283,7 +282,7 @@ function compute_cpu_batch_size(
         memory_multiplier::Integer = 4
     )
     free_mem = Sys.free_memory()
-    # data + results + uncertainties + covariances + llr
+    # data + results + uncertainties + covariances + Pearson statistic
     memory_per_roi = (box_size^2 + n_params * 2 + 3 + 1) * 4
     total_memory_needed = n_fits * memory_per_roi * memory_multiplier
 
@@ -371,8 +370,8 @@ Handles all backend selection and batch management logic.
 - fitter: GaussMLEConfig with backend/batching configuration
 - vendor: the GPU vendor (`nothing` for none); defaults to `_gpu_vendor()` unless the
   backend is `:cpu`. A test passes a fake vendor to drive the retry loop.
-- converged: per-fit flags, 1 where the fit met its convergence test (SplinePSFModel:
-  always); the fit methods pass their own to count them
+- converged: per-fit flags, 1 where the fit met its convergence test (for a model with
+  several starts, the start it keeps); the fit methods pass their own to count them
 
 # Returns
 Tuple of (actual_backend::Symbol, device_id::Int, actual_batch_size::Int,
@@ -1061,9 +1060,10 @@ Kwargs match GaussMLEConfig fields exactly.
 # Keyword Arguments
 - `psf_model=GaussianXYNB(0.13f0)`: PSF model to use
 - `iterations`: Cap on the Levenberg-Marquardt pixel passes of a fit (of each start for
-  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a fit takes at
-  most `iterations - 1` steps and `iterations = 1` returns the start. Default 100; a fit
-  stops earlier once converged (`n_converged` leaves out one that reaches the cap first)
+  `AstigmaticXYZNB` and `SplinePSFModel`); the last pass only evaluates, so a start takes
+  at most `iterations - 1` steps, and `iterations = 1` returns the start (for a model with
+  several starts, the best of them). Default 100; a fit stops earlier once converged
+  (`n_converged` leaves out one that reaches the cap first)
 - `backend=:auto`: Compute backend (`:cpu`, `:gpu`, or `:auto`)
 - `constraints=nothing`: Parameter constraints; `nothing` builds defaults from the ROI size
   at fit time

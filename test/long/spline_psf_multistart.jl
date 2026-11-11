@@ -21,7 +21,7 @@ using SMLMSim: poisson_noise
         n_immersion = 1.516
     )
     spline = SplinePSF(
-        vpsf; lateral_range = 1.0, axial_range = 0.7, lateral_step = 0.1, axial_step = 0.1
+        vpsf; lateral_range = 1.2, axial_range = 0.7, lateral_step = 0.1, axial_step = 0.1
     )
     px, box, n = 0.1, 15, 400
     photons, bg = 3000.0, 10.0

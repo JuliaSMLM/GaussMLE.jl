@@ -287,13 +287,10 @@ right mean and variance. Its gradient is the weighted residual
 $(N_{i,j} - \mu_{i,j}) / \text{Var}_{i,j}$ times $\partial\mu_{i,j}/\partial\theta$, and its Fisher
 matrix weights each pixel by $1/\text{Var}_{i,j}$ (see Levenberg-Marquardt Optimization).
 
-The reported residual statistic is:
-
-```math
-R(\theta) = -\frac{1}{2} \sum_{i,j} \frac{(N_{i,j} - \mu(\theta)_{i,j})^2}{\text{Var}_{i,j}}
-```
-
-It is reported, not maximized. Here the data and model use electrons, and the readout variance uses electrons².
+At the fit's end point the kernel also sums the Pearson statistic
+$\sum_{i,j} (N_{i,j} - \mu(\theta)_{i,j})^2 / \text{Var}_{i,j}$, from which the p-value comes
+(see Goodness of Fit); no other residual statistic is returned. Here the data and model use
+electrons, and the readout variance uses electrons².
 
 Note that unlike the pure Poisson case, the variance depends on both the model value (signal-dependent) and the camera calibration (pixel-dependent). The readout variance map is extracted from the camera calibration as $\sigma^2_{\text{read}} = \text{readnoise}^2$ and indexed at the correct camera coordinates using the ROI corner positions.
 
@@ -316,7 +313,8 @@ with $\text{Var}_{i,j} = \mu_{i,j} + \sigma^2_{\text{read},i,j}$ (the readout te
 converge in far fewer. Each pass
 evaluates the objective, gradient and Fisher matrix at one trial point; the first evaluates the
 start and the last only evaluates, so a fit takes at most `iterations - 1` steps and
-`iterations = 1` returns the start. A fit stops before the cap once converged (see
+`iterations = 1` returns the start (for a model with several starts, the best of them). A
+fit stops before the cap once converged (see
 Levenberg-Marquardt Optimization); for a model fitted from several starts the cap applies to
 each start. Photon and
 background steps have no default step limit: the damped step and the likelihood check keep them

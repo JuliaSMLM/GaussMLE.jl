@@ -296,13 +296,19 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 The same unified kernel runs on every device via KernelAbstractions.jl. The fit's
 accept/reject decisions and its stop test branch on Float32 values near the maximum, so two
 devices can end a fit at slightly different points within the stop tolerance. Results
-therefore agree to the stop tolerance, not to rounding:
+therefore agree to what the stop rule allows, not to rounding: each fit stops within about
+0.014 CRLB of the maximum of its quadratic model, so two fits of one ROI can end a few
+hundredths of a CRLB apart.
 
-- CPU and GPU: within about 0.02 CRLB in any parameter, for every model (largest measured
-  on an RTX 4090: 0.018 CRLB). At a few hundred photons, where the likelihood can have
-  more than one maximum, a few fits in 50,000 end in different maxima.
-- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 agree to the
-  same tolerance (POCL computes `log`, `pow` and `sqrt` with OpenCL builtins).
+- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 (POCL
+  computes `log`, `pow` and `sqrt` with OpenCL builtins) differed by at most 0.056 CRLB, in
+  the astigmatic model's z at 300 photons (12 of its 18,000 fits beyond 0.02 CRLB), and the
+  2D models by at most 0.014 CRLB, on simulated data at this release: 3,000 ROIs per
+  condition, the four Gaussian models, 300, 5,000 and 100,000 photons at background 10,
+  both cameras.
+- CPU and GPU: the same holds; the GPU tests check the agreement on each GPU. At a few
+  hundred photons, where the likelihood can have more than one maximum, a few fits in
+  50,000 end in different maxima.
 
 ## Troubleshooting
 
