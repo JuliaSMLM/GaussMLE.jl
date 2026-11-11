@@ -663,6 +663,30 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test_throws ArgumentError cpu_fit(ideal_batch(rect_data, rect_camera), narrow)
         smld, _ = cpu_fit(ideal_batch(rect_data, rect_camera), rect(2.0))
         @test length(smld.emitters) == n_roi
+
+        # A lateral_range equal to the half-diagonal fits: 20 px of 0.09 x 0.12 um pixels
+        # is 1.5 um, which the Float32 pixel sizes put a rounding error above 1.5
+        edge_px = (0.09, 0.12)
+        edge_camera = IdealCamera(64, 64, edge_px)
+        edge(lr) = SplinePSFModel(
+            astig_spline; pixel_size = edge_px, z_range = (-0.5, 0.5), lateral_range = lr
+        )
+        data20 = rois(edge(2.0), 20)
+        smld, _ = cpu_fit(ideal_batch(data20, edge_camera), edge(1.5))
+        @test length(smld.emitters) == n_roi
+        # A smaller lateral_range is refused, and the message asks for exactly 1.5
+        err = try
+            cpu_fit(ideal_batch(data20, edge_camera), edge(1.4))
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("lateral_range >= 1.5 ", err.msg)
+        # One pixel more (21 px, 1.575 um) is still refused at 1.5
+        @test_throws ArgumentError cpu_fit(
+            ideal_batch(rois(edge(2.0), 21), edge_camera), edge(1.5)
+        )
     end
 
 end

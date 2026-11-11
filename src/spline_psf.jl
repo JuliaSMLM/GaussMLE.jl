@@ -249,13 +249,18 @@ _psf_table_bytes(model::SplinePSFModel{T}) where {T} =
 _array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
 
 # The table is zero beyond lateral_range plus one pixel, so a ROI whose half-diagonal
-# exceeds lateral_range would be fitted with a truncated PSF.
-function _validate_psf_box(model::SplinePSFModel, box_size::Integer)
+# exceeds lateral_range would be fitted with a truncated PSF. The pixel sizes and
+# lateral_range are stored in T, each within half an ulp of the value given, so a box
+# whose half-diagonal equals lateral_range can compute up to one ulp above it: the check
+# allows two (far inside the extra pixel the table covers), and the value it suggests
+# passes it.
+function _validate_psf_box(model::SplinePSFModel{T}, box_size::Integer) where {T}
     shown_x, shown_y = model.pixel_size
     px_x, px_y = Float64(shown_x), Float64(shown_y)
     half_diagonal = hypot(box_size * px_x / 2, box_size * px_y / 2)
     lateral = Float64(model.lateral_range)
-    half_diagonal <= lateral && return nothing
+    rel = Float64(eps(T))
+    half_diagonal <= lateral * (1 + 2rel) && return nothing
     hd = round(half_diagonal; digits = 2)
     throw(
         ArgumentError(
@@ -263,7 +268,7 @@ function _validate_psf_box(model::SplinePSFModel, box_size::Integer)
                 "of $(hd) um, beyond the SplinePSFModel lateral_range of $(model.lateral_range) um; " *
                 "the model is zero beyond its lateral range plus one pixel, so the fit " *
                 "would use a truncated PSF. Build the model with lateral_range >= " *
-                "$(ceil(half_diagonal; digits = 2)) " *
+                "$(ceil(half_diagonal * (1 - rel); digits = 2)) " *
                 "(SplinePSFModel(...; lateral_range = ...)) or use a smaller box."
         )
     )
