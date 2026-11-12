@@ -1,4 +1,5 @@
-# SplinePSFModel from a MicroscopePSFs SplinePSF (e.g. a learned PSF read with load_psf).
+# SplinePSFModel from a MicroscopePSFs SplinePSF (e.g. a learned PSF read with load_psf), and
+# JointSplinePSFModel from a two-channel MultiChannelPSF.
 module GaussMLEMicroscopePSFsExt
 
 using GaussMLE: GaussMLE
@@ -117,14 +118,73 @@ end
 end
 
 @static if isdefined(MicroscopePSFs, :MultiChannelPSF)
-    # One model fits one PSF in one ROI; nothing links x, y and z across channels.
+    # One SplinePSFModel fits one PSF in one ROI; JointSplinePSFModel fits two channels.
     function GaussMLE.SplinePSFModel(::MicroscopePSFs.MultiChannelPSF; kwargs...)
         throw(
             ArgumentError(
                 "SplinePSFModel fits one channel: build one model per channel " *
-                    "(SplinePSFModel(mc.channels[k]; ...)) and fit each channel's ROIs; " *
-                    "a joint fit across channels is not available"
+                    "(SplinePSFModel(mc.channels[k]; ...)) and fit each channel's ROIs, " *
+                    "or fit two channels at once with JointSplinePSFModel(mc; ...)"
             )
+        )
+    end
+
+    # Two channels, the reference first. Each view is a SplinePSFModel of its channel in
+    # the channel's own z (reference z plus its z_offset), with the SplinePSF checks; the
+    # joint z range is in reference z, by default all that both channels cover.
+    function GaussMLE.JointSplinePSFModel(
+            mc::MicroscopePSFs.MultiChannelPSF;
+            pixel_size::Union{Real, Tuple{Real, Real}},
+            z_range = nothing,
+            lateral_range::Union{Nothing, Real} = nothing,
+            starts::Union{Nothing, Integer} = nothing
+        )
+        n = length(mc.channels)
+        n == 2 || throw(
+            ArgumentError("JointSplinePSFModel fits two channels; this MultiChannelPSF has $n")
+        )
+        order = mc.reference == 1 ? (1, 2) : (2, 1)
+        channels = (mc.channels[order[1]], mc.channels[order[2]])
+        limits = (_z_limits(channels[1]), _z_limits(channels[2]))
+        for v in 1:2
+            limits[v] === nothing && throw(
+                ArgumentError(
+                    "channel $(order[v]) is a $(typeof(channels[v]).name.name); each " *
+                        "channel must be a 3D SplinePSF (or a PlanePSF of one)"
+                )
+            )
+        end
+        offset = (Float64(mc.z_offset[order[1]]), Float64(mc.z_offset[order[2]]))
+        cover = (
+            max(limits[1][1] - offset[1], limits[2][1] - offset[2]),
+            min(limits[1][2] - offset[1], limits[2][2] - offset[2]),
+        )
+        zr = z_range === nothing ? cover : z_range
+        (length(zr) == 2 && isfinite(zr[1]) && isfinite(zr[2]) && zr[1] < zr[2]) || throw(
+            ArgumentError(
+                "z_range $zr must be finite and increasing; with these z offsets the " *
+                    "channels both cover $cover"
+            )
+        )
+        views = ntuple(
+            v -> _tabulated_model(
+                channels[v], limits[v],
+                "channel $(order[v])'s SplinePSF (in its own z, reference z plus " *
+                    "z_offset $(offset[v]))";
+                pixel_size, z_range = (zr[1] + offset[v], zr[2] + offset[v]),
+                lateral_range, starts
+            ),
+            2
+        )
+        # The views' Float32 z ranges in reference z; each view clamps z to its own.
+        T = Float32
+        zj = (
+            max(views[1].z_range[1] - T(offset[1]), views[2].z_range[1] - T(offset[2])),
+            min(views[1].z_range[2] - T(offset[1]), views[2].z_range[2] - T(offset[2])),
+        )
+        return GaussMLE._joint_spline_model(
+            views, (mc.transmission[order[1]], mc.transmission[order[2]]), offset,
+            mc.registration[order[2]], zj, GaussMLE._spline_starts(starts, zj)
         )
     end
 end

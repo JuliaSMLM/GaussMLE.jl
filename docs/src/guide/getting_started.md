@@ -105,6 +105,7 @@ Different PSF models return different emitter types, all subtypes of `SMLMData.A
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `σx`, `σy` (fitted PSF widths) |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `σ_z` (z-position) |
 | `SplinePSFModel` | `Emitter3DFitGaussMLE` | `z`, `σ_z` (tabulated 3D PSF) |
+| `JointSplinePSFModel` | `Emitter3DFitJoint` | `z`, `σ_z`, `bg2`, `σ_bg2` (one emitter in two images) |
 
 ### Emitter2DFitGaussMLE Fields
 

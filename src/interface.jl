@@ -233,31 +233,33 @@ function GaussMLEConfig(;
 end
 
 """
-    estimate_batch_memory(batch_size, box_size, n_params; map_bytes = box_size^2 * 4)
+    estimate_batch_memory(batch_size, box_size, n_params; map_bytes = box_size^2 * 4,
+                          views = 1)
 
 Estimate GPU memory needed for one batch of MLE fitting.
 
 Memory components:
-- data: batch_size × box_size² × 4 bytes
+- data: batch_size × views × box_size² × 4 bytes (`views = 2` for a `JointSplinePSFModel`,
+  which fits two images per emitter)
 - results: batch_size × n_params × 4 bytes
 - uncertainties: batch_size × n_params × 4 bytes
 - covariances: batch_size × 3 × 4 bytes
 - Pearson statistics: batch_size × 4 bytes
-- corners: batch_size × 2 × 4 bytes
+- corners: batch_size × views × 2 × 4 bytes
 - convergence flags: batch_size bytes
 - variance map: `map_bytes` (shared; the kernel receives the whole camera map, so pass
-  `4 * length(variance_map)` for a sCMOS fit)
+  `4 * length(variance_map)` for a sCMOS fit, summed over both maps for two images)
 """
 function estimate_batch_memory(
         batch_size::Integer, box_size::Integer, n_params::Integer;
-        map_bytes::Integer = box_size^2 * 4
+        map_bytes::Integer = box_size^2 * 4, views::Integer = 1
     )
-    data_bytes = batch_size * box_size^2 * 4
+    data_bytes = batch_size * views * box_size^2 * 4
     results_bytes = batch_size * n_params * 4
     uncertainties_bytes = batch_size * n_params * 4
     covariances_bytes = batch_size * 3 * 4
     statistics_bytes = batch_size * 4
-    corners_bytes = batch_size * 2 * 4
+    corners_bytes = batch_size * views * 2 * 4
     converged_bytes = batch_size
     return data_bytes + results_bytes + uncertainties_bytes + covariances_bytes +
         statistics_bytes + corners_bytes + converged_bytes + map_bytes
@@ -272,18 +274,18 @@ function _gof_pvalues(chi2::AbstractVector{Float32}, df::Integer)
 end
 
 """
-    compute_cpu_batch_size(n_fits, box_size, n_params; memory_multiplier=4)
+    compute_cpu_batch_size(n_fits, box_size, n_params; memory_multiplier=4, views=1)
 
 Compute optimal batch size for CPU processing based on available memory.
 Returns n_fits if all data fits in memory, otherwise a smaller batch size.
 """
 function compute_cpu_batch_size(
         n_fits::Integer, box_size::Integer, n_params::Integer;
-        memory_multiplier::Integer = 4
+        memory_multiplier::Integer = 4, views::Integer = 1
     )
     free_mem = Sys.free_memory()
     # data + results + uncertainties + covariances + Pearson statistic
-    memory_per_roi = (box_size^2 + n_params * 2 + 3 + 1) * 4
+    memory_per_roi = (views * box_size^2 + n_params * 2 + 3 + 1) * 4
     total_memory_needed = n_fits * memory_per_roi * memory_multiplier
 
     if total_memory_needed <= free_mem
@@ -353,6 +355,25 @@ const ONE_ROI_OOM_PAUSE = 0.5
 # Only a tabulated model has a finite lateral extent; SplinePSFModel specializes this.
 _validate_psf_box(::Any, ::Integer) = nothing
 
+# The runner's per-fit arrays hold one ROI per fit or, for a model fitted to two images,
+# two: data (box, box, 2, n), corners (2, n), a variance map per image.
+_fits_slice(a::AbstractArray{T, 3}, r) where {T} = a[:, :, r]
+_fits_slice(a::AbstractArray{T, 4}, r) where {T} = a[:, :, :, r]
+_fits_slice(c::AbstractVector, r) = c[r]
+_fits_slice(c::AbstractMatrix, r) = c[:, r]
+_view_corners(c::AbstractVector, v) = c
+_view_corners(c::AbstractMatrix, v) = view(c, v, :)
+_view_map(m::AbstractMatrix, v) = m
+_view_map(m::Tuple, v) = m[v]
+_map_bytes(m::AbstractMatrix) = sizeof(m)
+_map_bytes(m::Tuple) = sum(sizeof, m)
+function _device_map(backend, m::AbstractMatrix)
+    d = KernelAbstractions.allocate(backend, Float32, size(m))
+    copyto!(d, m)
+    return d
+end
+_device_map(backend, m::Tuple) = map(x -> _device_map(backend, x), m)
+
 """
     _run_mle_kernel!(results, uncertainties, covariances, chi2,
                      data, psf_pixels, use_scmos, variance_map, x_corners, y_corners,
@@ -382,29 +403,45 @@ function _run_mle_kernel!(
         uncertainties::Matrix{Float32},
         covariances::Matrix{Float32},
         chi2::Vector{Float32},
-        data::Array{Float32, 3},
+        data::Union{Array{Float32, 3}, Array{Float32, 4}},
         psf_pixels,
         use_scmos::Val,
-        variance_map::Matrix{Float32},
-        x_corners::AbstractVector{Int32},
-        y_corners::AbstractVector{Int32},
+        variance_map::Union{Matrix{Float32}, NTuple{2, Matrix{Float32}}},
+        x_corners::AbstractVecOrMat{Int32},
+        y_corners::AbstractVecOrMat{Int32},
         fitter::GaussMLEConfig;
         vendor = fitter.backend == :cpu ? nothing : _gpu_vendor(),
-        converged::AbstractVector{UInt8} = Vector{UInt8}(undef, size(data, 3))
+        converged::AbstractVector{UInt8} = Vector{UInt8}(undef, size(data, ndims(data)))
     )
-    n_fits = size(data, 3)
+    # One ROI per fit (data (box, box, n), corner vectors, one map), or two images per fit
+    # for a model fitted to both (data (box, box, 2, n), corners (2, n), a map per image)
+    n_fits = size(data, ndims(data))
     n_params = size(results, 1)
     box_size = size(data, 1)
+    views = ndims(data) == 4 ? 2 : 1
+    _model_views(psf_pixels) == views || throw(
+        ArgumentError(
+            "$(typeof(fitter.psf_model).name.name) fits $(_model_views(psf_pixels)) " *
+                "image(s) per emitter, the data hold $views"
+        )
+    )
     # Every fit method reaches the kernel here, so a ROI the PSF table cannot cover is
     # refused before the CPU path and before any GPU poll.
     _validate_psf_box(psf_pixels, box_size)
     # Every sCMOS entry point reaches the kernel here, and the kernel indexes the variance
     # map by corner, so every ROI must lie on the map's sensor.
-    use_scmos isa Val{true} &&
-        _validate_roi_corners(box_size, x_corners, y_corners, size(variance_map))
-    # The objective takes the log of model + read-noise variance: a negative or non-finite
-    # variance would make the kernel throw or return nonsense, so it is refused here.
-    use_scmos isa Val{true} && _validate_variance_values(variance_map)
+    if use_scmos isa Val{true}
+        for v in 1:views
+            _validate_roi_corners(
+                box_size, _view_corners(x_corners, v), _view_corners(y_corners, v),
+                size(_view_map(variance_map, v))
+            )
+            # The objective takes the log of model + read-noise variance: a negative or
+            # non-finite variance would make the kernel throw or return nonsense, so it is
+            # refused here.
+            _validate_variance_values(_view_map(variance_map, v))
+        end
+    end
     constraints = _resolve_constraints(fitter.constraints, fitter.psf_model, box_size)
     _validate_constraints(constraints, fitter.psf_model)
 
@@ -436,7 +473,7 @@ function _run_mle_kernel!(
         batch_cap = max(1, min(fitter.batch_size, n_fits))
         psf_bytes = _psf_table_bytes(psf_pixels)
         # The kernel receives the whole variance map, so its real size is counted.
-        map_bytes = sizeof(variance_map)
+        map_bytes = _map_bytes(variance_map)
         failed_batch = 0  # the batch cap of the last resource failure
         gpu_succeeded = false
         # An out-of-memory error for one ROI while the poll reports the device available
@@ -446,7 +483,7 @@ function _run_mle_kernel!(
         warned_batches = Set{Int}()  # batch sizes whose resource warning was logged
 
         # A single ROI that exceeds every device's total memory can never fit.
-        one_roi_bytes = estimate_batch_memory(1, box_size, n_params; map_bytes) +
+        one_roi_bytes = estimate_batch_memory(1, box_size, n_params; map_bytes, views) +
             psf_bytes
         totals = try
             _gpu_total_memory(vendor)
@@ -466,7 +503,7 @@ function _run_mle_kernel!(
 
         while !gpu_succeeded && !use_cpu && time() < deadline
             required_memory = estimate_batch_memory(
-                batch_cap, box_size, n_params; map_bytes
+                batch_cap, box_size, n_params; map_bytes, views
             ) + psf_bytes
             # Poll the vendor for an available GPU
             # Every poll tick that finds no device calls `on_wait` first, so a call
@@ -515,10 +552,7 @@ function _run_mle_kernel!(
                 # may replace the device/context, so it must adapt the host model again.
                 device_psf = _prepare_psf_model(gpu_backend, psf_pixels)
                 # The variance map is the same for every batch: upload it once per attempt.
-                d_variance_map = KernelAbstractions.allocate(
-                    gpu_backend, Float32, size(variance_map)
-                )
-                copyto!(d_variance_map, variance_map)
+                d_variance_map = _device_map(gpu_backend, variance_map)
 
                 # Process all batches on GPU
                 actual_batch_size = batch_cap
@@ -527,19 +561,19 @@ function _run_mle_kernel!(
                     batch_end = min(batch_start + batch_cap - 1, n_fits)
                     batch_size_actual = batch_end - batch_start + 1
 
-                    batch_data = data[:, :, batch_start:batch_end]
+                    batch_data = _fits_slice(data, batch_start:batch_end)
                     d_batch_data = KernelAbstractions.allocate(
                         gpu_backend, Float32, size(batch_data)
                     )
                     copyto!(d_batch_data, batch_data)
 
-                    batch_x_corners = x_corners[batch_start:batch_end]
-                    batch_y_corners = y_corners[batch_start:batch_end]
+                    batch_x_corners = _fits_slice(x_corners, batch_start:batch_end)
+                    batch_y_corners = _fits_slice(y_corners, batch_start:batch_end)
                     d_x_corners = KernelAbstractions.allocate(
-                        gpu_backend, Int32, length(batch_x_corners)
+                        gpu_backend, Int32, size(batch_x_corners)
                     )
                     d_y_corners = KernelAbstractions.allocate(
-                        gpu_backend, Int32, length(batch_y_corners)
+                        gpu_backend, Int32, size(batch_y_corners)
                     )
                     copyto!(d_x_corners, batch_x_corners)
                     copyto!(d_y_corners, batch_y_corners)
@@ -681,7 +715,7 @@ function _run_mle_kernel!(
         device_id = -1
         ka_backend = KernelAbstractions.CPU()
         cpu_psf = _prepare_psf_model(ka_backend, psf_pixels)
-        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params)
+        cpu_batch_size = compute_cpu_batch_size(n_fits, box_size, n_params; views)
         actual_batch_size = cpu_batch_size >= n_fits ? n_fits : cpu_batch_size
 
         if cpu_batch_size >= n_fits
@@ -702,9 +736,9 @@ function _run_mle_kernel!(
                 batch_end = min(batch_start + cpu_batch_size - 1, n_fits)
                 batch_size_actual = batch_end - batch_start + 1
 
-                batch_data = data[:, :, batch_start:batch_end]
-                batch_x_corners = x_corners[batch_start:batch_end]
-                batch_y_corners = y_corners[batch_start:batch_end]
+                batch_data = _fits_slice(data, batch_start:batch_end)
+                batch_x_corners = _fits_slice(x_corners, batch_start:batch_end)
+                batch_y_corners = _fits_slice(y_corners, batch_start:batch_end)
 
                 batch_results = @view results[:, batch_start:batch_end]
                 batch_uncertainties = @view uncertainties[:, batch_start:batch_end]

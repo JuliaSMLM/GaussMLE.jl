@@ -47,7 +47,8 @@ model's `lateral_range` shrinks to what it covers, and the ROI check below appli
 A `MicroscopePSFs.PlanePSF` (a plane focused `dz` away) of a SplinePSF keeps the spline's
 grid, and its own z range is the spline's shifted by `-dz`. A `MultiChannelPSF` throws
 `ArgumentError`: one model fits one channel, so build one per channel and fit each channel's
-ROIs; there is no joint fit across channels. A plain callable has no extent GaussMLE can
+ROIs, or fit two channels at once with [`JointSplinePSFModel`](@ref). A plain callable has
+no extent GaussMLE can
 check; its default `lateral_range` is 1.5 µm, and it must describe the PSF out to
 `lateral_range` plus one pixel.
 
