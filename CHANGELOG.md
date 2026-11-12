@@ -73,7 +73,9 @@ uncertainties and p-values of every model change.
   highest likelihood. A MicroscopePSFs spline is zero outside its own grid, so its
   `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
   ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
-  fitted.
+  fitted. A MicroscopePSFs `PlanePSF` of a spline keeps the spline's grid with z shifted by
+  `-dz`. A `MultiChannelPSF` is refused: fit each channel with its own model (there is no
+  joint fit across channels).
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.
 - A precompile workload compiles the first CPU fit of `GaussianXYNBS` and `SplinePSFModel`
   for both cameras.

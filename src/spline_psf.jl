@@ -44,9 +44,12 @@ plus one pixel must lie within it on each axis: `lateral_range = nothing` (the d
 takes the largest value that does at `pixel_size`, and a larger one throws `ArgumentError`.
 When `fit` rescales the model to larger camera pixels the grid covers less, so the rescaled
 model's `lateral_range` shrinks to what it covers, and the ROI check below applies to that.
-A plain callable
-has no extent GaussMLE can check; its default `lateral_range` is 1.5 µm, and it must
-describe the PSF out to `lateral_range` plus one pixel.
+A `MicroscopePSFs.PlanePSF` (a plane focused `dz` away) of a SplinePSF keeps the spline's
+grid, and its own z range is the spline's shifted by `-dz`. A `MultiChannelPSF` throws
+`ArgumentError`: one model fits one channel, so build one per channel and fit each channel's
+ROIs; there is no joint fit across channels. A plain callable has no extent GaussMLE can
+check; its default `lateral_range` is 1.5 µm, and it must describe the PSF out to
+`lateral_range` plus one pixel.
 
 `pixel_size` is the camera pixel size in microns: a `Real` for square pixels or a tuple
 `(x, y)` for rectangular pixels. `fit` rescales the model to both camera pixel sizes.

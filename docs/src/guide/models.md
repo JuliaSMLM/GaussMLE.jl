@@ -171,6 +171,12 @@ SplinePSF tabulated to at least ±2.29 µm (MicroscopePSFs' `SplinePSF(psf; late
 callable has no grid GaussMLE can check: its default `lateral_range` is 1.5 µm, and it must
 describe the PSF out to `lateral_range` plus one pixel.
 
+A `PlanePSF` (MicroscopePSFs' plane focused `dz` away) of a SplinePSF keeps the spline's
+grid, and its z range is the spline's shifted by `-dz`. One model fits one PSF in one ROI:
+a `MultiChannelPSF` is refused. For data from several channels (two planes, two
+polarizations), build a model per channel and fit each channel's ROIs on their own; nothing
+links x, y and z across channels, so the channels' photons are not pooled.
+
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
 quadrature with five sub-intervals per lateral axis. The lateral table spacings are
 `pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least

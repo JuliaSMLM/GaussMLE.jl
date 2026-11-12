@@ -739,4 +739,42 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         )
     end
 
+    # PlanePSF and MultiChannelPSF exist from MicroscopePSFs 0.5.7 (the compat floor is
+    # 0.5.6)
+    isdefined(MicroscopePSFs, :MultiChannelPSF) &&
+        @testset "a PlanePSF keeps its spline's grid; a MultiChannelPSF is refused" begin
+        # A PlanePSF evaluates the SplinePSF it wraps at z + dz: the same lateral grid, and
+        # the spline's z range (here ±0.5 um) shifted by -dz
+        plane = PlanePSF(astig_spline; dz = 0.2)
+        pm = SplinePSFModel(plane; pixel_size = 0.1)
+        @test pm.z_range[1] ≈ -0.7f0 && pm.z_range[2] ≈ 0.3f0
+        @test pm.lateral_range ≈ 1.3f0
+        @test_throws ArgumentError SplinePSFModel(
+            plane; pixel_size = 0.1, z_range = (-0.5, 0.5)
+        )
+        @test_throws ArgumentError SplinePSFModel(
+            plane; pixel_size = 0.1, lateral_range = 2.2
+        )
+        # Its expected counts are the spline's at z + dz
+        sm = SplinePSFModel(astig_spline; pixel_size = 0.1, z_range = (-0.5, 0.5))
+        θp = SVector{5, Float32}(7.2, 6.8, -0.1, 2000, 10)
+        θs = SVector{5, Float32}(7.2, 6.8, 0.1, 2000, 10)
+        @test all(
+            isapprox(
+                GaussMLE.evaluate_psf(pm, i, j, θp), GaussMLE.evaluate_psf(sm, i, j, θs);
+                rtol = 1.0e-4
+            ) for i in 1:13, j in 1:13
+        )
+        # One model fits one channel
+        err = try
+            mc = MultiChannelPSF(; channels = [astig_spline, plane])
+            SplinePSFModel(mc; pixel_size = 0.1)
+            nothing
+        catch e
+            e
+        end
+        @test err isa ArgumentError
+        @test occursin("one model per channel", err.msg)
+    end
+
 end
