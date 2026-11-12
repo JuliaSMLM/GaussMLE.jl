@@ -77,13 +77,11 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
             @test gpu_info.backend == :gpu
             @test gpu_info.n_batches == 3
             @test length(cpu.emitters) == length(gpu.emitters) == n
-            # SplinePSFModel is fitted by Levenberg-Marquardt, whose accept/reject test
-            # branches on objective differences at float32 resolution near the optimum, so
-            # CPU and GPU can stop at equally good points along the flat photon-background
-            # direction. With parameters on a bound held fixed, they differed by at most
-            # 0.009 CRLB in any parameter on the 4090 (20,000 values of this design). The
-            # Gaussian models' fixed-step loop keeps its rtol 1e-4 test elsewhere, so
-            # compare in CRLB units here.
+            # Every start stops once converged, within about 0.014 CRLB of the maximum of
+            # its quadratic model, and the accept/reject test branches on Float32
+            # differences near the optimum, so CPU and GPU can stop a little apart: on the
+            # RTX 4090, at most 0.017 CRLB in any parameter and none beyond 0.02 (8,000
+            # values of this design). Compare in CRLB units.
             for (field, sigma) in zip(parameter_fields, uncertainty_fields)
                 a = [getproperty(e, field) for e in cpu.emitters]
                 b = [getproperty(e, field) for e in gpu.emitters]
@@ -91,7 +89,7 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 @test all(isfinite, a) && all(isfinite, b)
                 d = abs.(a .- b) ./ s
                 @test maximum(d) <= 0.05
-                @test count(<=(0.01), d) / length(d) >= 0.99
+                @test count(<=(0.02), d) / length(d) >= 0.99
             end
             # Fits on a constraint bound have Inf uncertainties (CLAUDE.md). Both backends
             # must agree on which, and the covariance scale and bias/SD checks skip them.

@@ -104,9 +104,17 @@ include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
                 @test info.batch_size == 10
                 @test info.n_batches == 4
                 @test length(gpu.emitters) == length(cpu.emitters)
-                for field in parameters
-                    @test getproperty.(gpu.emitters, field) ≈
-                        getproperty.(cpu.emitters, field) rtol = 1.0e-4
+                # CPU and GPU stop within the stop rule's tolerance of the same maximum, not
+                # at the same bits, so compare in CRLB units: on simulated data they differ
+                # by at most 0.014 CRLB for the 2D models and 0.058 in astigmatic z at 300
+                # photons (9,000 fits); a GPU fault gives far more.
+                for (field, sigma) in zip(parameters, uncertainties)
+                    g = getproperty.(gpu.emitters, field)
+                    c = getproperty.(cpu.emitters, field)
+                    s = getproperty.(cpu.emitters, sigma)
+                    ok = isfinite.(s)
+                    @test all(isfinite, g)
+                    @test maximum(abs.(g[ok] .- c[ok]) ./ s[ok]) <= 0.1
                 end
                 for field in uncertainties
                     @test getproperty.(gpu.emitters, field) ≈
