@@ -207,14 +207,10 @@ function validate_fitting_results(
         roi_size::Int = 11,  # Default ROI size for coordinate extraction
         verbose::Bool = false
     )
-    # Extract ROI-local coordinates
-    # For fit(Array), use dummy corners [1, 12, 23, ...] (matches interface.jl)
+    # Extract ROI-local coordinates: fit(Array) reports positions within each ROI, as if
+    # every ROI sat at corner (1, 1)
     n = length(smld.emitters)
-    dummy_corners = zeros(Int32, 2, n)
-    for i in 1:n
-        dummy_corners[1, i] = Int32(1 + (i - 1) * roi_size)
-        dummy_corners[2, i] = Int32(1)
-    end
+    dummy_corners = ones(Int32, 2, n)
 
     pixel_size = smld.camera.pixel_edges_x[2] - smld.camera.pixel_edges_x[1]
     coords = extract_roi_coords(smld, dummy_corners, roi_size, pixel_size)
@@ -330,7 +326,7 @@ function run_model_validation(
         psf_model::GaussMLE.PSFModel,
         n_blobs::Int = 1000;
         box_size::Int = 11,
-        device = GaussMLE.CPU(),
+        backend = :cpu,
         verbose::Bool = false,
         kwargs...
     )
@@ -342,8 +338,7 @@ function run_model_validation(
     # Create fitter
     fitter = GaussMLE.GaussMLEConfig(
         psf_model = psf_model,
-        backend = device isa GaussMLE.CPU ? :cpu : :gpu,
-        iterations = 20
+        backend = backend
     )
 
     # Fit the data (data-first API, returns tuple)

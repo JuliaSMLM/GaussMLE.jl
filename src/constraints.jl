@@ -22,7 +22,7 @@ function default_constraints(::GaussianXYNB, box_size)
     return ParameterConstraints{4}(
         Params{4}(lower, lower, 1.0f0, 0.01f0), # lower bounds
         Params{4}(upper, upper, Inf32, Inf32),  # upper bounds
-        Params{4}(1.0f0, 1.0f0, 100.0f0, 2.0f0) # max step
+        Params{4}(1.0f0, 1.0f0, Inf32, Inf32)   # max step
     )
 end
 
@@ -31,7 +31,7 @@ function default_constraints(::GaussianXYNBS, box_size)
     return ParameterConstraints{5}(
         Params{5}(lower, lower, 1.0f0, 0.01f0, 0.3f0), # lower bounds
         Params{5}(upper, upper, Inf32, Inf32, 5.0f0),  # upper bounds
-        Params{5}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0) # max step
+        Params{5}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0)   # max step
     )
 end
 
@@ -40,7 +40,7 @@ function default_constraints(::GaussianXYNBSXSY, box_size)
     return ParameterConstraints{6}(
         Params{6}(lower, lower, 1.0f0, 0.01f0, 0.3f0, 0.3f0), # lower bounds
         Params{6}(upper, upper, Inf32, Inf32, 5.0f0, 5.0f0),  # upper bounds
-        Params{6}(1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0, 0.5f0) # max step
+        Params{6}(1.0f0, 1.0f0, Inf32, Inf32, 0.5f0, 0.5f0)   # max step
     )
 end
 
@@ -50,9 +50,22 @@ function default_constraints(::AstigmaticXYZNB, box_size)
     return ParameterConstraints{5}(
         Params{5}(lower, lower, -1.0f0, 1.0f0, 0.01f0), # lower: z = -1μm
         Params{5}(upper, upper, 1.0f0, Inf32, Inf32),   # upper: z = +1μm
-        Params{5}(1.0f0, 1.0f0, 0.1f0, 100.0f0, 2.0f0)  # max_step: z = 0.1μm
+        Params{5}(1.0f0, 1.0f0, 0.1f0, Inf32, Inf32)   # max_step: z = 0.1μm
     )
 end
+
+# Default cap on the Levenberg-Marquardt pixel passes of a fit. The Gaussian fits stop once
+# converged, most within 10 passes, so the cap binds only on a slow fit: Fisher scoring
+# converges linearly where the observed curvature differs from F, as for z at low counts.
+# A fit capped before it converges keeps its CRLB and is left out of `n_converged`. In
+# simulations of every Gaussian model (2,000 to 20,000 ROIs per condition, Poisson noise
+# with sCMOS read noise of 0 to 5 e-), up to 5 % of low-count astigmatic fits (300 to 500
+# photons) needed more than 20 passes. At 100, up to 0.3 % of emitters inside the z range
+# had not stopped (PSFs at 1e6 photons or more, narrow PSFs, low-count astigmatic fits
+# with 5 e- read noise), about half of them within 0.1 CRLB of their maximum; near the
+# ends of the z range up to 8.5 % had not. AstigmaticXYZNB and SplinePSFModel apply the
+# cap to each of their starts.
+_default_iterations(::PSFModel) = 100
 
 _resolve_constraints(constraints::ParameterConstraints, ::PSFModel, box_size) = constraints
 
@@ -60,11 +73,24 @@ function _resolve_constraints(::Nothing, psf_model::PSFModel, box_size)
     return default_constraints(psf_model, box_size)
 end
 
-@inline function apply_constraints!(
-        θ::Params{N}, Δθ::Params{N},
-        constraints::ParameterConstraints{N}
-    ) where {N}
-    # Apply step size limits and bounds
-    θ_new = θ - clamp.(Δθ, -constraints.max_step, constraints.max_step)
-    return clamp.(θ_new, constraints.lower, constraints.upper)
+# Positions of the photon count and the background in a model's parameter vector, for the
+# models that declare them. A custom model declares nothing by default, so its bounds are
+# not checked here (the objective is -Inf wherever the expected count plus read-noise
+# variance is negative, so the fit stays defined either way); see the Custom PSF Models
+# guide.
+_photon_background_indices(::PSFModel) = ()
+_photon_background_indices(::Union{GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY}) = (3, 4)
+_photon_background_indices(::AstigmaticXYZNB) = (4, 5)
+
+# The fit takes the log of each pixel's expected count plus read-noise variance, which a
+# negative photon count or background can make negative, so lower bounds below zero (or
+# NaN) are refused before the kernel runs.
+function _validate_constraints(constraints::ParameterConstraints, psf_model::PSFModel)
+    for (k, name) in zip(_photon_background_indices(psf_model), ("photon", "background"))
+        lo = constraints.lower[k]
+        lo >= 0 || throw(
+            ArgumentError("the $name lower bound must be at least 0, got $lo")
+        )
+    end
+    return nothing
 end

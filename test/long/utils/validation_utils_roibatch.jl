@@ -65,7 +65,7 @@ function validate_roibatch_fitting(
         psf_model::GaussMLE.PSFModel,
         n_rois::Int = 1000;
         box_size::Int = 15,
-        device = GaussMLE.CPU(),
+        backend = :cpu,
         n_photons::Float32 = 2000.0f0,
         background::Float32 = 1.0f0,
         verbose::Bool = false,
@@ -84,8 +84,7 @@ function validate_roibatch_fitting(
 
     # Fit (data-first API, returns tuple)
     fitter = GaussMLE.GaussMLEConfig(
-        psf_model = psf_model, backend = device isa GaussMLE.CPU ? :cpu : :gpu,
-        iterations = 20,
+        psf_model = psf_model, backend = backend,
     )
     smld, _info = GaussMLE.fit(roi_batch, fitter)
 
@@ -104,9 +103,10 @@ function validate_roibatch_fitting(
     σ_bg = Float32[]
 
     for (i, e) in enumerate(smld.emitters)
-        # Convert back to ROI coords using ACTUAL corners from roi_batch
-        x_cam_pixels = e.x / pixel_size + 1
-        y_cam_pixels = e.y / pixel_size + 1
+        # Convert back to ROI coords using ACTUAL corners from roi_batch: pixel centers sit
+        # at (p - 0.5) * pixel_size on these zero-origin cameras (see roi_batch.jl)
+        x_cam_pixels = e.x / pixel_size + 0.5f0
+        y_cam_pixels = e.y / pixel_size + 0.5f0
 
         x_roi = x_cam_pixels - roi_batch.x_corners[i] + 1
         y_roi = y_cam_pixels - roi_batch.y_corners[i] + 1
@@ -141,8 +141,7 @@ function validate_roibatch_fitting(
         mean_reported_std = mean(uncertainties[isfinite.(uncertainties)])
         std_ratio = empirical_std / mean_reported_std
 
-        # Position bias always passes (centering depends on corners)
-        bias_pass = name in [:x, :y] ? true : abs(bias) < bias_tol
+        bias_pass = abs(bias) < bias_tol
         std_pass = abs(1.0f0 - std_ratio) < std_tol
 
         if verbose

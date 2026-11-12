@@ -25,6 +25,7 @@ GaussianXYNB
 GaussianXYNBS
 GaussianXYNBSXSY
 AstigmaticXYZNB
+SplinePSFModel
 ```
 
 ### Custom Emitter Types
@@ -57,7 +58,10 @@ Device selection is controlled via the `backend` keyword argument to `GaussMLECo
 
 - `:auto` - Automatically select the backend (default)
 - `:cpu` - Force CPU execution
-- `:gpu` - Require GPU, error if unavailable after timeout
+- `:gpu` - Error immediately without a functional CUDA or loaded AMD GPU; otherwise wait
+  up to `gpu_timeout`
+
+`SplinePSFModel` follows the same rules as the Gaussian models on CPU and GPU.
 
 Example:
 ```julia
@@ -68,6 +72,9 @@ fitter = GaussMLEConfig(backend = :cpu)  # Force CPU
 ### Constraints
 
 Parameter constraints can be configured via the `constraints` keyword argument to `GaussMLEConfig`. Default constraints are automatically generated based on the PSF model and ROI size.
+
+For `SplinePSFModel`, custom z bounds are intersected with `model.z_range`; an empty
+intersection throws `ArgumentError`.
 
 ## Camera Models
 
@@ -95,3 +102,4 @@ Matrix input returns `(emitter, info)` for one ROI. Stack or `ROIBatch` input re
 | `GaussianXYNBS` | `Emitter2DFitSigma` |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` |

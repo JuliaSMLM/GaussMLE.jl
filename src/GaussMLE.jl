@@ -1,25 +1,26 @@
 """
     GaussMLE
 
-Maximum-likelihood fitting of Gaussian PSF models to single-molecule ROIs, on the CPU or a
-CUDA GPU, with Cramér-Rao lower bound uncertainties. Noise models: Poisson (`IdealCamera`)
-and sCMOS (`SCMOSCamera`, per-pixel readout noise).
+Maximum-likelihood fitting of Gaussian PSF models to single-molecule ROIs, on the CPU,
+a CUDA GPU, or an AMD GPU with AMDGPU loaded, with Cramér-Rao lower bound uncertainties.
+Noise models: Poisson (`IdealCamera`) and sCMOS (`SCMOSCamera`, per-pixel readout noise).
 
 Entry points: `fit` with a `GaussMLEConfig` or keywords; PSF models `GaussianXYNB`,
-`GaussianXYNBS`, `GaussianXYNBSXSY` and `AstigmaticXYZNB`; `generate_roi_batch` for
-simulated data. Results are `SMLMData.BasicSMLD` with model-specific emitter types.
+`GaussianXYNBS`, `GaussianXYNBSXSY`, `AstigmaticXYZNB` and `SplinePSFModel` (a tabulated
+3D PSF on CPU or GPU); `generate_roi_batch` for simulated data. Results are
+`SMLMData.BasicSMLD` with model-specific emitter types.
 """
 module GaussMLE
 
 using KernelAbstractions: KernelAbstractions, @Const, @index, @kernel
 using CUDA: CUDA, CUDABackend
-using StaticArrays: StaticArrays, @SVector, MMatrix, MVector, SVector
+using StaticArrays: StaticArrays, @SVector, SMatrix, SVector
 using LinearAlgebra: LinearAlgebra
-using Statistics: Statistics, mean
 using SpecialFunctions: SpecialFunctions
 using SMLMData: SMLMData
 using Random: Random
-using Distributions: Chisq, cdf, Poisson  # Only import what we need
+using PrecompileTools: @compile_workload, @setup_workload
+using Distributions: Chisq, ccdf, Poisson  # Only import what we need
 
 import StatsAPI: fit  # Extend canonical Julia fit function
 
@@ -28,9 +29,6 @@ using SMLMData: ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter,
     AbstractSMLMConfig, AbstractSMLMInfo
 
 import Adapt
-
-# Constants
-include("constants.jl")
 
 # Original modules needed for GaussLib
 include("gausslib/GaussLib.jl")
@@ -44,16 +42,18 @@ include("psf_derivatives.jl")
 include("constraints.jl")
 include("emitters.jl")  # Custom emitter types with PSF parameters
 include("roi_batch.jl")  # ROI batch data structure
+include("spline_psf.jl")  # Tabulated 3D PSF on CPU and GPU
 include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
 include("interface.jl")  # User-facing API
+include("precompile.jl")  # First-fit compilation at package precompile time
 
 # Main exports - minimal API for common workflows
 # Camera types come from SMLMData (use SMLMData.SCMOSCamera, etc.)
 # ROIBatch and SingleROI come from SMLMData (ecosystem standard)
 export fit, GaussMLEConfig, GaussMLEFitInfo
-export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB
+export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB, SplinePSFModel
 export generate_roi_batch
 
 # Export custom emitter types (subtype AbstractEmitter)

@@ -1,6 +1,8 @@
 # Models
 
-GaussMLE.jl provides four PSF model types to accommodate different experimental conditions. Each model differs in which parameters are fitted versus fixed.
+GaussMLE.jl provides five PSF model types, including `SplinePSFModel` for calibrated
+tabulated or learned 3D PSFs. All models run on CPU and GPU. Each differs in which
+parameters are fitted versus fixed.
 
 ## Available Models
 
@@ -115,7 +117,7 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Use in fitter
-fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Access z-position from emitters
@@ -136,15 +138,156 @@ The PSF width varies with z according to:
 - You need z-position information
 - You have calibrated the PSF-z relationship
 
+### SplinePSFModel - Tabulated 3D PSF
+
+A 3D model (x, y, z, N, bg) backed by a tabulated PSF: a measured or learned PSF, such as a
+MicroscopePSFs `SplinePSF` written by PSFLearning's `save_psf`. The callable supplies the point
+PSF; GaussMLE integrates it over each camera pixel. z is in microns throughout, and the model
+runs on CPU (POCL), CUDA and AMDGPU from the same pixel-integral table and fitting kernel.
+
+```julia
+using GaussMLE, MicroscopePSFs
+
+psf = load_psf("psf.h5")                       # a 3D SplinePSF, in microns
+model = SplinePSFModel(psf; pixel_size = 0.1)  # z_range defaults to the spline's own range
+smld, info = fit(batch; psf_model = model)     # GPU when available, otherwise CPU
+```
+
+Any callable `(x, y, z)` in microns works as well, without MicroscopePSFs:
+`SplinePSFModel(f; pixel_size, z_range)`. `pixel_size` accepts a `Real` for square pixels
+or an `(x, y)` tuple for rectangular pixels, for example `(0.1313, 0.1258)` in microns.
+The model stores both sizes as a Float32 tuple, and `fit(::ROIBatch)` rescales each axis
+to the camera's own spacing. This rectangular-pixel support is specific to `SplinePSFModel`.
+
+`lateral_range` must cover the half-diagonal of the ROI,
+`sqrt((box * pixel_size_x / 2)^2 + (box * pixel_size_y / 2)^2)`. The table ends at
+`lateral_range` plus one pixel and is zero beyond it, so `fit` throws `ArgumentError`
+for a larger ROI instead of fitting a truncated PSF. A SplinePSF is itself zero outside its
+own lateral grid, so `lateral_range` plus one pixel must lie within that grid: by default the
+model takes the largest `lateral_range` that does, and refuses a larger one. A 31 px box of
+0.1 µm pixels has a half-diagonal of 2.19 µm, so it needs `lateral_range >= 2.19` and a
+SplinePSF tabulated to at least ±2.29 µm (MicroscopePSFs' `SplinePSF(psf; lateral_range =
+2.3, ...)`); a spline tabulated to ±1.5 µm covers boxes up to 19 px of 0.1 µm pixels. A plain
+callable has no grid GaussMLE can check: its default `lateral_range` is 1.5 µm, and it must
+describe the PSF out to `lateral_range` plus one pixel.
+
+A `PlanePSF` (MicroscopePSFs' plane focused `dz` away) of a SplinePSF keeps the spline's
+grid, and its z range is the spline's shifted by `-dz`. One model fits one PSF in one ROI:
+a `MultiChannelPSF` is refused. For data from several channels (two planes, two
+polarizations), build a model per channel and fit each channel's ROIs on their own; nothing
+links x, y and z across channels, so the channels' photons are not pooled.
+
+Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
+quadrature with five sub-intervals per lateral axis. The lateral table spacings are
+`pixel_size_x / 5` and `pixel_size_y / 5`, extending to at least
+`±(lateral_range + pixel_size_axis)` per axis; axial nodes span the inward-rounded
+`z_range` with spacing at most 0.02 µm. A natural cubic B-spline interpolates these averages,
+with zero second derivative at each axis endpoint. Fitting uses the table, with zero outside
+its lateral range and z clamped to `z_range`. `fit` rebuilds the table and signal scale on
+every call whose camera pixel size differs from the model's, about a second for a
+PSFLearning-size table, so a chunked pipeline pays it per chunk: build the model at the
+camera pixel size. An unchanged `(x, y)` pair reuses the model.
+
+At fit time, Adapt transfers the coefficient table to the selected GPU and removes the
+point callable from the kernel model. The table is shared across batches; a retry after
+a GPU failure transfers it again to the selected device. POCL uses a device-array view
+of the host table. No kernel calls the original point PSF or allocates a new table.
+The Float32 coefficients occupy `4 * prod(size(model.pixel_psf.coefficients))` bytes,
+typically about 5 to 10 MiB for a PSFLearning export, in addition to the ROI data.
+
+Each pixel evaluation gathers 4 × 4 × 4 coefficients once and obtains the value and
+analytic first derivatives from cubic B-spline basis weights. Each lateral derivative uses its own pixel size. Non-positive values
+are clipped to zero with zero derivatives; axial derivatives are evaluated at clamped z.
+The initial z scan uses a value-only gather from the same table.
+
+The input must describe a point PSF: an already pixel-integrated callable would be integrated
+twice. Tabulate slow callables, such as a vector PSF, as a `SplinePSF` before constructing the model.
+
+N is the signal scale in photons for IdealCamera or electrons for sCMOS; background uses
+the corresponding units per pixel. For a `MicroscopePSFs.AbstractPSF`, the point PSF is a
+normalized photon density in µm^-2: N is total photons (or total electrons for sCMOS), and
+the pixel averages are multiplied by the pixel area without renormalization. A stack used
+to construct a `SplinePSF` must already have this density normalization. Construction throws
+`ArgumentError` if the pixel-integrated sum over the `lateral_range` patch at the reference
+plane lies outside `[0.5, 1.05]`, indicating an unnormalized density such as a raw bead image.
+
+A plain callable has arbitrary scale and is normalized on the reference plane, so N is the
+photons within the `lateral_range` patch at `z_ref` (electrons for sCMOS). Its energy must be
+the same at every z for that signal interpretation to hold across z. The reference plane is
+nearest z = 0 within the callable's valid range; for a `SplinePSF`, its own valid range is
+used. Pixel-size rescaling preserves this plane and recomputes the appropriate scale.
+A non-finite or non-positive reference sum for a plain callable throws `ArgumentError`.
+Point samples are clipped at zero before quadrature for both conventions.
+
+The scan start is the intensity centroid for x and y, the edge-pixel mean for the
+background, the positive in-box sum above it for N, and the z of a Poisson likelihood scan
+at those values (grid spacing at most 0.1 µm). One Levenberg-Marquardt fit reaches the
+maximum of the basin it starts in, and the scan start is often in the wrong basin for a
+defocused ROI. By default the fit therefore also starts from several fixed z values, as
+SMAP's fitter does, and keeps the fit with the highest likelihood. The `starts` keyword
+sets the total number of starts (the scan start plus `starts - 1` fixed ones). The default
+is one fixed start per 0.4 µm over the central 80 % of `z_range`: 6 starts for ±1 µm, 5 for
+±0.6 µm and 4 for ±0.5 µm. A single fixed start sits at the center of `z_range`; `m >= 2`
+fixed starts sit at `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`, with `R`
+the width of `z_range`. Each fixed start keeps the scan start's x, y, N and background, and
+each start costs one more Levenberg-Marquardt fit with the full `iterations`.
+`starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
+defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
+one start ended more than 0.05 below the best log-likelihood found in 116 of 400 fits and
+the default in none. The fit is Levenberg-Marquardt on the full
+Fisher matrix, climbing the Poisson likelihood (IdealCamera) or the Poisson-shifted
+likelihood `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise variance (sCMOS). The
+default constraints cap x and y steps at 1 pixel and z steps at 0.05 µm; photon and
+background steps are not capped (photons ≥ 1, background ≥ 0.01). A parameter on a bound
+whose gradient points out of the box is held there while the others take their step.
+Each start stops once converged, as the Gaussian fits do, and the fit counts as converged
+when the start it keeps did. `iterations` caps the Levenberg-Marquardt pixel passes of each
+start: the last pass only evaluates, so a start takes at most `iterations - 1` steps and
+`iterations = 1` returns it. A PSF with no z information at some plane (one symmetric in z
+about focus, such as an unaberrated PSF at z = 0) leaves z undetermined there: about half of
+such fits never meet the stop test and run to the cap, though x, y, N and the background
+still reach their CRLB. The p-value is the Pearson statistic
+(d - μ)²/(μ + v), as for every model. `fit` on a bare `Array` uses this model's own `pixel_size`, not the 0.1 µm
+of the Gaussian models.
+
+**Use this model when:**
+- You have a calibrated PSF that a Gaussian does not describe well
+- You need z-position information from that PSF
+
+## Custom PSF Models
+
+A subtype of `GaussMLE.PSFModel` defined outside this package must be `isbits` after
+`Adapt.adapt_structure` to run on GPUs and on the CPU backend of KernelAbstractions 0.10
+(POCL), which a fresh environment resolves: the kernel receives every model through Adapt.
+The CPU backend of KernelAbstractions 0.9 does not require it. Hold numbers, `SVector`s and
+arrays that Adapt moves to the device, and drop host-only fields (a callable, a heap array)
+in `adapt_structure`, as `SplinePSFModel` does with its point PSF. `simple_initialize` must
+return an `SVector`, as `SplinePSFModel`'s does, not an `MVector`. Otherwise the fit fails
+with a `GPUCompiler.KernelError` ("passing non-bitstype argument").
+
+Two optional methods give the roles of a model's parameters. Both are internal names, and
+without them a model is treated as 2D and its bounds are not checked:
+
+- `GaussMLE._has_axial_position(::Type{<:MyModel}) = true` when parameter 3 is z (the
+  x, y, z, N, bg order of `AstigmaticXYZNB` and `SplinePSFModel`). The fit then reports the
+  x-z and y-z covariances, and a fit whose z ends on a bound gets infinite uncertainties,
+  as one on an x or y bound does. Without it those covariances are zero and a z bound is
+  not marked.
+- `GaussMLE._photon_background_indices(::MyModel) = (4, 5)`, the positions of the photon
+  count and the background. The fit then refuses a negative lower bound on either with an
+  `ArgumentError`. Without it no bound is checked; where the expected count plus the
+  read-noise variance is negative, the objective is minus infinity, so a fit stays defined.
+
 ## Model Comparison
 
-| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB |
-|---------|--------------|---------------|------------------|-----------------|
-| Parameters | 4 | 5 | 6 | 5 |
-| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated |
-| Dimensions | 2D | 2D | 2D | 3D |
-| Speed | Fastest | Medium | Slowest | Medium |
-| Stability | Most stable | Less stable | Least stable | Stable |
+| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel |
+|---------|--------------|---------------|------------------|-----------------|----------------|
+| Parameters | 4 | 5 | 6 | 5 | 5 |
+| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape |
+| Dimensions | 2D | 2D | 2D | 3D | 3D |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup |
+| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
+| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 
 ## Unit Convention
 
@@ -153,15 +296,17 @@ The PSF width varies with z according to:
 - `GaussianXYNB(sigma)`: sigma in microns (e.g., `0.13f0` = 130nm)
 - `AstigmaticXYZNB`: sigma_x0, sigma_y0, gamma, d all in microns
 - `AstigmaticXYZNB`: Ax, Ay, Bx and By are dimensionless
+- `SplinePSFModel`: callable coordinates, z range, and pixel size are in microns
 
-Internally, x, y and lateral widths use pixels based on the camera pixel size; astigmatic z, gamma and d remain in microns.
+Internally, x, y and lateral widths use pixels based on the camera pixel size; z for both 3D models, and astigmatic gamma and d, remain in microns.
 
 ## Choosing the Right Model
 
 ### Decision Tree
 
 1. **Do you need 3D localization?**
-   - Yes -> Use `AstigmaticXYZNB` (requires calibration)
+   - Yes, with an astigmatism calibration -> Use `AstigmaticXYZNB`
+   - Yes, with a tabulated or learned PSF -> Use `SplinePSFModel`
    - No -> Continue to step 2
 
 2. **Is your PSF well-characterized and stable?**
@@ -247,7 +392,7 @@ psf = AstigmaticXYZNB{Float32}(
     0.10f0           # d
 )
 
-fitter = GaussMLEConfig(psf_model = psf, iterations = 30)
+fitter = GaussMLEConfig(psf_model = psf)
 smld, info = fit(data, fitter)
 
 # Extract 3D positions
@@ -261,7 +406,7 @@ println("Mean Z precision: $(mean([e.σ_z for e in smld.emitters]) * 1000) nm")
 
 ## Mathematical Formulation
 
-All models use the Gaussian expectation with pixel integration:
+The four Gaussian models use the Gaussian expectation with pixel integration:
 
 ```math
 \mu_{i,j}(\theta) = \theta_{bg} + \theta_N \int_{i-0.5}^{i+0.5} \int_{j-0.5}^{j+0.5}
@@ -273,6 +418,26 @@ Where:
 - For **GaussianXYNBS**: sigma_x = sigma_y = sigma (fitted)
 - For **GaussianXYNBSXSY**: sigma_x, sigma_y (independently fitted)
 - For **AstigmaticXYZNB**: sigma_x(z), sigma_y(z) from calibration curve
+
+For `SplinePSFModel`, let `f` be the point PSF in micron coordinates and pₓ, pᵧ the camera pixel sizes.
+The table interpolates the pixel average:
+
+```math
+A_{p_x,p_y}(d_x,d_y,z) = \frac{1}{p_x p_y}
+\int_{d_y-p_y/2}^{d_y+p_y/2} \int_{d_x-p_x/2}^{d_x+p_x/2}
+\max(0, f(u,v,z))\,du\,dv.
+```
+
+With `table` the natural cubic interpolant of these averages, the expected count is:
+
+```julia
+μ = bg + N * px_scale * max(0, table((j-x)*p_x, (i-y)*p_y, clamp(z, z_range...)))
+```
+
+For a `MicroscopePSFs.AbstractPSF` photon density, `px_scale = p_x * p_y`, so the signal is N times
+the pixel integral. For a plain callable, `px_scale` is the reciprocal sum of pixel averages
+on the reference patch at `z_ref`, so N counts the photons in that patch on the reference
+plane. The final clipping removes negative interpolation overshoot.
 
 ## Model Validation
 

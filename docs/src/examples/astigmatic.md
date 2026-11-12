@@ -131,7 +131,7 @@ psf = AstigmaticXYZNB{Float32}(
 batch = generate_roi_batch(camera, psf, n_rois=500, roi_size=13)
 
 # Fit
-fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+fitter = GaussMLEConfig(psf_model=psf)
 smld, info = fit(batch, fitter)
 
 # Access 3D positions (Emitter3DFitGaussMLE type)
@@ -157,7 +157,7 @@ The `AstigmaticXYZNB` model returns `Emitter3DFitGaussMLE` emitters with:
 | `σ_xy`, `σ_xz`, `σ_yz` | Position covariances (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 
 ## Quality Filtering
 
@@ -167,7 +167,7 @@ Filter 3D localizations by precision:
 using GaussMLE
 
 # Fit data
-fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+fitter = GaussMLEConfig(psf_model=psf)
 smld, info = fit(batch, fitter)
 
 # Filter by z precision (typically worse than xy)
@@ -213,7 +213,7 @@ psf = AstigmaticXYZNB{Float32}(
 )
 
 # Compare precision at different z positions
-fitter = GaussMLEConfig(psf_model=psf, iterations=30)
+fitter = GaussMLEConfig(psf_model=psf)
 
 for target_z in [-0.3, 0.0, 0.3]
     true_params = repeat(reshape(Float32[7, 7, target_z, 1000, 10], 5, 1), 1, 200)

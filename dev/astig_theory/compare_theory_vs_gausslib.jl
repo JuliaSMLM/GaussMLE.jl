@@ -194,9 +194,9 @@ function compute_fisher_gausslib(
     σx_z = sigma_x0 * sqrt(αx)
     σy_z = sigma_y0 * sqrt(αy)
 
-    # Compute derivatives of alpha
-    dαx_dz = GaussMLE.GaussLib.derivative_alpha_z(z - gamma, Ax, Bx, d)
-    dαy_dz = GaussMLE.GaussLib.derivative_alpha_z(z + gamma, Ay, By, d)
+    # Compute derivatives of alpha (GaussLib has no derivative of alpha; the one above)
+    dαx_dz = dalpha_dz(z - gamma, Ax, Bx, d)
+    dαy_dz = dalpha_dz(z + gamma, Ay, By, d)
 
     # Compute derivatives of sigma
     dσx_dz = (sigma_x0 / (2.0f0 * sqrt(αx))) * dαx_dz
@@ -211,17 +211,17 @@ function compute_fisher_gausslib(
         model = bg + N * phi_x * phi_y
 
         if model > 0.0f0
-            # Derivatives (GaussLib functions return (dudt, d2udt2) tuples)
-            (dphi_x_dx, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+            # Derivatives (GaussLib functions return the first derivative)
+            dphi_x_dx = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
                 j, x, σx_z, N_photons, phi_y
             )
-            (dphi_y_dy, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
+            dphi_y_dy = GaussMLE.GaussLib.derivative_integral_gaussian_1d(
                 i, y, σy_z, N_photons, phi_x
             )
-            (dphi_x_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+            dphi_x_dsigma = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
                 j, x, σx_z, N_photons, phi_y
             )
-            (dphi_y_dsigma, _) = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
+            dphi_y_dsigma = GaussMLE.GaussLib.derivative_integral_gaussian_1d_sigma(
                 i, y, σy_z, N_photons, phi_x
             )
 

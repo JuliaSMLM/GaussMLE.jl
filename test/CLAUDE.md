@@ -6,10 +6,30 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
 
 | Group | Folder | Contents | Runs on |
 |---|---|---|---|
-| Core | `test/*.jl` | API smoke, CPU kernel, sCMOS variance-map indexing regression, default bounds from the actual box | GitHub CI (Julia min and 1); at most 2 min |
+| Core | `test/*.jl` | API smoke and CPU kernel for GaussianXYNB (the Pearson statistic on a hand-computed 3x3 ROI, sCMOS chi2 equal to the Pearson sum at the fitted parameters, a 1,000-ROI sCMOS batch), CRLB of bright emitters (N = 1e3, 1e5, 1e6) against a Float64 reference for all four Gaussian models and SplinePSFModel, the Gaussian fits' stop (noise-free fits within 0.015 CRLB of the truth, a noisy fit within 0.015 CRLB of a 500-pass fit) and step rules (the trial step scaled whole to the step limits, the first step scaled whole, not clamped per parameter, SMLMSim ROIs that earlier rules ran to the cap stopping within 8 or 20 passes, a bright fit to a mismatched PSF width stopping, a fit whose next step rounds away ending early, a fit with its background held at zero, a parameter fixed by equal bounds with no information held, a fit capped one pass before its stop counted out of `n_converged`), SplinePSFModel fixed z starts leaving a wrong z well, sCMOS variance-map indexing regression and rejection of ROIs off the sensor, `fit(Array; variance_map)` shapes (`(box, box)`, `(box, box, n)`, tiled, a wrong one refused), the memory estimate counting a 2048 x 2048 camera map, a negative or non-finite read-noise variance refused, sCMOS simulation reading calibration maps as (y, x), a permanent one-ROI out-of-memory error ending after three tries, a poll that waited resetting that count, a non-OOM resource error pausing between tries (fake vendor), the precompile workload having run, `(box, box)` map memory counted at its real size, fits pinned on a position bound and a singular Fisher matrix (three simulated ROIs: pinned on a bound, singular to accumulation error, and singular in the kernel alone, each meeting its convergence test; `_invert_fisher` with a constructed pivot in the accumulation band, IdealCamera emitter outside the box, z on a spline bound) reporting `Inf` uncertainties while parameters held fixed (equal bounds) stay finite, default bounds from the actual box, SplinePSFModel with IdealCamera (CPU fit, pixel integration, total photons at every z, density guard, dispatch, rectangular pixels, Array pixel size, bright emitters, objective maximum with negative pixels, truths beyond a z_range end finishing on the bound, a NaN pixel) | GitHub CI (Julia min and 1); at most 2 min |
 | QA | `test/qa/` | Aqua, ExplicitImports, docstrings for every public name, docstring doctests | GitHub CI, its own job |
-| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check | lab GPU machine |
-| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for every model and camera | lab machine |
+| GPU | `test/gpu/` | GPU kernel, CPU vs GPU agreement, performance benchmark with std/CRLB checks, vendor routing and resource-error classification for the retry loop, one 3000-ROI launch against the CPU (AMD runs in workgroups of 64), CUDA free-memory query fallback, NVML device under `CUDA_VISIBLE_DEVICES`, contention check, spline CPU/GPU agreement and GPU bias/CRLB per z band, spline/AstigmaticXYZNB throughput at box 13 and 15, spline `:auto` uses GPU | CUDA or AMD GPU |
+| Long | `test/long/` | Monte Carlo validation: bias and std vs CRLB for the four Gaussian models with both cameras; every Gaussian model and camera against an independent Float64 maximizer of the fit objective (99.9 % of filtered fits within 0.1 CRLB of the higher of the maxima reached from the fit and from the truth, `independent_maximum.jl`); the 10,000-ROI sCMOS batch POCL work-group regression; the CPU path of GaussianXYNBS and GaussianXYNBSXSY; SplinePSFModel with an SCMOSCamera (raw-ADU recovery, objective maximum including pixels with data + read-noise variance <= 0, truths beyond a z_range end, rectangular pixels); IdealCamera p-value calibration (fraction below 0.05 at bg 1 and 2 on SMLMSim boxes, two-emitter boxes rejected); separate SplinePSFModel CPU validation with IdealCamera using MicroscopePSFs.integrate_pixels data, including photon bias per z band | lab machine |
+
+Spline tests treat the callable as a point PSF. A MicroscopePSFs PSF is a normalized photon
+density in µm^-2, so N is total photons and an input stack must have that normalization.
+A plain callable is normalized on the reference plane: N is the photons within the
+`lateral_range` patch at `z_ref`, and its energy must be the same at every z. The Core
+total-photon test and Long spline tests render independently with
+`MicroscopePSFs.integrate_pixels(...; sampling = 8)`.
+
+Each kernel specialization (model, camera) costs 3 to 20 s to compile on Julia 1.11 under
+`--check-bounds=yes`, which `Pkg.test` uses, and that compile is a large part of Core's time. Core
+therefore fits only GaussianXYNB (both cameras) and SplinePSFModel with IdealCamera; the
+other models and the sCMOS spline run in Long. Measure Core's time at the Julia floor
+(1.11) with the machine's load average noted.
+
+Camera noise in spline fixtures comes from SMLMSim (`poisson_noise`, `scmos_noise`, test
+extras in the root and GPU environments), not local code (lab decision 0032). Expected
+counts come from `GaussMLE.evaluate_psf` or `MicroscopePSFs.integrate_pixels`. SMLMSim's
+noise draws from the global generator, so a fixture calls `Random.seed!`.
+`test/long/utils/spline_psf_helpers.jl` holds the spline helpers that Core's
+`spline_psf_model.jl` and Long's `spline_psf_scmos.jl` share.
 
 - `test/runtests.jl` is the lab template, identical in every package: never edit it.
 - `test/test_groups.toml` declares the groups.
@@ -19,6 +39,10 @@ GaussMLE follows the lab's standard test layout (admiral decisions 0007 to 0010)
   A helper two groups share lives in one group's helper folder and the other includes it by
   relative path: `test/long/utils/validation_utils.jl` is also included by the GPU benchmark.
   Never put a helper in `test/` itself: every `test/*.jl` runs as a Core file.
+- `test/gpu/gpu_memory_query.jl` and `test/gpu/nvml_device_index.jl` cover CUDA only.
+  They check free-memory fallback, contention and NVML indices under `CUDA_VISIBLE_DEVICES`.
+  Their bodies run when `CUDA.functional()`; otherwise an `@info` line names the file
+  and explains that it covers the CUDA vendor only.
 
 ## Running
 
@@ -41,5 +65,10 @@ GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'  # every group this 
   such as the DGX Spark GB10, and a failed poll needs more GPU memory than exists.
   A contended GPU needs another process at high compute on the same GPU, which a test
   cannot arrange, so `_gpu_contended` injects the process and utilization queries.
+- Exception: `_gpu_vendor` is tested directly because `fit` does not expose which vendor
+  ran: `info.backend` is `:gpu` for both CUDA and AMD.
+- Exception: `_release_gpu_context` runs only after a GPU failure mid-fit, which `fit`
+  cannot reach on a lab machine, and its catch once hid a renamed CUDA function. Test
+  it directly in a separate Julia process to preserve the test process's CUDA context.
 - Report the test count per group before and after every change.
 - Statistical tests seed their RNG or compare on a tolerance that holds for any draw.

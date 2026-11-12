@@ -44,9 +44,10 @@ end
 
 ### Key Features
 
-- **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic
+- **Multiple PSF Models**: 2D Gaussian (fixed/variable sigma), 3D astigmatic, and tabulated
+  3D PSFs on CPU and GPU
 - **Physical Units**: Spatial PSF calibration parameters in microns (camera-independent); Ax, Ay, Bx and By are dimensionless
-- **Automatic GPU Acceleration**: CUDA support with automatic CPU fallback
+- **Automatic GPU Acceleration**: CUDA or AMD (with AMDGPU loaded), with CPU fallback
 - **Camera Models**: Ideal (Poisson) and sCMOS (pixel-dependent noise)
 - **CRLB Uncertainties**: Cramer-Rao lower bound for each parameter
 - **SMLMData Integration**: Returns `BasicSMLD` with ecosystem-compatible emitter types
@@ -54,11 +55,13 @@ end
 ### Unit Convention
 
 **User-facing spatial parameters use physical units (microns)**:
-- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13)` for 130nm PSF)
+- PSF widths: specified in microns (e.g., `GaussianXYNB(0.13f0)` for 130nm PSF)
 - Output positions: microns
 - Output spatial uncertainties: microns
 - Internally, x, y and lateral widths use pixels based on camera pixel size; astigmatic z, γ and d remain in microns
 - Astigmatic coefficients Ax, Ay, Bx and By are dimensionless
+
+The fitting path currently requires Float32 PSF models; use `f0` literals for their calibration parameters.
 
 ### Supported PSF Models
 
@@ -68,6 +71,7 @@ end
 | `GaussianXYNBS()` | x, y, N, bg, sigma | Variable PSF width |
 | `GaussianXYNBSXSY()` | x, y, N, bg, sigma_x, sigma_y | Anisotropic PSF |
 | `AstigmaticXYZNB{T}(...)` | x, y, z, N, bg | 3D astigmatic imaging |
+| `SplinePSFModel(psf; ...)` | x, y, z, N, bg | Calibrated tabulated or learned 3D PSF |
 
 ## Typical SMLM Pipeline
 
@@ -95,6 +99,10 @@ println("Mean sigma: $(mean(sigmas)) microns")
 ```
 
 ### GPU Acceleration
+
+CUDA is preferred and comes with GaussMLE. To use an AMD GPU when CUDA is not functional,
+add AMDGPU to your environment and load `using AMDGPU`
+before `fit`; see [GPU Support](@ref).
 
 ```julia
 using GaussMLE
@@ -175,6 +183,7 @@ end
 | `GaussianXYNBS` | `Emitter2DFitSigma` | + σ (PSF width) |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (PSF widths) |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg |
 
 ### Emitter2DFitGaussMLE Fields
 
@@ -185,11 +194,11 @@ The base 2D emitter type (`Emitter2DFitGaussMLE`) contains:
 | `x`, `y` | Fitted position | microns |
 | `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
 | `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB); `Inf` for a fit on a position bound or a Fisher matrix singular to working precision | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -220,9 +229,7 @@ The Gaussian expectation model for pixel (i,j) is:
 \frac{1}{2\pi \sigma_x \sigma_y} \exp\left(-\frac{(x-\theta_x)^2}{2\sigma_x^2} - \frac{(y-\theta_y)^2}{2\sigma_y^2}\right) dx \, dy
 ```
 
-The fitting uses Newton-Raphson optimization with:
-- **Diagonal Hessian**: For fast parameter updates
-- **Full Fisher Information**: For accurate CRLB uncertainties
+Every model is fitted by Levenberg-Marquardt on the full Fisher Information matrix, which also gives the CRLB uncertainties at the fitted point; the Gaussian models stop once converged. The `pvalue` is the Pearson statistic $\sum (d-\mu)^2/(\mu+v)$ against $\chi^2(\mathrm{df})$ for both cameras, not the objective the fit maximizes.
 
 ## References
 

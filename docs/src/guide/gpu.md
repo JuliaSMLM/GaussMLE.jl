@@ -1,6 +1,8 @@
 # GPU Support
 
-GaussMLE.jl includes GPU acceleration through CUDA.jl and KernelAbstractions.jl. A contention-aware scheduling system enables reliable GPU usage in multi-process environments such as shared GPU servers running parallel analysis scripts.
+GaussMLE.jl accelerates fitting on CUDA or AMD GPUs through KernelAbstractions.jl.
+AMD support requires loading AMDGPU. Memory polling and retries support shared GPU use;
+CUDA also checks contention through NVML when available.
 
 ## Quick Start
 
@@ -13,7 +15,7 @@ fitter = GaussMLEConfig()
 # Force CPU
 fitter = GaussMLEConfig(backend = :cpu)
 
-# Force GPU (errors if unavailable after timeout)
+# Force GPU (errors immediately if no functional GPU is found)
 fitter = GaussMLEConfig(backend = :gpu)
 
 # Auto with custom timeout
@@ -30,19 +32,45 @@ The `backend` parameter controls compute device selection:
 | `:cpu` | Always CPU, no GPU interaction | N/A |
 | `:gpu` | Require GPU | Error |
 
+GPU modes prefer CUDA whenever `CUDA.functional()`. Otherwise they use a functional
+AMD GPU when AMDGPU is loaded.
+
+If neither vendor is functional, `:gpu` errors immediately and `:auto` uses CPU
+without a warning. Timeouts govern resource waits and retries only after a functional
+vendor is found; a timeout in `:auto` warns before falling back to CPU. Only resource
+errors (out of memory, context creation) are retried; any other GPU error rethrows under
+`:gpu` and falls back to the CPU under `:auto`.
+
+All five PSF models, including `SplinePSFModel`, follow these backend rules.
+
+### Spline Table Transfer
+
+`SplinePSFModel` builds its pixel-integral coefficient table on the host. Adapt moves
+that table to the selected CUDA or AMD GPU before the first batch. All batches in a fit
+share it; a retry after a resource error transfers it again because the device or context
+may have changed. GPU memory polling includes the table's storage requirement.
+
+CPU fitting uses the same table (through POCL's device-array view under
+KernelAbstractions 0.10). The kernel model contains no point callable: fit, derivatives
+and CRLB all read the same coefficients.
+A value/derivative evaluation gathers 4 × 4 × 4 coefficients once; the initial z scan
+uses a value-only gather. Coefficients occupy
+`4 * prod(size(model.pixel_psf.coefficients))` bytes, typically about 5 to 10 MiB for a
+PSFLearning export, in addition to the batched ROI and result arrays.
+
 ### Timeout Configuration
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `auto_timeout` | `300.0` | Seconds to wait for GPU in `:auto` mode |
-| `gpu_timeout` | `Inf` | Seconds to wait in `:gpu` mode |
+| `auto_timeout` | `300.0` | Seconds for resource waits and retries in `:auto` mode |
+| `gpu_timeout` | `Inf` | Seconds for resource waits and retries in `:gpu` mode |
 | `on_wait` | `nothing` | Progress callback `(elapsed, available, required) -> nothing` |
 
 ```julia
-# Auto mode: wait up to 5 min (default), then fall back to CPU
+# Auto mode: with a functional GPU, wait/retry up to 5 min, then fall back to CPU
 fitter = GaussMLEConfig(backend = :auto, auto_timeout = 300.0)
 
-# Explicit GPU: wait up to 60s, error if still unavailable
+# Explicit GPU: with a functional GPU, wait/retry up to 60s, then error
 fitter = GaussMLEConfig(backend = :gpu, gpu_timeout = 60.0)
 
 # Progress callback for monitoring waits
@@ -54,11 +82,39 @@ fitter = GaussMLEConfig(
 )
 ```
 
+## AMD GPUs (ROCm)
+
+CUDA support comes with GaussMLE. AMD support is a package extension: add AMDGPU to
+your environment once and load it before `fit`:
+
+```julia
+using Pkg; Pkg.add("AMDGPU")  # once per environment
+
+using GaussMLE
+using AMDGPU
+
+smld, info = fit(batch, GaussMLEConfig(backend = :gpu))
+```
+
+Both `:gpu` and `:auto` support AMD. CUDA wins when both vendors are functional.
+`info.backend` is `:gpu` on either vendor, and `info.device_id` is a 0-based index.
+Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10. On AMD the kernel runs
+in workgroups of 64 ROIs: the size AMDGPU chooses itself put a large batch in one
+workgroup of up to 1024, which never ran on that GPU.
+
+Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
+contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,
+the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
+collection, then attempts synchronization and HIP pool reclamation on the failed
+device, restoring the previous device afterward. HIP cleanup errors are ignored;
+other errors propagate. No CUDA-style primary context is released.
+
 ## GPU Scheduling System
 
 ### The Problem
 
-When multiple Julia processes share a GPU server, naive GPU device selection causes failures:
+When multiple Julia processes share a GPU server, device selection can cause failures.
+CUDA examples include:
 
 - **Context creation OOM**: `CUDA.device!(i)` creates a CUDA context (~300 MB - 6 GB), which can OOM if another process is using the GPU
 - **Memory pool retention**: CUDA.jl's memory pool holds freed arrays, making NVML report memory as "used" even when no GPU arrays exist
@@ -66,24 +122,55 @@ When multiple Julia processes share a GPU server, naive GPU device selection cau
 
 ### Solution: Unified Retry Loop
 
-GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles all GPU failure modes uniformly:
+GaussMLE uses a single retry loop in `_run_mle_kernel!` that handles the GPU resource failure modes uniformly:
 
 ```
 while !gpu_succeeded && before deadline:
-    1. Poll GPU memory (prefer context-free NVML; fall back to CUDA if unsupported);
+    1. Poll vendor memory (CUDA: NVML with CUDA fallback; AMD: HIP free memory);
        skip a GPU with free memory < 1.5x required
     2. If memory came from NVML, skip if other_procs > 0 AND compute > 90%
     3. Try:
-         CUDA.device!(dev)         # Create context on selected GPU
+         activate selected GPU     # Use the selected vendor
          <process all batches>     # Run fitting kernel
-         CUDA.reclaim()            # Return pooled memory to OS
+         reclaim vendor pool       # Return cached memory
          gpu_succeeded = true
     4. Catch:
-         release CUDA context      # Free reserved memory
-         loop back to step 1       # Re-poll memory for next available GPU
+         clean up GPU resources    # in its own try; a failure only warns
+         if an out-of-memory error and the batch cap > 1:
+             halve the batch cap and loop back to step 1 at once
+         else if a resource error (out of memory at one ROI, context creation):
+             if the third one-ROI out-of-memory failure in a row, each after a poll that
+             returned at once:     # permanent, even with no timeout
+                 :gpu rethrows; :auto warns once and uses the CPU
+             if the poll returned at once: pause 0.5 s (bounded by the deadline)
+             loop back to step 1   # Re-poll memory for next available GPU
+         otherwise:                # a deterministic error, such as a compile error
+             :gpu rethrows at once; :auto warns once and falls back to the CPU at once
 ```
 
-After the loop: `:auto` falls back to CPU, `:gpu` errors.
+After the loop: `:auto` falls back to CPU, `:gpu` errors; the message names the batch
+size of the last failure. `GaussMLEFitInfo.batch_size` and `n_batches` report the batch
+cap that ran.
+
+Waiting helps only while another process holds the memory. The poll compares the request
+(the batch plus the PSF table, with the 1.5x margin) with each device's free memory, which
+never reaches its total because the driver and contexts hold some. A device cannot satisfy
+the request when its total memory is below it, or when it is idle (NVML lists no other
+compute process) and its free memory is below it. When no visible device can, the poll
+reports that at once instead of waiting: the loop halves the batch and polls again, and for
+one ROI `:gpu` throws an error naming the request with margin and the largest free memory
+of an idle device, while `:auto` warns once and uses the CPU. Where the process list is
+unavailable (the CUDA fallback path, for example the DGX Spark GB10, and ROCm under WSL)
+only a total below the request is final and the wait continues otherwise. Before the loop,
+the same holds for one ROI plus the PSF table against every device's total memory.
+A Ctrl-C (`InterruptException`) anywhere on the GPU path is rethrown, never counted as a
+GPU fault and never followed by a CPU run.
+
+Cleanup after a failure (CUDA context release, AMD synchronize and reclaim) can itself
+throw on a poisoned context, for example after a sticky fault such as an illegal address.
+That failure is logged as a warning and never replaces the original error, which `:gpu`
+rethrows and `:auto` handles as above. The same holds for the reclaim after a successful
+fit.
 
 ### Three Failure Modes
 
@@ -91,13 +178,32 @@ The loop handles three distinct GPU failure scenarios:
 
 1. **No free memory** - Memory polling waits with jittered backoff (0.5s intervals). All GPUs are scanned each tick; whichever frees up first is used.
 
-2. **TOCTOU context creation race** - The memory query shows sufficient free memory, but `CUDA.device!()` fails because another process grabbed the GPU between the check and context creation. The context is released and memory is re-polled.
+2. **TOCTOU context creation race** - Memory looks sufficient, but activating the GPU
+   fails because another process acquired it. Resources are cleaned up and memory is
+   re-polled.
 
-3. **Runtime OOM** - GPU allocation or kernel execution fails mid-batch. The context is released and all batches are restarted on a re-acquired GPU (partial results from a failed CUDA context are unreliable).
+3. **Runtime OOM** - GPU allocation fails mid-batch. Resources are cleaned up, the
+   batch cap is halved, and all batches restart at once with the smaller cap. An
+   out-of-memory error at a one-ROI batch goes back to the poll after a 0.5 s pause. Three
+   of them in a row, each after a poll that returned at once (the device was reported
+   available without waiting), are permanent: `:gpu` rethrows and `:auto` warns and uses
+   the CPU, even at `gpu_timeout = Inf`, because waiting does not clear a limit below one
+   ROI plus the PSF table. A poll that had to wait resets that count. Any other resource
+   failure (context creation, a device-unavailable error) retries until the timeout, with
+   the same 0.5 s pause when its poll returned at once, so it never spins. The retry loop
+   logs one warning per batch size.
+
+Any other error is not retried, since waiting cannot clear it. `fit(::ROIBatch)` also
+checks on the host, before any launch, that every ROI of an sCMOS batch lies on the sensor
+and throws `ArgumentError` otherwise.
 
 ### NVML Contention Detection
 
-Pre-flight memory polling prefers NVIDIA Management Library (NVML) queries without creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses `CUDA.free_memory()` on that device, which may create a context. Other NVML memory-query errors propagate for `:gpu`; `:auto` warns and falls back to CPU.
+On CUDA, memory polling prefers NVIDIA Management Library (NVML) queries without
+creating CUDA contexts. If NVML reports `NVML_ERROR_NOT_SUPPORTED`, polling uses
+`CUDA.free_memory()` on that device, which may create a context. Other errors from
+NVML memory queries or NVML device lookups propagate for `:gpu`; `:auto` warns and
+falls back to CPU. A failed process or utilization query counts as not contended.
 
 Contention checks apply only when memory came from NVML. A GPU with free memory below 1.5x required is skipped before the contention check. A GPU is considered **contended** when:
 
@@ -106,17 +212,19 @@ Contention checks apply only when memory came from NVML. A GPU with free memory 
 
 If other processes are present but memory is sufficient and compute utilization is at most 90%, the GPU is still selected.
 
-### Context Lifecycle
+### CUDA Context Lifecycle
 
-**On failure:** `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`. The context and its reserved memory are freed when the last reference is released. `CUDA.reclaim()` is NOT called after context release because it requires an active context and would either hang or silently re-create the released context.
+**On failure:** when the context could not be created, `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`, so its reservation cannot block other processes; `CUDA.reclaim()` is not called then, because it requires an active context and would either hang or silently re-create the released context. A live context is kept: releasing it under CUDA.jl makes every later call in the process fail with `CONTEXT_IS_DESTROYED`, so a retry with a smaller batch could not run. Instead the failed attempt's arrays are collected (`GC.gc(true)`) and the pool's memory is returned (`CUDA.reclaim()`).
 
 **On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
 
 ### Multi-GPU Support
 
-On systems with multiple GPUs, memory polling scans all devices each iteration. The first GPU with sufficient free memory and, when NVML is used, low contention is selected. This naturally load-balances across GPUs.
+Memory polling scans all visible devices of the selected vendor each iteration. The first
+GPU with sufficient free memory and, when NVML is used, low contention is selected.
 
-Polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's NVML data by UUID, so a restricted process reads the right GPU.
+CUDA polling sees only the GPUs exposed by `CUDA_VISIBLE_DEVICES` and reads each GPU's
+NVML data by UUID, so a restricted process reads the right GPU.
 
 ## Batch Processing
 
@@ -143,7 +251,24 @@ Tune batch size based on:
 
 ### Benchmarking Your Hardware
 
-Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware. The GPU test group includes a comprehensive performance benchmark that tests all model/camera/device combinations and reports fits/second along with MLE optimality (std/CRLB ratio).
+Run `GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'` locally to benchmark your hardware.
+The performance benchmark covers the four Gaussian models with both cameras on CPU and
+GPU, reporting fits/second and MLE optimality (std/CRLB ratio). A paired spline and
+`AstigmaticXYZNB` benchmark uses identical 10,000-ROI stacks at box sizes 13 and 15, with
+ideal and sCMOS cameras, and reports CPU/GPU throughput plus the spline/Gaussian ratio.
+The GPU group also checks spline CPU/GPU agreement and GPU bias/CRLB in each 0.1 µm z
+band. Independent spline Monte Carlo validation remains in the Long group on CPU.
+
+`SplinePSFModel` fits each ROI from several z starts by default (six for a ±1 µm
+`z_range`), so a spline fit costs several Levenberg-Marquardt fits; `starts = 1` fits from
+the scan start alone. `AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored
+z. On an 8-thread workstation CPU (load average about 8 from other users), 10,000 simulated
+ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of an astigmatic
+Gaussian PSF and `z_range = (-1, 1)`, ran at 26,600 fits/s with `starts = 1` and 3,900
+fits/s with the default six starts (6.8 times the time), against 18,100 fits/s for
+`AstigmaticXYZNB` with the same widths (focal offset 0.25 µm). Its second start costs 3.5
+times the time of one start with that strong astigmatism and 2.1 times with a focal offset
+of 0.05 µm. These ratios are on one machine and were not measured on a GPU.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
@@ -168,7 +293,22 @@ GPU throughput scales with batch size and varies significantly by GPU model. Typ
 
 ## Result Consistency
 
-GPU and CPU results are numerically consistent (differences at machine precision ~1e-6 microns). The same unified kernel runs on both devices via KernelAbstractions.jl.
+The same unified kernel runs on every device via KernelAbstractions.jl. The fit's
+accept/reject decisions and its stop test branch on Float32 values near the maximum, so two
+devices can end a fit at slightly different points within the stop tolerance. Results
+therefore agree to what the stop rule allows, not to rounding: each fit stops within about
+0.014 CRLB of the maximum of its quadratic model, so two fits of one ROI can end a few
+hundredths of a CRLB apart.
+
+- KernelAbstractions version: CPU results under KernelAbstractions 0.9 and 0.10 (POCL
+  computes `log`, `pow` and `sqrt` with OpenCL builtins) differed by at most 0.056 CRLB, in
+  the astigmatic model's z at 300 photons (12 of its 18,000 fits beyond 0.02 CRLB), and the
+  2D models by at most 0.014 CRLB, on simulated data at this release: 3,000 ROIs per
+  condition, the four Gaussian models, 300, 5,000 and 100,000 photons at background 10,
+  both cameras.
+- CPU and GPU: the same holds; the GPU tests check the agreement on each GPU. At a few
+  hundred photons, where the likelihood can have more than one maximum, a few fits in
+  50,000 end in different maxima.
 
 ## Troubleshooting
 
@@ -180,6 +320,15 @@ CUDA.functional()  # Should return true
 ```
 
 If false: check NVIDIA driver installation, GPU hardware, CUDA.jl configuration.
+
+### AMD Not Available
+
+```julia
+using AMDGPU
+AMDGPU.functional()  # Should return true
+```
+
+Load AMDGPU before `fit` and check the ROCm installation if this returns false.
 
 ### Out of Memory
 
@@ -196,7 +345,7 @@ fitter = GaussMLEConfig(backend = :auto, auto_timeout = 5.0)
 If parallel scripts deadlock waiting for GPU:
 - Ensure all scripts use `backend = :auto` (not `:gpu`) for graceful fallback
 - Set reasonable `auto_timeout` values (default 5 min is usually sufficient)
-- Check `nvidia-smi` for zombie processes holding GPU memory
+- On CUDA, check `nvidia-smi` for zombie processes holding GPU memory
 
 ## Architecture
 
@@ -209,6 +358,15 @@ GaussMLE uses KernelAbstractions.jl for portable GPU/CPU code:
     # Same code runs on CPU and GPU
 end
 ```
+
+With KernelAbstractions 0.10, the CPU backend compiles kernels through POCL, an OpenCL
+runtime. The first two CPU fits of each PSF model in a session take seconds longer for
+compilation (on one workstation with KernelAbstractions 0.10.7, about 4.5 s together for
+`GaussianXYNBS`, which the package precompiles, and 6 s for `GaussianXYNB`); later fits
+reuse the compiled kernel. With KernelAbstractions 0.9,
+which environments with Reactant resolve, the CPU backend is KernelAbstractions' native
+one and needs no POCL.
+The CPU path uses work-groups of 64 fits.
 
 ### Data Flow
 

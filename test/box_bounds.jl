@@ -50,29 +50,30 @@ end
     end
 
     @testset "Symmetric bounds preserve other limits and step sizes" begin
-        # Snapshot the non-position bounds and all max steps from version 0.4.0.
+        # Snapshot of the non-position bounds (version 0.4.0) and the max steps (0.5: photon
+        # and background steps uncapped for the Levenberg-Marquardt fit).
         cases = (
             (
                 GaussianXYNB(0.13f0),
                 (1.0f0, 0.01f0), (Inf32, Inf32),
-                (1.0f0, 1.0f0, 100.0f0, 2.0f0),
+                (1.0f0, 1.0f0, Inf32, Inf32),
             ),
             (
                 GaussianXYNBS(),
                 (1.0f0, 0.01f0, 0.3f0), (Inf32, Inf32, 5.0f0),
-                (1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0),
+                (1.0f0, 1.0f0, Inf32, Inf32, 0.5f0),
             ),
             (
                 GaussianXYNBSXSY(),
                 (1.0f0, 0.01f0, 0.3f0, 0.3f0), (Inf32, Inf32, 5.0f0, 5.0f0),
-                (1.0f0, 1.0f0, 100.0f0, 2.0f0, 0.5f0, 0.5f0),
+                (1.0f0, 1.0f0, Inf32, Inf32, 0.5f0, 0.5f0),
             ),
             (
                 AstigmaticXYZNB{Float32}(
                     0.13f0, 0.13f0, 0.05f0, 0.05f0, 0.3f0, 0.3f0, 0.05f0, 0.4f0
                 ),
                 (-1.0f0, 1.0f0, 0.01f0), (1.0f0, Inf32, Inf32),
-                (1.0f0, 1.0f0, 0.1f0, 100.0f0, 2.0f0),
+                (1.0f0, 1.0f0, 0.1f0, Inf32, Inf32),
             ),
         )
         for (model, lower_tail, upper_tail, max_step) in cases
@@ -131,7 +132,7 @@ end
         custom_constraints = GaussMLE.ParameterConstraints{4}(
             GaussMLE.Params{4}(-1.0f0, -1.0f0, 1.0f0, 0.01f0),
             GaussMLE.Params{4}(12.0f0, 17.0f0, Inf32, Inf32),
-            GaussMLE.Params{4}(1.0f0, 1.0f0, 100.0f0, 2.0f0),
+            GaussMLE.Params{4}(1.0f0, 1.0f0, Inf32, Inf32),
         )
         @testset "$name" for (name, c) in (
                 ("11-pixel constraints", eleven_pixel_constraints),

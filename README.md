@@ -14,6 +14,16 @@ using Pkg
 Pkg.add("GaussMLE")
 ```
 
+GaussMLE 0.5 supports KernelAbstractions 0.9 and 0.10. Reactant (every version from
+0.2.23 to at least 0.2.304) caps KernelAbstractions at 0.9, so an environment with Reactant
+(for example PSFLearning or SMLMDeepFit) resolves GaussMLE 0.5 with KernelAbstractions 0.9
+and CUDA 5 (5.9 or later). That environment runs the CPU and CUDA paths but not AMD
+GPUs, because AMDGPU 2.10 requires KernelAbstractions 0.10. A fresh environment resolves
+KernelAbstractions 0.10 and CUDA 6.5, which also run AMD GPUs.
+CUDA is supported at 5.9 to 5.x and 6.5 or later. CUDA 6.0 to 6.4 are excluded: 6.5 is
+the first CUDA 6 that allows KernelAbstractions 0.10 (6.0 to 6.4 allow only 0.9, per the
+General registry), and 6.0 to 6.4 are untested with GaussMLE.
+
 ## Quick Start
 
 ```julia
@@ -26,7 +36,7 @@ batch = ROIBatch(data, x_corners, y_corners, frames, camera)
 smld, info = fit(batch, GaussMLEConfig(
     psf_model    = GaussianXYNB(0.13f0),  # fixed-σ Gaussian, σ in μm
     backend      = :auto,                  # :cpu, :gpu, or :auto (GPU w/ CPU fallback)
-    iterations   = 20,                     # Newton-Raphson iterations
+    iterations   = 100,                    # cap on Levenberg-Marquardt pixel passes (default)
     batch_size   = 10_000,                 # ROIs per GPU kernel launch
 ))
 
@@ -36,7 +46,11 @@ smld.emitters[1].x, smld.emitters[1].σ_x
 
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
-GPU scheduling prefers context-free NVML memory polling. Unsupported NVML memory queries fall back to CUDA queries, which may create a context; NVML contention checks apply only when memory came from NVML. See the [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
+GPU fitting prefers CUDA, which comes with GaussMLE. To use an AMD GPU when CUDA is not
+functional, add AMDGPU to your environment and load `using AMDGPU` before `fit`. CUDA scheduling prefers context-free NVML memory polling,
+with CUDA queries as a fallback; NVML contention checks apply only to NVML queries.
+AMD scheduling uses HIP free memory without a contention check. See the
+[GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.
 
 ## PSF Models
 
@@ -48,6 +62,7 @@ Spatial PSF calibration parameters are specified in microns for camera-independe
 | `GaussianXYNBS` | `GaussianXYNBS()` | x, y, N, bg, σ | Variable-width 2D Gaussian |
 | `GaussianXYNBSXSY` | `GaussianXYNBSXSY()` | x, y, N, bg, σx, σy | Anisotropic 2D Gaussian |
 | `AstigmaticXYZNB` | `AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d)` | x, y, z, N, bg | 3D astigmatic localization |
+| `SplinePSFModel` | `SplinePSFModel(psf; pixel_size)` | x, y, z, N, bg | Tabulated or learned 3D PSF |
 
 ## Output Format
 
@@ -59,6 +74,7 @@ Spatial PSF calibration parameters are specified in microns for camera-independe
 | `GaussianXYNBS` | `Emitter2DFitSigma` | σ, σ_σ, pvalue |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | σx, σy, σ_σx, σ_σy, pvalue |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
 
 All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `pvalue`, `frame`.
 
@@ -72,7 +88,7 @@ For IdealCamera fits, `photons` and `σ_photons` use photons, and `bg` and `σ_b
 | `backend` | `:cpu` or `:gpu` (never `:auto`) |
 | `device_id` | GPU index (0-based) or -1 for CPU |
 | `n_fits` | Number of ROIs processed |
-| `n_converged` | Number converged (currently = n_fits) |
+| `n_converged` | Number of fits that met their convergence test before the `iterations` cap (for a model with several starts, the start it keeps) |
 | `batch_size` | Actual batch size used |
 | `n_batches` | Number of batches |
 | `memory_per_batch` | Estimated bytes per batch |

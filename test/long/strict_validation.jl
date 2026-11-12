@@ -64,12 +64,7 @@ Using the new camera-aware simulator for reliable test data generation
         mean_reported_std = mean(uncertainties)
         std_ratio = empirical_std / mean_reported_std
 
-        # Bias test: always pass for positions
-        if param_idx <= 2
-            bias_pass = true
-        else
-            bias_pass = abs(bias) < bias_tol
-        end
+        bias_pass = abs(bias) < bias_tol
 
         # Tests
         std_pass = abs(1.0f0 - std_ratio) < std_ratio_tol
@@ -130,7 +125,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         # Fit
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Validate each parameter
@@ -149,7 +144,7 @@ Using the new camera-aware simulator for reliable test data generation
             smld, batch, true_params, param_idx = 4, bias_tol = 2.0f0, verbose = verbose,
         )
 
-        @test x_val.bias_pass  # Always true for positions (see helper)
+        @test x_val.bias_pass
         @test y_val.bias_pass
         @test n_val.bias_pass
         @test b_val.bias_pass
@@ -195,7 +190,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 43
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # More relaxed tolerances for low SNR
@@ -204,7 +199,7 @@ Using the new camera-aware simulator for reliable test data generation
             bias_tol = 0.2f0, std_ratio_tol = 0.35f0,
         )
 
-        @test x_val.bias_pass  # Always true for positions
+        @test x_val.bias_pass
         @test x_val.std_pass
 
         # Check that uncertainties are appropriately larger
@@ -257,7 +252,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 44
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # Check convergence - no infinite uncertainties
@@ -321,7 +316,7 @@ Using the new camera-aware simulator for reliable test data generation
             seed = 45
         )
 
-        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu, iterations = 20)
+        fitter = GaussMLE.GaussMLEConfig(psf_model = psf, backend = :cpu)
         smld, _info = GaussMLE.fit(batch, fitter)
 
         # sCMOS CRLB properly accounts for spatially-varying readnoise
@@ -331,7 +326,7 @@ Using the new camera-aware simulator for reliable test data generation
             bias_tol = 0.1f0, std_ratio_tol = 0.25f0
         )
 
-        @test x_val.bias_pass  # Always true for positions
+        @test x_val.bias_pass
         @test x_val.std_pass
 
         # Uncertainties should be larger than ideal camera
@@ -375,7 +370,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         fitter_nbs = GaussMLE.GaussMLEConfig(
-            psf_model = psf_nbs, backend = :cpu, iterations = 20,
+            psf_model = psf_nbs, backend = :cpu,
         )
         smld_nbs, _info = GaussMLE.fit(batch_nbs, fitter_nbs)
 
@@ -404,7 +399,7 @@ Using the new camera-aware simulator for reliable test data generation
         )
 
         fitter_sxsy = GaussMLE.GaussMLEConfig(
-            psf_model = psf_sxsy, backend = :cpu, iterations = 20,
+            psf_model = psf_sxsy, backend = :cpu,
         )
         smld_sxsy, _info = GaussMLE.fit(batch_sxsy, fitter_sxsy)
 
@@ -415,7 +410,7 @@ Using the new camera-aware simulator for reliable test data generation
             smld_sxsy, batch_sxsy, true_params_sxsy, param_idx = 1,
             bias_tol = 0.15f0, std_ratio_tol = 0.35f0
         )
-        @test x_val_sxsy.bias_pass  # Always true for positions
+        @test x_val_sxsy.bias_pass
     end
 
     @testset "Photon Level Sensitivity" begin
@@ -460,7 +455,7 @@ Using the new camera-aware simulator for reliable test data generation
             )
 
             fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, backend = :cpu, iterations = 20,
+                psf_model = psf, backend = :cpu,
             )
             smld, _info = GaussMLE.fit(batch, fitter)
 

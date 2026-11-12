@@ -1,8 +1,49 @@
 using Test, GaussMLE, SMLMData, Statistics
 
 """
-Consolidated test of new simulator and ROIBatch features
+Consolidated test of new simulator and ROIBatch features. The Long group fits the other
+Gaussian models (test/long/gaussian_models_cpu.jl).
 """
+
+# A model defined outside the package, as the Custom PSF Models guide describes: a 3D model
+# in the x, y, z, N, bg order (here wrapping AstigmaticXYZNB), which declares neither
+# optional trait.
+struct CustomXYZNB <: GaussMLE.PSFModel{5, Float32}
+    inner::GaussMLE.AstigmaticXYZNB{Float32}
+end
+GaussMLE.to_pixel_units(m::CustomXYZNB, px::Real) =
+    CustomXYZNB(GaussMLE.to_pixel_units(m.inner, px))
+GaussMLE.compute_pixel_derivatives(i, j, θ::GaussMLE.Params{5}, m::CustomXYZNB) =
+    GaussMLE.compute_pixel_derivatives(i, j, θ, m.inner)
+GaussMLE.evaluate_psf(m::CustomXYZNB, i, j, θ::GaussMLE.Params{5}) =
+    GaussMLE.evaluate_psf(m.inner, i, j, θ)
+GaussMLE.simple_initialize(roi, box_size::Int, m::CustomXYZNB) =
+    GaussMLE.simple_initialize(roi, box_size, m.inner)
+GaussMLE.default_constraints(m::CustomXYZNB, box_size) =
+    GaussMLE.default_constraints(m.inner, box_size)
+GaussMLE.to_emitter(m::CustomXYZNB, result, idx::Int, camera; kwargs...) =
+    GaussMLE.to_emitter(m.inner, result, idx, camera; kwargs...)
+
+@testset "a custom 3D model fits; its z bound is not a photon bound" begin
+    inner = GaussMLE.AstigmaticXYZNB{Float32}(
+        0.13f0, 0.13f0, 0.05f0, -0.05f0, 0.01f0, -0.01f0, 0.2f0, 0.5f0
+    )
+    camera = SMLMData.IdealCamera(64, 64, 0.1f0)
+    batch = GaussMLE.generate_roi_batch(camera, inner; n_rois = 20, roi_size = 11, seed = 3)
+    # Its z lower bound is negative; without the trait it is not read as a photon bound
+    @test GaussMLE.default_constraints(inner, 11).lower[3] < 0
+    smld, info = GaussMLE.fit(batch; psf_model = CustomXYZNB(inner), backend = :cpu)
+    @test length(smld.emitters) == 20
+    @test all(e -> isfinite(e.z) && isfinite(e.photons), smld.emitters)
+    @test info.n_converged >= 18
+end
+
+@testset "precompile workload" begin
+    # A KernelAbstractions that cannot launch a CPU kernel while precompiling skips it.
+    if GaussMLE._cpu_backend_precompilable()
+        @test GaussMLE.PRECOMPILE_WORKLOAD_RAN[]
+    end
+end
 
 @testset "New Features Tests" begin
 
@@ -41,6 +82,26 @@ Consolidated test of new simulator and ROIBatch features
         @test batch.camera === scmos
     end
 
+    @testset "sCMOS simulation reads calibration maps as (y, x)" begin
+        # A 64 x 32 sensor (x by y) whose read noise is 0 left of column 40 and 50 e- from
+        # it on, stored as a (32, 64) map. A ROI at x = 50 must take the noisy patch, one at
+        # x = 1 the noise-free one. Indexing the map as (x, y) read past its 32 rows.
+        nx, ny = 64, 32
+        readnoise = zeros(Float32, ny, nx)
+        readnoise[:, 40:end] .= 50.0f0
+        scmos = SMLMData.SCMOSCamera(
+            nx, ny, 0.1f0, readnoise; offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
+        )
+        corners = Int32[50 1; 1 1]  # (x, y) per column: ROI 1 at x = 50, ROI 2 at x = 1
+        batch = GaussMLE.generate_roi_batch(
+            scmos, GaussMLE.GaussianXYNB(0.13f0); n_rois = 2, roi_size = 7, corners,
+            seed = 3
+        )
+        noisy, clean = batch.data[:, :, 1], batch.data[:, :, 2]
+        @test all(isinteger, clean)  # Poisson counts only
+        @test count(!isinteger, noisy) > 40  # read noise on (nearly) every pixel
+    end
+
     @testset "Fitting with ROIBatch" begin
         camera = SMLMData.IdealCamera(512, 512, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
@@ -68,6 +129,12 @@ Consolidated test of new simulator and ROIBatch features
         @test all(0.002 .< σ_x_vals .< 0.02)
     end
 
+    @testset "the removed device keyword is refused" begin
+        # 0.5 removed `device` (deprecated for `backend`) with its CPU and GPU types
+        @test_throws MethodError GaussMLE.GaussMLEConfig(device = :cpu)
+        @test !isdefined(GaussMLE, :ComputeDevice)
+    end
+
     @testset "SMLMData Conversion" begin
         camera = SMLMData.IdealCamera(256, 256, 0.1)
         psf = GaussMLE.GaussianXYNB(0.13f0)
@@ -83,7 +150,7 @@ Consolidated test of new simulator and ROIBatch features
         )
 
         fitter = GaussMLE.GaussMLEConfig(
-            psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
+            psf_model = psf, backend = :cpu, iterations = 20,
         )
         smld, _info = GaussMLE.fit(batch, fitter)
 
@@ -97,32 +164,5 @@ Consolidated test of new simulator and ROIBatch features
         # So we can't test exact coordinates, but we can test that positions are reasonable
         @test all([isfinite(e.x) && e.x >= 0 for e in smld.emitters])
         @test all([isfinite(e.y) && e.y >= 0 for e in smld.emitters])
-    end
-
-    @testset "Different PSF Models" begin
-        camera = SMLMData.IdealCamera(256, 256, 0.1)
-
-        psf_models = [
-            GaussMLE.GaussianXYNB(0.13f0),
-            GaussMLE.GaussianXYNBS(),
-            GaussMLE.GaussianXYNBSXSY(),
-        ]
-
-        for psf in psf_models
-            batch = GaussMLE.generate_roi_batch(camera, psf; n_rois = 5, seed = 42)
-            fitter = GaussMLE.GaussMLEConfig(
-                psf_model = psf, device = GaussMLE.CPU(), iterations = 20,
-            )
-            smld, _info = GaussMLE.fit(batch, fitter)
-
-            @test length(smld.emitters) == 5
-            # Check that uncertainties are finite
-            σ_x_vals = [e.σ_x for e in smld.emitters]
-            σ_photons_vals = [e.σ_photons for e in smld.emitters]
-            @test !any(isinf.(σ_x_vals))
-            @test !any(isnan.(σ_x_vals))
-            @test !any(isinf.(σ_photons_vals))
-            @test !any(isnan.(σ_photons_vals))
-        end
     end
 end
