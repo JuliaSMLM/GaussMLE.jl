@@ -63,6 +63,7 @@ Spatial PSF calibration parameters are specified in microns for camera-independe
 | `GaussianXYNBSXSY` | `GaussianXYNBSXSY()` | x, y, N, bg, σx, σy | Anisotropic 2D Gaussian |
 | `AstigmaticXYZNB` | `AstigmaticXYZNB{T}(σx₀, σy₀, Ax, Ay, Bx, By, γ, d)` | x, y, z, N, bg | 3D astigmatic localization |
 | `SplinePSFModel` | `SplinePSFModel(psf; pixel_size)` | x, y, z, N, bg | Tabulated or learned 3D PSF |
+| `JointSplinePSFModel` | `JointSplinePSFModel(mc; pixel_size)` | x, y, z, N, bg, bg2 | One emitter in two images (a two-channel MicroscopePSFs `MultiChannelPSF`), fitted with `fit((batch1, batch2), fitter)` |
 
 ## Output Format
 
@@ -75,6 +76,7 @@ Spatial PSF calibration parameters are specified in microns for camera-independe
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | σx, σy, σ_σx, σ_σy, pvalue |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
 | `SplinePSFModel` | `Emitter3DFitGaussMLE` | z, σ_z, σ_xz, σ_yz, pvalue |
+| `JointSplinePSFModel` | `Emitter3DFitJoint` | z, σ_z, σ_xz, σ_yz, pvalue, bg2, σ_bg2 |
 
 All emitters include: `x`, `y`, `photons`, `bg`, `σ_x`, `σ_y`, `σ_xy`, `σ_photons`, `σ_bg`, `pvalue`, `frame`.
 

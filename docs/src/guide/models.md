@@ -172,10 +172,9 @@ callable has no grid GaussMLE can check: its default `lateral_range` is 1.5 µm,
 describe the PSF out to `lateral_range` plus one pixel.
 
 A `PlanePSF` (MicroscopePSFs' plane focused `dz` away) of a SplinePSF keeps the spline's
-grid, and its z range is the spline's shifted by `-dz`. One model fits one PSF in one ROI:
-a `MultiChannelPSF` is refused. For data from several channels (two planes, two
-polarizations), build a model per channel and fit each channel's ROIs on their own; nothing
-links x, y and z across channels, so the channels' photons are not pooled.
+grid, and its z range is the spline's shifted by `-dz`. One `SplinePSFModel` fits one PSF
+in one ROI, so a `MultiChannelPSF` is refused: fit each channel with its own model, or fit
+two channels at once with [`JointSplinePSFModel`](@ref) (below).
 
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
 quadrature with five sub-intervals per lateral axis. The lateral table spacings are
@@ -254,6 +253,54 @@ of the Gaussian models.
 - You have a calibrated PSF that a Gaussian does not describe well
 - You need z-position information from that PSF
 
+### JointSplinePSFModel - One Emitter in Two Images
+
+One emitter seen in two images of the same frame, such as the two polarization channels
+behind a polarizing beam splitter or two focal planes, fitted to both images at once:
+shared x, y, z and total photons, one background per image (6 parameters). The model is
+built from a two-channel MicroscopePSFs `MultiChannelPSF`, such as the one PSFLearning
+exports for a multi-channel setup, and fits its forward law: image `v` records
+`N * transmission[v]` photons of channel `v`'s PSF, at the position its registration maps
+the emitter to and at `z + z_offset[v]`. The registration (an affine `[A t]` from the
+reference camera's microns to channel `v`'s), the transmissions (the photon split between
+the images, learned with the PSF) and the z offsets are held fixed.
+
+```julia
+using GaussMLE, MicroscopePSFs
+
+mc = load_psf("hv.h5")                            # a two-channel MultiChannelPSF
+model = JointSplinePSFModel(mc; pixel_size = 0.1)
+smld, info = fit((batch_ref, batch_other); psf_model = model)
+smld.emitters[1].bg2                              # the second image's background
+```
+
+The two `ROIBatch`es hold the same emitters in the same order and frames, the first from
+the reference channel; each batch's corners place its ROIs on its own camera, which may be
+the same camera object (two halves of one sensor) or two crops. Each camera's pixel size
+and calibration apply to its own image, and any invertible registration works, mirrored
+ones included. Positions come back in the reference camera's microns, in
+`Emitter3DFitJoint`: the fields of `Emitter3DFitGaussMLE`, with `photons` the total over
+both images before transmission and `bg` the reference image's background, then `bg2` and
+`σ_bg2`.
+
+Each image gets `SplinePSFModel`'s checks (its channel's grid must cover `lateral_range`
+plus one pixel, its table must cover the z range shifted by its offset), and the fit is
+`SplinePSFModel`'s: the same likelihood summed over both images, the same
+Levenberg-Marquardt fit on the full (here 6 × 6) Fisher matrix and stop test, and the same
+z starts. The start uses both images, including a z scan of their joint likelihood. The CRLB
+is the inverse Fisher matrix over both images, so it reflects all the information they
+carry together: on simulated pairs of an astigmatic PSF with the second image focused
+0.15 µm deeper, the joint fit's x uncertainty was below either image's alone, and fits
+scatter at their CRLB. The p-value is the Pearson statistic over both images' pixels,
+`2 * box^2 - 6` degrees of freedom. On simulated 9 px pairs a joint fit took about 1.4 times
+as long as a `SplinePSFModel` fit of one image on the CPU (16 threads), and 1.25 times on an
+NVIDIA RTX 4090. `JointSplinePSFModel` needs MicroscopePSFs 0.5.7 or later.
+
+**Use this model when:**
+- Every emitter appears in two images (channels, planes or polarizations) with a known
+  registration and photon split
+- You want one localization and one CRLB from both images, rather than two fits to merge
+
 ## Custom PSF Models
 
 A subtype of `GaussMLE.PSFModel` defined outside this package must be `isbits` after
@@ -280,14 +327,14 @@ without them a model is treated as 2D and its bounds are not checked:
 
 ## Model Comparison
 
-| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel |
-|---------|--------------|---------------|------------------|-----------------|----------------|
-| Parameters | 4 | 5 | 6 | 5 | 5 |
-| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape |
-| Dimensions | 2D | 2D | 2D | 3D | 3D |
-| Speed | Fastest | Medium | Slowest | Medium | Table lookup |
-| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
-| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
+| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel | JointSplinePSFModel |
+|---------|--------------|---------------|------------------|-----------------|----------------|---------------------|
+| Parameters | 4 | 5 | 6 | 5 | 5 | 6 |
+| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape | Tabulated, per image |
+| Dimensions | 2D | 2D | 2D | 3D | 3D | 3D, two images |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup | About 1.3 × SplinePSFModel |
+| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration | Depends on calibration |
+| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 
 ## Unit Convention
 

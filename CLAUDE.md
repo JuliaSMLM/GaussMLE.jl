@@ -346,7 +346,13 @@ The math is dimensionally consistent:
 - `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), host
   construction, backend adaptation, analytic derivatives, and the multi-start fit
   (`starts` field) on CPU and GPU
-- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor, with the `starts` keyword (weak dependency)
+- `src/joint_spline_psf.jl` - `JointSplinePSFModel`: one emitter in two images (a view per
+  channel of a MicroscopePSFs `MultiChannelPSF`); its kernel methods (`_lm_pass`,
+  `_final_pass`, `_fit_start`, `_optimize`) loop over both views' pixels
+- `src/joint_fit.jl` - `fit((batch1, batch2), fitter)` and the `Emitter3DFitJoint` conversion
+- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)`
+  constructor, with the `starts` keyword, the `PlanePSF` method and
+  `JointSplinePSFModel(::MultiChannelPSF; ...)` (weak dependency)
 
 ### SMLMData Ecosystem Integration
 
@@ -356,6 +362,8 @@ The math is dimensionally consistent:
 - `GaussianXYNBSXSY` → `GaussMLE.Emitter2DFitSigmaXY` (custom, includes σx/σy)
 - `AstigmaticXYZNB` → `GaussMLE.Emitter3DFitGaussMLE`
 - `SplinePSFModel` → `GaussMLE.Emitter3DFitGaussMLE`
+- `JointSplinePSFModel` → `GaussMLE.Emitter3DFitJoint` (`Emitter3DFitGaussMLE`'s fields, then
+  `bg2`, `σ_bg2`)
 
 All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
 
@@ -367,6 +375,21 @@ See `test/CLAUDE.md` for detailed testing guidelines. Key points:
 - **No @test_skip**: Failing tests indicate real problems
 - Each test file runs in its own module and carries its own `using` statements
 - The performance benchmark is part of the GPU group; GitHub CI runs only Core and QA
+
+### Two-Image Fits (JointSplinePSFModel)
+
+The kernel runner takes one ROI per fit (data `(box, box, n)`, corner vectors, one variance
+map) or two (data `(box, box, 2, n)`, corners `(2, n)`, a variance map per image); the
+kernel's `_fit_roi`/`_fit_corner` hand a fit either one ROI and corner or a tuple of two.
+The LM loop (`_lm_fit`) is shared: its pixel pass (`_lm_pass`) and the CRLB/Pearson pass
+(`_final_pass`) dispatch on the model. View 2's position is `A_px (x, y) + o` in its ROI
+pixels, `A_px` and `t_px` the registration in camera pixels (set by `_model_for_cameras`
+from each camera's pixel size and first pixel edge) and `o` from the two corners. Keep the
+joint kernel to one copy of the pixel code (one loop over both views, one `_lm_fit` call
+site): inlining it once per view made the POCL compile under `--check-bounds=yes` 143 s
+instead of 15 s. Each view's pixel loop is a `@noinline` call (`_view_lm_pass`,
+`_view_final_pass`); inlined into the loop over views, the POCL kernel ran the pass about
+6 times slower (the same effect as for `_lm_solve` and `_trial_step`).
 
 ### Reference Implementation
 

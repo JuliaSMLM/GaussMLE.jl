@@ -72,6 +72,7 @@ The fitting path currently requires Float32 PSF models; use `f0` literals for th
 | `GaussianXYNBSXSY()` | x, y, N, bg, sigma_x, sigma_y | Anisotropic PSF |
 | `AstigmaticXYZNB{T}(...)` | x, y, z, N, bg | 3D astigmatic imaging |
 | `SplinePSFModel(psf; ...)` | x, y, z, N, bg | Calibrated tabulated or learned 3D PSF |
+| `JointSplinePSFModel(mc; ...)` | x, y, z, N, bg, bg2 | One emitter in two images, a tabulated PSF per image |
 
 ## Typical SMLM Pipeline
 
@@ -184,6 +185,7 @@ end
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | + σx, σy (PSF widths) |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg |
 | `SplinePSFModel` | `Emitter3DFitGaussMLE` | x, y, z, photons, bg |
+| `JointSplinePSFModel` | `Emitter3DFitJoint` | x, y, z, photons, bg, bg2 |
 
 ### Emitter2DFitGaussMLE Fields
 

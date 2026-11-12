@@ -43,10 +43,12 @@ include("constraints.jl")
 include("emitters.jl")  # Custom emitter types with PSF parameters
 include("roi_batch.jl")  # ROI batch data structure
 include("spline_psf.jl")  # Tabulated 3D PSF on CPU and GPU
+include("joint_spline_psf.jl")  # One emitter in two images, a tabulated PSF per image
 include("unified_kernel.jl")  # Unified GPU/CPU kernel
 include("results.jl")
 include("simulator.jl")
 include("interface.jl")  # User-facing API
+include("joint_fit.jl")  # fit for a pair of ROIBatches (JointSplinePSFModel)
 include("precompile.jl")  # First-fit compilation at package precompile time
 
 # Main exports - minimal API for common workflows
@@ -54,10 +56,12 @@ include("precompile.jl")  # First-fit compilation at package precompile time
 # ROIBatch and SingleROI come from SMLMData (ecosystem standard)
 export fit, GaussMLEConfig, GaussMLEFitInfo
 export GaussianXYNB, GaussianXYNBS, GaussianXYNBSXSY, AstigmaticXYZNB, SplinePSFModel
+export JointSplinePSFModel
 export generate_roi_batch
 
 # Export custom emitter types (subtype AbstractEmitter)
 export Emitter2DFitGaussMLE, Emitter2DFitSigma, Emitter2DFitSigmaXY, Emitter3DFitGaussMLE
+export Emitter3DFitJoint
 
 # Re-export SMLMData types for convenience
 export ROIBatch, SingleROI, IdealCamera, SCMOSCamera, @filter

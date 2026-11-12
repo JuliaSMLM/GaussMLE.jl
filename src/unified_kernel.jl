@@ -303,6 +303,82 @@ end
     return obj2 > obj1 ? (θ2, stopped2) : (θ1, stopped1)
 end
 
+# One pixel's share of a Levenberg-Marquardt pass, added to `acc = (obj, rounding, g, F)`:
+# data d, expected count `model`, its derivatives `dudt` and read-noise variance v.
+@inline function _lm_accumulate(acc, d::T, model::T, dudt, v::T) where {T}
+    obj, rounding, g, F = acc
+    var = model + v
+    term = _fit_objective(d, model, v)
+    obj += term
+    # Scale of the sum's Float32 error (the model's own error, from erf differences, can be
+    # several times eps * |model - d|; hence the factor 10 in `_lm_fit`'s window)
+    rounding += abs(term) + abs(model - d)
+    if var > zero(T) && isfinite(var)
+        g = g + dudt * ((d - model) / var)
+        F = F + (dudt * dudt') * (one(T) / var)
+    end
+    return (obj, rounding, g, F)
+end
+
+# One pixel pass of `_lm_fit` at θ over the ROI: `(obj, rounding, g, F)`, the objective, the
+# scale of its Float32 rounding, the gradient and the Fisher matrix. A model fitted to
+# several images at once (JointSplinePSFModel) has its own method.
+@inline function _lm_pass(
+        θ, roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y
+    ) where {N, T}
+    acc = (zero(T), zero(T), zero(SVector{N, T}), zero(SMatrix{N, N, T}))
+    @inbounds for j in 1:box_size, i in 1:box_size
+        model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
+        d = roi[i, j]
+        v = _readout_variance(
+            camera_model, model, variance_map, corner_x, corner_y, i, j
+        )
+        acc = _lm_accumulate(acc, d, model, dudt, v)
+    end
+    return acc
+end
+
+# One pixel's share of the final pass, added to `acc = (chi2, H)`: the Pearson statistic
+# and the Fisher matrix for the CRLB.
+@inline function _final_accumulate(acc, d::T, model::T, dudt, v::T) where {T}
+    chi2_sum, H = acc
+    # variance = model + readout variance (zero for IdealCamera)
+    variance = model + v
+    # Pearson statistic (d - mu)^2 / variance, for both cameras
+    if variance > zero(T)
+        chi2_sum += (d - model)^2 / variance
+    end
+    # Fisher Information Matrix (for CRLB) - need full matrix here, over the pixels the
+    # fit's own Fisher matrix uses (for sCMOS that includes a pixel whose expected count is
+    # zero, which the read-noise variance still makes informative)
+    if variance > zero(T) && isfinite(variance)
+        # Whole-matrix operations preserve multiply/divide/add order per element.
+        H = H + (dudt * dudt') / variance
+    end
+    return (chi2_sum, H)
+end
+
+# The final pass at the fit's end point θ: `(chi2, H)`, the Pearson statistic and the full
+# Fisher matrix.
+@inline function _final_pass(
+        θ, roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y
+    ) where {N, T}
+    acc = (zero(T), zero(SMatrix{N, N, T}))
+    @inbounds for j in 1:box_size, i in 1:box_size
+        model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
+        v = _readout_variance(
+            camera_model, model, variance_map, corner_x, corner_y, i, j
+        )
+        acc = _final_accumulate(acc, roi[i, j], model, dudt, v)
+    end
+    return acc
+end
+
+# Pixels a fit sums over: one box, or one per image for a model fitted to several.
+_fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
+
 # Levenberg-Marquardt fit of one ROI on the full Fisher matrix (Fisher scoring), from the
 # start θ0. Each iteration makes one pixel pass at the trial point: the objective, the
 # gradient g_k = sum du_k (d - mu) / var and F_kl = sum du_k du_l / var (pixels whose
@@ -347,28 +423,9 @@ end
 
     for iter in 1:iterations
         passes = iter
-        g = zero(SVector{N, T})
-        F = zero(SMatrix{N, N, T})
-        obj = zero(T)
-        rounding = zero(T)
-        @inbounds for j in 1:box_size, i in 1:box_size
-            model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
-            d = roi[i, j]
-            v = _readout_variance(
-                camera_model, model, variance_map, corner_x, corner_y, i, j
-            )
-            var = model + v
-            term = _fit_objective(d, model, v)
-            obj += term
-            # Scale of the sum's Float32 error (the model's own error, from erf
-            # differences, can be several times eps * |model - d|; hence the factor 10
-            # in the window below)
-            rounding += abs(term) + abs(model - d)
-            if var > zero(T) && isfinite(var)
-                g = g + dudt * ((d - model) / var)
-                F = F + (dudt * dudt') * (one(T) / var)
-            end
-        end
+        obj, rounding, g, F = _lm_pass(
+            θ, roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y
+        )
 
         accepted = true
         gain = obj - obj_acc
@@ -504,6 +561,24 @@ end
     return A
 end
 
+# Fit idx's images and corners: one ROI and its corner, or, for a model fitted to two images
+# at once, a tuple of each (data (box, box, 2, n), corners (2, n)).
+@inline function _fit_roi(data::AbstractArray{T, 3}, idx) where {T}
+    @inbounds roi = @view data[:, :, idx]
+    return roi
+end
+@inline function _fit_roi(data::AbstractArray{T, 4}, idx) where {T}
+    @inbounds roi = (@view(data[:, :, 1, idx]), @view(data[:, :, 2, idx]))
+    return roi
+end
+@inline _fit_corner(c::AbstractVector, idx) = c[idx]
+@inline _fit_corner(c::AbstractMatrix, idx) = (c[1, idx], c[2, idx])
+
+# A fit's start. Only a model fitted to two images needs the corners (to map one image's
+# centroid onto the other).
+@inline _fit_start(roi, box_size::Int, psf_model, corner_x, corner_y) =
+    simple_initialize(roi, box_size, psf_model)
+
 # Unified kernel that works on both CPU and GPU
 @kernel function unified_gaussian_mle_kernel!(
         results::AbstractArray{T, 2},
@@ -514,12 +589,15 @@ end
         chi2::AbstractArray{T, 1},
         # 1 where the fit met its convergence test before the iterations cap, else 0
         converged::AbstractArray{UInt8, 1},
-        @Const(data::AbstractArray{T, 3}),
+        # (box, box, n): one ROI per fit; (box, box, 2, n): two images per fit, for a
+        # model fitted to both (JointSplinePSFModel)
+        @Const(data::AbstractArray{T}),
         @Const(psf_model::PSFModel{N, T}),
         @Const(camera_model),  # Val{false} for Ideal, Val{true} for sCMOS
         @Const(variance_map),  # 2D variance map (camera-sized for sCMOS)
-        @Const(x_corners::AbstractVector{Int32}),  # X corners for variance indexing
-        @Const(y_corners::AbstractVector{Int32}),  # Y corners for variance indexing
+        # Corners for variance indexing: a vector, or (2, n) with one row per image
+        @Const(x_corners::AbstractArray{Int32}),
+        @Const(y_corners::AbstractArray{Int32}),
         @Const(constraints::ParameterConstraints{N}),
         iterations::Int
     ) where {T, N}
@@ -527,14 +605,14 @@ end
 
     # Get the data for this fit
     box_size = size(data, 1)
-    @inbounds roi = @view data[:, :, idx]
+    roi = _fit_roi(data, idx)
 
     # Get corner for variance map indexing (sCMOS only)
-    corner_x = x_corners[idx]
-    corner_y = y_corners[idx]
+    corner_x = _fit_corner(x_corners, idx)
+    corner_y = _fit_corner(y_corners, idx)
 
     # Immutable working vectors avoid heap allocation from bounds-check error paths.
-    θ = simple_initialize(roi, box_size, psf_model)
+    θ = _fit_start(roi, box_size, psf_model, corner_x, corner_y)
     θ, met = _optimize(
         roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
         constraints, iterations, θ
@@ -542,36 +620,14 @@ end
     @inbounds converged[idx] = met ? 0x01 : 0x00
 
     # Pearson statistic and full Fisher Information Matrix for the CRLB at the end point
-    chi2_sum = zero(T)
-    H = zero(SMatrix{N, N, T})  # Full Fisher Information matrix
-
-    @inbounds for j in 1:box_size, i in 1:box_size
-        model, dudt = compute_pixel_derivatives(i, j, θ, psf_model)
-        data_ij = roi[i, j]
-
-        # variance = model + readout variance (zero for IdealCamera)
-        variance = model + _readout_variance(
-            camera_model, model, variance_map, corner_x, corner_y, i, j
-        )
-
-        # Pearson statistic (d - mu)^2 / variance, for both cameras
-        if variance > zero(T)
-            chi2_sum += (data_ij - model)^2 / variance
-        end
-
-        # Fisher Information Matrix (for CRLB) - need full matrix here, over the pixels the
-        # fit's own Fisher matrix uses (for sCMOS that includes a pixel whose expected
-        # count is zero, which the read-noise variance still makes informative)
-        if variance > zero(T) && isfinite(variance)
-            # Whole-matrix operations preserve multiply/divide/add order per element.
-            H = H + (dudt * dudt') / variance
-        end
-    end
+    chi2_sum, H = _final_pass(
+        θ, roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y
+    )
 
     # Invert the Fisher matrix for uncertainties (CRLB); a matrix singular to working
     # precision, or a parameter with no Fisher information, gives infinite uncertainties
     # and zero covariances.
-    ok, H_inv = _invert_fisher(H, box_size * box_size)
+    ok, H_inv = _invert_fisher(H, _fit_pixels(box_size, psf_model))
     # Off-diagonal: covariances[1,idx] = σ_xy (all models), covariances[2,idx] = σ_xz and
     # covariances[3,idx] = σ_yz (3D only, zero otherwise)
     has_z = _has_axial_position(typeof(psf_model))

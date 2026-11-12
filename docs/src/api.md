@@ -26,6 +26,7 @@ GaussianXYNBS
 GaussianXYNBSXSY
 AstigmaticXYZNB
 SplinePSFModel
+JointSplinePSFModel
 ```
 
 ### Custom Emitter Types
@@ -37,6 +38,7 @@ Emitter2DFitGaussMLE
 Emitter2DFitSigma
 Emitter2DFitSigmaXY
 Emitter3DFitGaussMLE
+Emitter3DFitJoint
 ```
 
 ### Data Structures
@@ -103,3 +105,4 @@ Matrix input returns `(emitter, info)` for one ROI. Stack or `ROIBatch` input re
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` |
 | `SplinePSFModel` | `Emitter3DFitGaussMLE` |
+| `JointSplinePSFModel` | `Emitter3DFitJoint` |

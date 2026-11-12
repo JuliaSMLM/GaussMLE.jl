@@ -74,8 +74,17 @@ uncertainties and p-values of every model change.
   `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
   ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
   fitted. A MicroscopePSFs `PlanePSF` of a spline keeps the spline's grid with z shifted by
-  `-dz`. A `MultiChannelPSF` is refused: fit each channel with its own model (there is no
-  joint fit across channels).
+  `-dz`. A `MultiChannelPSF` is refused by `SplinePSFModel`: fit each channel with its own
+  model, or two channels at once with `JointSplinePSFModel`.
+- **JointSplinePSFModel**: one emitter fitted to two images of the same frame at once
+  (two polarization channels, two focal planes), from a two-channel MicroscopePSFs
+  `MultiChannelPSF` (MicroscopePSFs 0.5.7 or later). Shared x, y, z and total photons, one
+  background per image; the registration, photon split and z offsets of the
+  `MultiChannelPSF` are held fixed. `fit((batch1, batch2), fitter)` takes one `ROIBatch` per
+  image, each with its own camera, and returns `Emitter3DFitJoint` (the fields of
+  `Emitter3DFitGaussMLE`, then `bg2` and `σ_bg2`). The likelihood, Levenberg-Marquardt fit,
+  stop test, z starts, CRLB and p-value are `SplinePSFModel`'s, over both images; CPU, CUDA
+  and AMDGPU.
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.
 - A precompile workload compiles the first CPU fit of `GaussianXYNBS` and `SplinePSFModel`
   for both cameras.

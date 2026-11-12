@@ -281,3 +281,68 @@ mutable struct Emitter3DFitGaussMLE{T} <: SMLMData.AbstractEmitter
     track_id::Int
     id::Int
 end
+
+"""
+    Emitter3DFitJoint{T} <: AbstractEmitter
+
+3D emitter for `JointSplinePSFModel`: one emitter fitted to two images (views) at once.
+The fields of [`Emitter3DFitGaussMLE`](@ref) in the same order, then the second view's
+background and its uncertainty.
+
+# Fields
+- `x::T`, `y::T`, `z::T`: position in the reference view's camera coordinates (microns)
+- `photons::T`: total photons over both views before transmission (electrons for sCMOS);
+  view `v` records `photons * transmission[v]` of the model's PSF
+- `bg::T`: background per pixel of the reference view (view 1)
+- `σ_x`, `σ_y`, `σ_z`, `σ_xy`, `σ_xz`, `σ_yz`, `σ_photons`, `σ_bg`: as for
+  `Emitter3DFitGaussMLE`, from the inverse of the 6 × 6 Fisher matrix over both images
+- `pvalue::T`: the Pearson statistic over both images' pixels against χ²(df),
+  df = 2 * box^2 - 6
+- `frame`, `dataset`, `track_id`, `id`: metadata
+- `bg2::T`: background per pixel of view 2
+- `σ_bg2::T`: its uncertainty
+
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a position
+bound or whose Fisher matrix is singular to working precision.
+
+    Emitter3DFitJoint{T}(; x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz,
+                         σ_photons, σ_bg, pvalue, bg2, σ_bg2,
+                         frame = 1, dataset = 1, track_id = 0, id = 0)
+
+Keyword constructor; `Emitter3DFitJoint(; ...)` takes `T` from `x`.
+"""
+mutable struct Emitter3DFitJoint{T} <: SMLMData.AbstractEmitter
+    x::T
+    y::T
+    z::T
+    photons::T
+    bg::T
+    σ_x::T
+    σ_y::T
+    σ_z::T
+    σ_xy::T
+    σ_xz::T
+    σ_yz::T
+    σ_photons::T
+    σ_bg::T
+    pvalue::T
+    frame::Int
+    dataset::Int
+    track_id::Int
+    id::Int
+    bg2::T
+    σ_bg2::T
+end
+
+function Emitter3DFitJoint{T}(;
+        x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz, σ_photons, σ_bg, pvalue,
+        bg2, σ_bg2, frame::Integer = 1, dataset::Integer = 1, track_id::Integer = 0,
+        id::Integer = 0
+    ) where {T}
+    return Emitter3DFitJoint{T}(
+        x, y, z, photons, bg, σ_x, σ_y, σ_z, σ_xy, σ_xz, σ_yz, σ_photons, σ_bg, pvalue,
+        frame, dataset, track_id, id, bg2, σ_bg2
+    )
+end
+
+Emitter3DFitJoint(; x, kwargs...) = Emitter3DFitJoint{typeof(float(x))}(; x, kwargs...)
