@@ -245,9 +245,9 @@ function _check_lateral_extent(spline, px::NTuple{2, T}, lateral::T) where {T}
                 "truncated PSF. " *
                 (
                 largest > 0 ?
-                "Use lateral_range <= $(floor(largest * slack; digits = 3)) with a ROI " *
+                    "Use lateral_range <= $(floor(largest * slack; digits = 3)) with a ROI " *
                     "whose half-diagonal is within it, or tabulate the PSF wider." :
-                "Tabulate the PSF wider than one pixel."
+                    "Tabulate the PSF wider than one pixel."
             )
         )
     )
