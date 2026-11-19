@@ -96,10 +96,11 @@ using AMDGPU
 smld, info = fit(batch, GaussMLEConfig(backend = :gpu))
 ```
 
-AMDGPU 2.12 uses a ROCm it downloads, not one installed on the computer. Under WSL2 that
-download fails, because AMDGPU cannot detect the GPU's architecture there, and
-`AMDGPU.functional()` returns false. Select the installed ROCm once per environment, then
-restart Julia:
+From version 2.12, AMDGPU uses a ROCm it downloads, not one installed on the computer.
+Under WSL2 that download fails, because AMDGPU cannot detect the GPU's architecture there,
+and `AMDGPU.functional()` returns false. With AMDGPU 2.12 or newer, select the installed
+ROCm once per environment, then restart Julia (AMDGPU 2.10 and 2.11 have no such setting
+and use the installed ROCm):
 
 ```julia
 using AMDGPU
@@ -340,8 +341,8 @@ AMDGPU.functional()  # Should return true
 ```
 
 Load AMDGPU before `fit` and check the ROCm installation if this returns false. Under
-WSL2, select the installed ROCm with `AMDGPU.set_rocm_version!(local_rocm = true)` and
-restart Julia (see AMD GPUs above).
+WSL2 with AMDGPU 2.12 or newer, select the installed ROCm with
+`AMDGPU.set_rocm_version!(local_rocm = true)` and restart Julia (see AMD GPUs above).
 
 ### Out of Memory
 
