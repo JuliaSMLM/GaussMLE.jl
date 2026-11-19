@@ -104,6 +104,7 @@ Different PSF models return different emitter types, all subtypes of `SMLMData.A
 | `GaussianXYNBS` | `Emitter2DFitSigma` | `σ`, `σ_σ` (fitted PSF width) |
 | `GaussianXYNBSXSY` | `Emitter2DFitSigmaXY` | `σx`, `σy` (fitted PSF widths) |
 | `AstigmaticXYZNB` | `Emitter3DFitGaussMLE` | `z`, `σ_z` (z-position) |
+| `SplinePSFModel` | `Emitter3DFitGaussMLE` | `z`, `σ_z` (tabulated 3D PSF) |
 
 ### Emitter2DFitGaussMLE Fields
 
@@ -114,11 +115,11 @@ All 2D emitter types include these base fields:
 | `x`, `y` | Fitted position | microns |
 | `photons` | Total signal | photons (IdealCamera), electrons (sCMOS) |
 | `bg` | Background level | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `σ_x`, `σ_y` | Position uncertainty (CRLB) | microns |
+| `σ_x`, `σ_y` | Position uncertainty (CRLB); `Inf` for a fit on a position bound or a Fisher matrix singular to working precision | microns |
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 

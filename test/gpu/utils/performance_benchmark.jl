@@ -68,8 +68,7 @@ end
 Get short name for PSF model.
 """
 function get_model_name(psf::GaussMLE.PSFModel)
-    type_str = string(typeof(psf))
-    return split(type_str, ".")[end] |> x -> replace(x, r"\{.*\}" => "")
+    return string(nameof(typeof(psf)))
 end
 
 """
@@ -194,7 +193,7 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
 
         # Benchmark run with timing
         t_start = time()
-        smld, _info = GaussMLE.fit(benchmark_batch, fitter)
+        smld, info = GaussMLE.fit(benchmark_batch, fitter)
         t_elapsed = time() - t_start
 
         fits_per_second = benchmark / t_elapsed
@@ -287,20 +286,20 @@ function run_single_benchmark(config::BenchmarkConfig, warmup::Int, benchmark::I
             param_stats[name] = ParameterStats(ratio, bias, empirical_std, mean_crlb)
         end
 
-        # Calculate convergence rate
-        n_converged = sum(isfinite.(uncertainties[1, :]))
-        convergence_rate = n_converged / benchmark
+        # Convergence rate: the fits that met their convergence test
+        convergence_rate = info.n_converged / benchmark
 
         return BenchmarkResult(config, fits_per_second, convergence_rate, param_stats)
 
     catch e
         @warn "Benchmark failed for \
             $(config.model_name)-$(config.camera_symbol)-$(config.device_symbol): $e"
-        return nothing
+        rethrow()
     finally
         # Clean up GPU memory after each benchmark to prevent accumulation
-        if config.device_symbol == :gpu && CUDA.functional()
-            CUDA.reclaim()
+        if config.device_symbol == :gpu
+            vendor = GaussMLE._gpu_vendor()
+            vendor !== nothing && GaussMLE._reclaim_gpu(vendor)
         end
     end
 end
@@ -512,11 +511,11 @@ function run_comprehensive_benchmark()
     println()
 
     # Check GPU availability
-    gpu_available = CUDA.functional()
+    gpu_available = gpu_backend() !== nothing
     if !gpu_available
         @warn "GPU not available - will only test CPU configurations"
     else
-        println("GPU detected: ", CUDA.name(CUDA.device()))
+        println("GPU detected: ", gpu_name())
     end
     println()
 
@@ -551,12 +550,8 @@ function run_comprehensive_benchmark()
 
         result = run_single_benchmark(config, WARMUP_ITERATIONS, BENCHMARK_ITERATIONS)
 
-        if result !== nothing
-            push!(results, result)
-            println("✓ ($(round(Int, result.fits_per_second)) fits/s)")
-        else
-            println("✗ FAILED")
-        end
+        push!(results, result)
+        println("✓ ($(round(Int, result.fits_per_second)) fits/s)")
     end
 
     # Print results table
@@ -568,4 +563,98 @@ function run_comprehensive_benchmark()
     end
 
     return results
+end
+
+"""
+    run_spline_comparison_benchmark()
+
+Compare the spline and AstigmaticXYZNB on identical 10k-ROI stacks, at box sizes 13 and 15,
+with both cameras and backends. Timings include table transfer and all fit overhead, after
+warmup; point PSF construction and data generation are outside the timed region.
+"""
+function run_spline_comparison_benchmark()
+    astig = GaussMLE.AstigmaticXYZNB{Float32}(
+        0.13f0, 0.13f0, 0, 0, 0, 0, 0.25f0, 0.4f0
+    )
+    lateral, axial = -1.5:0.02:1.5, -0.6:0.02:0.6
+    sigma_x(z) = 0.13 * sqrt(1 + ((z - 0.25) / 0.4)^2)
+    sigma_y(z) = 0.13 * sqrt(1 + ((z + 0.25) / 0.4)^2)
+    # A point-density export, in [y, x, z] order, with the same Gaussian calibration.
+    stack = [
+        exp(-x^2 / (2 * sigma_x(z)^2) - y^2 / (2 * sigma_y(z)^2)) /
+            (2π * sigma_x(z) * sigma_y(z))
+            for y in lateral, x in lateral, z in axial
+    ]
+    spline = GaussMLE.SplinePSFModel(
+        MicroscopePSFs.SplinePSF(stack, lateral, lateral, axial); pixel_size = 0.1
+    )
+    device_symbols = gpu_backend() === nothing ? (:cpu,) : (:cpu, :gpu)
+    rows = NamedTuple[]
+    println(
+        "\nSpline / AstigmaticXYZNB comparison: 10,000 ROIs, at most 20 Levenberg-Marquardt \
+        passes per start (each start stops once converged)"
+    )
+    println("Times include host/device transfers; table construction is excluded.")
+    @printf("%-18s %3s %-7s %-6s %12s\n", "Model", "Box", "Camera", "Device", "fits/s")
+
+    for box in (13, 15), camera_kind in (:ideal, :scmos)
+        camera = create_camera(camera_kind, box)
+        rng = Xoshiro(SEED + box)
+        n = BENCHMARK_ITERATIONS
+        center = Float32((box + 1) / 2)
+        truth = Matrix{Float32}(undef, 5, n)
+        truth[1, :] .= center .+ 0.3f0 .* randn(rng, Float32, n)
+        truth[2, :] .= center .+ 0.3f0 .* randn(rng, Float32, n)
+        truth[3, :] .= rand(rng, Float32, n) .- 0.5f0
+        truth[4, :] .= 3000.0f0
+        truth[5, :] .= 10.0f0
+        # Independent erf-integrated data; both fitted models see exactly this batch.
+        batch = GaussMLE.generate_roi_batch(
+            camera, astig; n_rois = n, roi_size = box, true_params = truth,
+            seed = SEED + box
+        )
+        warmup = SMLMData.ROIBatch(
+            batch.data[:, :, 1:WARMUP_ITERATIONS],
+            batch.x_corners[1:WARMUP_ITERATIONS], batch.y_corners[1:WARMUP_ITERATIONS],
+            batch.frame_indices[1:WARMUP_ITERATIONS], batch.camera
+        )
+        for device in device_symbols, psf in (astig, spline)
+            fitter = GaussMLE.GaussMLEConfig(
+                psf_model = psf, backend = device, iterations = 20, gpu_timeout = 60.0
+            )
+            GaussMLE.fit(warmup, fitter)
+            elapsed = @elapsed begin
+                smld, info = GaussMLE.fit(batch, fitter)
+            end
+            rate = n / elapsed
+            name = get_model_name(psf)
+            finite = all(smld.emitters) do e
+                all(isfinite, (e.x, e.y, e.z, e.photons, e.bg)) &&
+                    all(s -> isfinite(s) && s > 0, (e.σ_x, e.σ_y, e.σ_z))
+            end
+            push!(
+                rows, (
+                    model = name, box = box, camera = camera_kind, device = device,
+                    fits_per_second = rate, backend = info.backend,
+                    n_fits = length(smld.emitters), finite = finite,
+                )
+            )
+            @printf("%-18s %3d %-7s %-6s %12.0f\n", name, box, camera_kind, device, rate)
+        end
+    end
+    println("\nSpline throughput / AstigmaticXYZNB throughput:")
+    for box in (13, 15), camera in (:ideal, :scmos), device in device_symbols
+        pair = filter(r -> r.box == box && r.camera == camera && r.device == device, rows)
+        gaussian_rate = only(
+            filter(
+                r -> r.model == "AstigmaticXYZNB", pair
+            )
+        ).fits_per_second
+        spline_rate = only(filter(r -> r.model == "SplinePSFModel", pair)).fits_per_second
+        @printf(
+            "box=%d camera=%s backend=%s: %.3fx\n",
+            box, camera, device, spline_rate / gaussian_rate
+        )
+    end
+    return rows
 end

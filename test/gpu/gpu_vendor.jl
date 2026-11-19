@@ -1,0 +1,147 @@
+# Vendor routing and the public fit contract on either CUDA or AMD GPUs.
+using Test, GaussMLE
+
+include(joinpath(@__DIR__, "utils", "gpu_vendor.jl"))
+
+@testset "GPU vendor routing" begin
+    vendor = GaussMLE._gpu_vendor()
+    expected = CUDA.functional() ? GaussMLE.CUDAGPU() : GaussMLE.ROCmGPU()
+    @test vendor === expected
+
+    @testset "Memory polling" begin
+        @test GaussMLE._poll_gpu(
+            vendor, :auto, typemax(Int) >> 2; timeout = 0.0,
+        )[1:3] == (-1, false, false)  # beyond every device: never fits, no wait
+        device_idx, available, failed, never_fits = GaussMLE._poll_gpu(
+            vendor, :auto, 1; timeout = 0.0
+        )
+        @test never_fits === nothing
+        n_devices = vendor isa GaussMLE.CUDAGPU ?
+            length(CUDA.devices()) : length(AMDGPU.devices())
+        @test available
+        @test !failed
+        @test device_idx in 0:(n_devices - 1)
+    end
+
+    # The retry loop waits and polls again only for these; any other error rethrows (:gpu)
+    # or falls back to the CPU at once (:auto). A fit cannot raise either kind on demand.
+    @testset "Resource error classification" begin
+        resource, other = if vendor isa GaussMLE.CUDAGPU
+            (
+                (
+                    CUDA.OutOfGPUMemoryError(), CUDA.CuError(CUDA.ERROR_OUT_OF_MEMORY),
+                    CUDA.CuError(CUDA.ERROR_DEVICE_UNAVAILABLE),
+                ),
+                (CUDA.CuError(CUDA.ERROR_INVALID_VALUE),),
+            )
+        else
+            (
+                (AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorOutOfMemory),),
+                (
+                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorInvalidValue),
+                    AMDGPU.HIP.HIPError(AMDGPU.HIP.hipErrorNotInitialized),
+                ),
+            )
+        end
+        for e in resource
+            @test GaussMLE._is_resource_error(vendor, e)
+        end
+        deterministic = (
+            other..., ErrorException("compile error"), BoundsError(), InterruptException(),
+        )
+        for e in deterministic
+            @test !GaussMLE._is_resource_error(vendor, e)
+        end
+    end
+
+    if vendor isa GaussMLE.ROCmGPU
+        @testset "ROCm failure cleanup" begin
+            @test GaussMLE._release_gpu_context(vendor, 0) === nothing
+            device_idx, available, failed, _ = GaussMLE._poll_gpu(
+                vendor, :auto, 1; timeout = 0.0,
+            )
+            @test available
+            @test !failed
+            @test device_idx in 0:(length(AMDGPU.devices()) - 1)
+        end
+    end
+
+    @testset "Public fit agrees with CPU" begin
+        models = (
+            GaussianXYNB(0.13f0),
+            AstigmaticXYZNB{Float32}(
+                0.13f0, 0.13f0, 0.0f0, 0.0f0, 0.0f0, 0.0f0, 0.25f0, 0.4f0,
+            ),
+        )
+        cameras = (
+            IdealCamera(64, 64, 0.1f0),
+            SCMOSCamera(
+                64, 64, 0.1f0, fill(5.0f0, 64, 64);
+                offset = 100.0f0, gain = 0.5f0, qe = 0.82f0,
+            ),
+        )
+
+        @testset "$model, $(typeof(camera))" for model in models, camera in cameras
+            batch = generate_roi_batch(
+                camera, model; n_rois = 32, roi_size = 11, seed = 42,
+            )
+            cpu, _ = fit(batch, GaussMLEConfig(psf_model = model, backend = :cpu))
+            parameters = model isa AstigmaticXYZNB ? (:x, :y, :z, :photons, :bg) :
+                (:x, :y, :photons, :bg)
+            uncertainties = model isa AstigmaticXYZNB ?
+                (:σ_x, :σ_y, :σ_z, :σ_photons, :σ_bg) : (:σ_x, :σ_y, :σ_photons, :σ_bg)
+
+            @testset "backend = $backend" for backend in (:gpu, :auto)
+                gpu, info = fit(
+                    batch, GaussMLEConfig(
+                        psf_model = model, backend = backend, batch_size = 10,
+                        gpu_timeout = 30.0, auto_timeout = 30.0,
+                    ),
+                )
+                @test info.backend == :gpu
+                @test info.device_id >= 0
+                @test info.n_fits == 32
+                @test info.batch_size == 10
+                @test info.n_batches == 4
+                @test length(gpu.emitters) == length(cpu.emitters)
+                # CPU and GPU stop within the stop rule's tolerance of the same maximum, not
+                # at the same bits, so compare in CRLB units: on simulated data they differ
+                # by at most 0.014 CRLB for the 2D models and 0.058 in astigmatic z at 300
+                # photons (9,000 fits); a GPU fault gives far more.
+                for (field, sigma) in zip(parameters, uncertainties)
+                    g = getproperty.(gpu.emitters, field)
+                    c = getproperty.(cpu.emitters, field)
+                    s = getproperty.(cpu.emitters, sigma)
+                    ok = isfinite.(s)
+                    @test all(isfinite, g)
+                    @test maximum(abs.(g[ok] .- c[ok]) ./ s[ok]) <= 0.1
+                end
+                for field in uncertainties
+                    @test getproperty.(gpu.emitters, field) ≈
+                        getproperty.(cpu.emitters, field) rtol = 1.0e-3
+                end
+            end
+        end
+    end
+
+    # One launch of more ROIs than one workgroup holds. AMDGPU's own launch size put up to
+    # 1024 of them in one workgroup, which never ran on a Radeon 780M; the AMD launch now
+    # uses workgroups of 64.
+    @testset "One launch of 3000 ROIs agrees with CPU" begin
+        camera = IdealCamera(64, 64, 0.1f0)
+        model = GaussianXYNB(0.13f0)
+        batch = generate_roi_batch(camera, model; n_rois = 3000, roi_size = 11, seed = 7)
+        cpu, _ = fit(batch, GaussMLEConfig(psf_model = model, backend = :cpu))
+        gpu, info = fit(
+            batch, GaussMLEConfig(
+                psf_model = model, backend = :gpu, batch_size = 3000, gpu_timeout = 30.0,
+            ),
+        )
+        @test info.backend == :gpu
+        @test info.n_batches == 1
+        for field in (:x, :y, :photons, :bg)
+            @test getproperty.(gpu.emitters, field) ≈
+                getproperty.(cpu.emitters, field) rtol = 1.0e-4
+        end
+    end
+end

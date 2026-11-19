@@ -13,7 +13,7 @@ julia --project -e 'using Pkg; Pkg.test()'
 GROUP=QA julia --project -e 'using Pkg; Pkg.test()'
 GROUP=GPU,Long julia --project -e 'using Pkg; Pkg.test()'
 
-# Every group this machine can run (GPU is skipped without a functional CUDA GPU)
+# Every group this machine can run (GPU needs functional CUDA or AMDGPU in its group env)
 GROUP=Everything julia --project -e 'using Pkg; Pkg.test()'
 ```
 
@@ -37,16 +37,30 @@ julia --project examples/gpu_acceleration.jl
 julia --project examples/astigmatic_3d.jl
 ```
 
+These four short scripts use the repository's active environment and the current API:
+`smld, info = fit(data, fitter)`, with `backend` selecting CPU or GPU. The sCMOS
+example fits an `ROIBatch` with a calibrated camera. The GPU example compares backends
+when CUDA or AMDGPU is functional; otherwise it reports that the comparison is unavailable.
+
 ## Architecture
 
 ### Core Implementation
 
 The package uses a unified kernel approach via KernelAbstractions.jl:
 - Single implementation works on both CPU and GPU via `@kernel` macro
-- StaticArrays (MVector/MMatrix) for stack allocation and GPU compatibility
-- Custom GPU-compatible linear algebra (Cholesky/LU decomposition, no pivoting)
-- **Diagonal Newton-Raphson for optimization** (element-wise, not full matrix inverse)
+- Immutable StaticArrays (SVector/SMatrix) for allocation-free CPU and GPU kernels
+- Custom GPU-compatible linear algebra (Cholesky decomposition and inverse)
+- **Optimization (`_optimize`)**: Levenberg-Marquardt on the full Fisher matrix
+  (`_lm_fit`) for every model; the Gaussian models stop once converged, `SplinePSFModel`
+  runs several z starts
 - **Full Fisher Information Matrix for CRLB** (symmetric, requires full matrix inverse)
+- Spline pixel-integral tables are built on the host and adapted once per backend attempt;
+  CPU (POCL under KernelAbstractions 0.10, native under 0.9), CUDA and AMDGPU use one
+  kernel, with the point callable removed before launch
+- Spline values and analytic first derivatives share one 4 × 4 × 4 gather (`compute_pixel_derivatives` returns `(model, dudt)` for every model: no fit uses second derivatives);
+  rectangular pixels use each axis's spacing, and non-positive values have zero derivatives
+- Spline initialization and z scanning use immutable `SVector` parameters; the scan gathers
+  values only. Coefficients typically occupy 5 to 10 MiB for a PSFLearning export
 
 ### Data Types and Conventions
 
@@ -82,11 +96,14 @@ SMLMData.IdealCamera
 # No calibration fields needed
 
 # sCMOS camera - Poisson + pixel-dependent readout noise
-SMLMData.SCMOSCamera
-    offset::Matrix{Float32}      # Per-pixel offset (ADU)
-    gain::Matrix{Float32}        # Per-pixel gain (e⁻/ADU)
-    readnoise::Matrix{Float32}   # Per-pixel readout noise σ (e⁻)
+SMLMData.SCMOSCamera{T}
+    offset::Union{T, Matrix{T}}     # Offset (ADU)
+    gain::Union{T, Matrix{T}}       # Gain (e⁻/ADU)
+    readnoise::Union{T, Matrix{T}}  # Readout noise σ (e⁻)
 ```
+
+Calibration values can be scalars or `(ny, nx)` matrices, with the same element type
+as the pixel size.
 
 **2. ROI Batches** (from SMLMData.jl):
 
@@ -106,7 +123,8 @@ SMLMData.ROIBatch{T}
 
 ```julia
 # 1. User creates camera with calibration
-camera = SMLMData.SCMOSCamera(offset, gain, readnoise)
+nx, ny = 512, 512
+camera = SMLMData.SCMOSCamera(nx, ny, 0.1f0, readnoise; offset=offset, gain=gain)
 # readnoise is σ in electrons
 
 # 2. ROIBatch created with camera and corner positions
@@ -114,7 +132,8 @@ batch = ROIBatch(data, x_corners, y_corners, frame_indices, camera)
 # x_corners[i], y_corners[i] = camera position for each ROI (1-based)
 
 # 3. fit() extracts variance map from camera
-variance_map = camera.readnoise .^ 2  # Convert σ → σ² (variance in e⁻²)
+variance = camera.readnoise .^ 2  # Convert σ → σ² (variance in e⁻²)
+variance_map = variance isa Real ? fill(variance, ny, nx) : variance
 # variance_map is same size as full camera sensor
 
 # 4. Kernel receives variance_map and separate corner vectors
@@ -144,9 +163,11 @@ The two camera models have **fundamentally different data flows**:
 | **Noise model** | Poisson only | Poisson + pixel readout noise |
 | **Calibration** | None | offset, gain, readnoise maps |
 | **Variance map** | Not used | Required (readnoise²) |
-| **Corners** | Not used (can be `nothing`) | Required for indexing variance map |
+| **Corners** | Required for output coordinates | Required for output coordinates and variance-map lookup |
 | **Data units** | Photons (or ADU if gain=1) | Must convert ADU → electrons |
-| **Likelihood** | `cf = data/model - 1`<br>`df = data/model²` | `cf = (data-model)/total_var`<br>`df = 1/total_var` |
+| **Fit objective** | Poisson log-likelihood | Poisson-shifted: `(data+v) log(model+v) - (model+v)`, `v` = readnoise² |
+| **Gradient weight** | `(data-model)/model` | `(data-model)/total_var` |
+| **p-value statistic** | Pearson `Σ (data-model)²/model` against χ²(df) | Pearson `Σ (data-model)²/total_var` against χ²(df) |
 | **Kernel indexing** | `data[i,j]` only | `data[i,j]` and `variance_map[cam_y, cam_x]` |
 
 **Key implementation difference**:
@@ -158,7 +179,7 @@ The two camera models have **fundamentally different data flows**:
 **In unified_kernel.jl, all indexing is 1-based:**
 
 ```julia
-# For IdealCamera (no corners needed)
+# For IdealCamera (corners used for output coordinates, not noise lookup)
 for j in 1:box_size    # x: 1, 2, ..., box_size
     for i in 1:box_size  # y: 1, 2, ..., box_size
         pixel_data = data[i, j, roi_idx]
@@ -189,50 +210,100 @@ end
 
 ### Critical Implementation Details
 
-#### Newton-Raphson vs Fisher Information
-The kernel uses **different approaches** for optimization vs uncertainty estimation:
+#### Optimization and Fisher Information
+The kernel uses the Fisher matrix for both optimization and uncertainty estimation:
 
-1. **Optimization (Newton-Raphson)**: Uses diagonal Hessian approximation
-   - Element-wise updates: `θ[k] -= ∇L[k] / H_diag[k]`
-   - More stable than full Newton method for convergence
-   - Diagonal elements: `H_diag[k] += d2udt2[k,k] * cf - dudt[k] * dudt[k] * df`
+1. **Optimization: Levenberg-Marquardt (`_lm_fit`) on the full Fisher matrix, every model**
+   - One pixel pass per iteration at the trial point: objective (`_fit_objective`, read-noise
+     variance from `_readout_variance`, zero for IdealCamera), gradient
+     `g = Σ dudt (d - μ)/var` and Fisher `F = Σ dudt dudt'/var`; no second derivatives
+   - Step: `(F_acc + λ diag F_acc) Δ = g_acc` (Fisher scoring: F is the expected curvature),
+     the whole step scaled to `max_step` (`@noinline _trial_step`, which skips non-finite
+     components) and bounded; factorizations in the `@noinline` `_lm_solve` and
+     `_newton_gain` (POCL speed)
+   - A parameter on a bound whose gradient points out of the box, or one fixed by equal
+     bounds whatever its gradient, is held (identity row and column via `_hold_rows`, zero
+     gradient) while the rest take the step
+   - `_fit_objective` takes the limit `-(mu + v)` when data + read-noise variance is 0
+     (else 0 * log(0) = NaN with a zero background) and returns -Inf where `mu + v < 0`
+     (never a log of a negative number, which throws on the CPU); variance maps are checked
+     finite and non-negative on the host (`_validate_variance_values`), and photon and
+     background lower bounds must be at least 0 (`_validate_constraints`)
+   - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
+   - `iterations` caps the pixel passes of each start, the last only evaluating, so a start
+     takes at most `iterations - 1` steps; default `_default_iterations` 100;
+     `_lm_fit` returns `(θ_acc, obj_acc, passes, stopped)`, and `_optimize` returns
+     `(θ, converged)`
+   - One schedule for every model (`gain_tol = _LM_GAIN_TOL = 1e-4`, an optional last
+     argument of `_lm_fit` that tests lower for a fit that runs on): stop after an accepted
+     pass whose predicted gain `g' F⁻¹ g / 2` over the free parameters (undamped `F_acc`) is
+     below 1e-4, i.e. within 0.014 CRLB of the maximum of the quadratic model with curvature
+     F (measured within 0.1 CRLB of the likelihood's own maximum on simulated ROIs); λ by
+     Nielsen's rule from the gain ratio ρ on accepted passes (λ·max(1/3, 1 − (2ρ − 1)³),
+     ν = 2) and λ·ν, ν·2 on rejected ones; a trial is kept on a positive gain, the trapezoid
+     `(g_acc + g)' s / 2` when the objective change is within 10× its Float32 rounding (its
+     sign decides: added to `obj_acc` it rounds away for a mismatched bright fit, |obj| ~
+     1e4 to 1e5); a non-finite objective is rejected; a trial that rounds to `θ_acc` with λ
+     at its 1e7 cap ends the fit (a fixed point: every later pass makes the same trial); a
+     fit that ends without the stop test gets `converged = false`, which the kernel writes
+     to its `converged` output (`UInt8`, after `chi2`) and `GaussMLEFitInfo.n_converged`
+     counts; its uncertainties stay the CRLB
+   - Several starts, keeping the strictly higher objective (the earlier start on a tie) and
+     that start's `converged`: `_optimize(::AstigmaticXYZNB)` fits again from the first
+     fit's end point with z negated (the mirror-z maximum of weak astigmatism);
+     `_optimize(::SplinePSFModel)` fits from the scan start and then from `starts - 1` fixed
+     z starts (`_spline_start_z`; x, y, N, bg from the scan start; default count
+     `_default_spline_starts`, one fixed start per 0.4 µm over the central 80 % of
+     `z_range`). `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties
-   - Inverted via Cholesky decomposition (more robust than LU for positive definite matrices)
+   - `_invert_fisher` inverts the Jacobi-scaled matrix (`G = D F D`, `d_k = 1/sqrt(F_kk)`)
+     and returns `D G⁻¹ D`, with no added regularization: an absolute one swamps the
+     photon entry `F_NN ~ 1/N` against `F_xx ~ N` and collapses `σ_photons` for bright
+     emitters. G is factored by Cholesky only (`static_cholesky_decomposition` with a
+     tolerance): a pivot at or below `n_pixels * eps(T)` (`n_pixels = box_size^2`, passed
+     from the kernel) means F is singular to working precision. The Float32 accumulation
+     over the box's pixels perturbs the entries of G by about that much, so a smaller
+     pivot of a real matrix cannot be told from an exactly singular one (a tolerance of
+     `N * eps(T)` passes a simulated ROI, which then reports σ_x = 72 nm). There is no LU
+     fallback, because F is positive semidefinite by construction and LU there only turns
+     rounding into a number. Failed inversion: a `F_kk` that is not positive and finite, a failed Cholesky, or an inverse
+     diagonal entry that is not positive and finite (no `max(0, ...)` on a variance).
+     Failed means every uncertainty is `Inf` and covariances are zero
+   - After the kernel, on the host (`_mark_pinned_fits!`, CPU and GPU alike), a fit whose
+     x or y (and z for AstigmaticXYZNB and SplinePSFModel) ended exactly on a lower or
+     upper bound of the constraints the kernel used did not localize an emitter inside the
+     allowed region: its uncertainties are `Inf` and covariances zero too; parameters,
+     log-likelihood and p-value are unchanged. A parameter the caller holds fixed
+     (`lower == upper`) is not a bound hit
    - Off-diagonal correlations matter for CRLB
 
-**CRITICAL SIGN CONVENTION** (unified_kernel.jl):
-
-The diagonal Hessian and Fisher matrix have **different formulas with different signs**:
+**SIGN CONVENTION** (unified_kernel.jl): the gradient is of the log-likelihood (ascent), and
+the step solves `(F + λ diag F) Δ = +g` with `θ_new = θ + Δ`:
 
 ```julia
-# Diagonal Hessian for Newton-Raphson (line ~331)
-H_diag[k] += d2udt2_diag[k] * cf - dudt[k] * dudt[k] * df
-#            ^^^^^^^^^^^^^^^^^^^^   ^^^^^^^^^^^^^^^^^^^^^^^
-#            PLUS (2nd derivative)   MINUS (1st derivative²)
-
-# Fisher Information Matrix for CRLB (line ~389)
-F_kl = dudt[k] * dudt[l] / variance
-H[k,l] += F_kl  # ONLY positive, no 2nd derivative term
+g  += dudt * ((d - model) / var)          # ascent gradient
+F  += (dudt * dudt') * (1 / var)          # Fisher = E[-∇²L], positive semidefinite
 ```
 
-**Why different**:
-- Hessian = actual ∇²L (both 1st and 2nd derivatives, can be negative)
-- Fisher = E[-∇²L] (only 1st derivatives, always positive definite)
-
-Wrong signs cause convergence failure or incorrect CRLB.
+Poisson Fisher = E[-∇²L] (only 1st derivatives); sCMOS uses `var = model + readnoise²` in
+the same outer-product accumulation, which is also the Poisson-shifted objective's Fisher.
 
 #### Custom Linear Algebra
 
 GPU kernels cannot use standard library matrix operations, so custom implementations are provided:
 
-- `static_cholesky_decomposition!` - In-place Cholesky (preferred for symmetric positive definite)
-- `static_cholesky_inverse!` - Invert via Cholesky factors
-- `static_lu_decomposition!` - In-place LU without pivoting (fallback)
-- `static_back_substitution!` - Solve linear systems
+- `static_cholesky_decomposition(A, tol = zero(T))` - Cholesky (symmetric positive
+  definite); a pivot at or below `tol` fails
+- `static_cholesky_inverse` - Invert via Cholesky factors
 
-All use relative tolerances (`1e-10 * maximum(abs, A)`) matching SMITE.
+All accept immutable `SMatrix` values and return `(ok::Bool, result)` without mutation.
+The Levenberg-Marquardt step and its convergence check call the decomposition without a
+tolerance (a positive pivot passes, a NaN pivot is not caught there); the inverse helper has no
+tolerance check. The Fisher matrix goes through `_invert_fisher(F, n_pixels)`, which scales
+it to a unit diagonal first and factors it with tolerance `n_pixels * eps(T)`; a NaN pivot
+ends as a failed inversion through the check on the inverse diagonal.
 
 #### Astigmatic Model Unit Convention
 
@@ -263,22 +334,28 @@ The math is dimensionally consistent:
 - `src/interface.jl` - High-level `fit()` API and `GaussMLEConfig` type
 - `src/psf_models.jl` - PSF model definitions (Gaussian, Astigmatic)
 - `src/psf_derivatives.jl` - PSF derivative computations
-- `src/camera_models.jl` - Camera noise models (IdealCamera, SCMOSCameraInternal)
-- `src/devices.jl` - Device abstraction (CPU/GPU auto-detection)
+- `src/camera_models.jl` - sCMOS calibration helpers (ADU to electrons)
+- `src/devices.jl` - GPU detection and memory queries, GPU vendor interface; `_gpu_workgroup_size` fixes AMD launches at 64 (an unsized AMDGPU launch of a large batch hung on a Radeon 780M), CUDA sizes its own
 - `src/emitters.jl` - Custom emitter types (Emitter2DFitSigma, Emitter2DFitSigmaXY)
-- `src/results.jl` - Result conversion to SMLMData.BasicSMLD
-- `src/roi_batch.jl` - ROI batch data structures
+- `src/results.jl` - Fit metadata and legacy result types
+- `src/precompile.jl` - PrecompileTools workload: a few CPU fits per model and camera (never a GPU context; skipped where KernelAbstractions 0.10's POCL is unavailable)
+- `src/roi_batch.jl` - Localization results and emitter/SMLD conversion
 - `src/simulator.jl` - Data generation for testing
 - `src/constraints.jl` - Parameter constraints system
-- `src/gausslib/` - Legacy GaussLib reference implementation (CPU only)
+- `src/gausslib/` - Gaussian math helpers used by CPU and GPU kernels
+- `src/spline_psf.jl` - `SplinePSFModel`: tabulated 3D PSF (moved from PSFLearning), host
+  construction, backend adaptation, analytic derivatives, and the multi-start fit
+  (`starts` field) on CPU and GPU
+- `ext/GaussMLEMicroscopePSFsExt.jl` - `SplinePSFModel(::MicroscopePSFs.SplinePSF; ...)` constructor, with the `starts` keyword (weak dependency)
 
 ### SMLMData Ecosystem Integration
 
 **Returns SMLMData.BasicSMLD** with model-specific emitter types:
-- `GaussianXYNB` → `SMLMData.Emitter2DFit`
+- `GaussianXYNB` → `GaussMLE.Emitter2DFitGaussMLE`
 - `GaussianXYNBS` → `GaussMLE.Emitter2DFitSigma` (custom, includes σ)
 - `GaussianXYNBSXSY` → `GaussMLE.Emitter2DFitSigmaXY` (custom, includes σx/σy)
-- `AstigmaticXYZNB` → `SMLMData.Emitter3DFit`
+- `AstigmaticXYZNB` → `GaussMLE.Emitter3DFitGaussMLE`
+- `SplinePSFModel` → `GaussMLE.Emitter3DFitGaussMLE`
 
 All emitter types subtype `SMLMData.AbstractEmitter` for ecosystem compatibility.
 
