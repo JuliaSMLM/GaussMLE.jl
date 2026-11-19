@@ -47,7 +47,9 @@ smld.emitters[1].x, smld.emitters[1].σ_x
 For complete SMLM workflows (detection + fitting + rendering), see [SMLMAnalysis.jl](https://github.com/JuliaSMLM/SMLMAnalysis.jl).
 
 GPU fitting prefers CUDA, which comes with GaussMLE. To use an AMD GPU when CUDA is not
-functional, add AMDGPU to your environment and load `using AMDGPU` before `fit`. CUDA scheduling prefers context-free NVML memory polling,
+functional, add AMDGPU to your environment and load `using AMDGPU` before `fit`. Under WSL2,
+first set AMDGPU to use the installed ROCm with `AMDGPU.set_rocm_version!(local_rocm = true)`
+and restart Julia. CUDA scheduling prefers context-free NVML memory polling,
 with CUDA queries as a fallback; NVML contention checks apply only to NVML queries.
 AMD scheduling uses HIP free memory without a contention check. See the
 [GPU guide](https://JuliaSMLM.github.io/GaussMLE.jl/dev/guide/gpu/) for details.

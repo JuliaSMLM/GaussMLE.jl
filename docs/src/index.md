@@ -102,7 +102,8 @@ println("Mean sigma: $(mean(sigmas)) microns")
 
 CUDA is preferred and comes with GaussMLE. To use an AMD GPU when CUDA is not functional,
 add AMDGPU to your environment and load `using AMDGPU`
-before `fit`; see [GPU Support](@ref).
+before `fit`; see [GPU Support](@ref), which also covers selecting the installed ROCm
+under WSL2.
 
 ```julia
 using GaussMLE

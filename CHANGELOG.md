@@ -62,7 +62,8 @@ uncertainties and p-values of every model change.
 
 - **AMD GPUs.** `backend = :gpu`, and `:auto` when CUDA is not functional, fit on an AMD
   GPU when AMDGPU is loaded (weak dependency, extension `GaussMLEAMDGPUExt`). AMD launches
-  use work-groups of 64; CUDA launches are unchanged.
+  use work-groups of 64; CUDA launches are unchanged. Under WSL2, AMDGPU 2.12 needs
+  `AMDGPU.set_rocm_version!(local_rocm = true)` to use the installed ROCm (GPU guide).
 - **KernelAbstractions 0.10.** The compat range is 0.9.38 to 0.10. Under 0.10 the CPU runs
   the same kernel through POCL (in work-groups of 64); under 0.9 natively.
 - **SplinePSFModel**: a tabulated 3D PSF, from any callable or from a MicroscopePSFs PSF

@@ -96,9 +96,20 @@ using AMDGPU
 smld, info = fit(batch, GaussMLEConfig(backend = :gpu))
 ```
 
+AMDGPU 2.12 uses a ROCm it downloads, not one installed on the computer. Under WSL2 that
+download fails, because AMDGPU cannot detect the GPU's architecture there, and
+`AMDGPU.functional()` returns false. Select the installed ROCm once per environment, then
+restart Julia:
+
+```julia
+using AMDGPU
+AMDGPU.set_rocm_version!(local_rocm = true)  # stored in the environment's LocalPreferences.toml
+```
+
 Both `:gpu` and `:auto` support AMD. CUDA wins when both vendors are functional.
 `info.backend` is `:gpu` on either vendor, and `info.device_id` is a 0-based index.
-Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.10. On AMD the kernel runs
+Tested on a Radeon 780M under WSL2 with ROCm 10.1 and AMDGPU 2.12, set to use that installed
+ROCm. On AMD the kernel runs
 in workgroups of 64 ROIs: the size AMDGPU chooses itself put a large batch in one
 workgroup of up to 1024, which never ran on that GPU.
 
@@ -328,7 +339,9 @@ using AMDGPU
 AMDGPU.functional()  # Should return true
 ```
 
-Load AMDGPU before `fit` and check the ROCm installation if this returns false.
+Load AMDGPU before `fit` and check the ROCm installation if this returns false. Under
+WSL2, select the installed ROCm with `AMDGPU.set_rocm_version!(local_rocm = true)` and
+restart Julia (see AMD GPUs above).
 
 ### Out of Memory
 
