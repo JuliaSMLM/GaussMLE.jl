@@ -24,11 +24,14 @@ else
         jm = JointSplinePSFModel(mc; pixel_size = 0.1)
         box, n, photons, bgs = 9, 300, 3000.0, (8.0, 12.0)
         frames = Int32.(1:n)
-        edges(first, count, px) = collect(((first - 1):(first - 1 + count)) .* px)
+        edges = joint_edges
         rn1 = Float32[1.0 + 0.4 * sin(i / 7) + 0.3 * cos(j / 5) for i in 1:128, j in 1:64]
         rn2 = Float32[1.2 + 0.5 * cos(i / 9) + 0.2 * sin(j / 4) for i in 1:128, j in 1:64]
         pairs = (
-            (IdealCamera(1:64, 1:128, 0.1), IdealCamera(65:128, 1:128, 0.12)),
+            (
+                IdealCamera(edges(1, 64, 0.1), edges(1, 128, 0.1)),
+                IdealCamera(edges(65, 64, 0.12), edges(1, 128, 0.12)),
+            ),
             (
                 SCMOSCamera(
                     edges(1, 64, 0.1f0), edges(1, 128, 0.1f0);

@@ -19,7 +19,9 @@ function GaussMLE._compute_psf_scale(
             "MicroscopePSFs PSF is not a normalized photon density in µm^-2: " *
                 "pixel-integrated sum on the lateral_range patch at z = $z_ref is " *
                 "$photon_sum, outside [0.5, 1.05]. Normalize the input stack as a " *
-                "photon density before constructing SplinePSFModel."
+                "photon density before constructing SplinePSFModel. A PSF whose " *
+                "integral changes with z (a 4Pi channel, normalized only on average " *
+                "over its fringe) is not supported."
         )
     )
     return pixel_area
@@ -33,6 +35,10 @@ GaussMLE._lateral_limits(psf::MicroscopePSFs.SplinePSF) =
 
 _z_limits(psf::MicroscopePSFs.SplinePSF) = (Float64(psf.z_min), Float64(psf.z_max))
 _z_limits(::Any) = nothing
+
+# A 2D SplinePSF (no z axis), alone or inside a PlanePSF
+_spline_2d(psf::MicroscopePSFs.SplinePSF) = psf.z_range === nothing
+_spline_2d(::Any) = false
 
 # A model of a PSF tabulated on a grid with z range zl: z_range must lie within zl, and by
 # default lateral_range is the largest the grid covers at this pixel size (the table reaches
@@ -83,6 +89,7 @@ end
 # for SplinePSF above are all there is.
 @static if isdefined(MicroscopePSFs, :PlanePSF)
     GaussMLE._lateral_limits(p::MicroscopePSFs.PlanePSF) = GaussMLE._lateral_limits(p.psf)
+    _spline_2d(p::MicroscopePSFs.PlanePSF) = _spline_2d(p.psf)
 
     function _z_limits(p::MicroscopePSFs.PlanePSF)
         inner = _z_limits(p.psf)
@@ -144,13 +151,27 @@ end
             ArgumentError("JointSplinePSFModel fits two channels; this MultiChannelPSF has $n")
         )
         order = mc.reference == 1 ? (1, 2) : (2, 1)
+        # MicroscopePSFs accepts a reference registration within sqrt(eps) of the identity
+        # and applies it in channel_position. The fit reports positions on the reference
+        # camera and takes that transform as exactly the identity, so any other is refused
+        # (a scale of 1.0003 would move a position 200 um from the origin by 60 nm).
+        ref = mc.registration[order[1]]
+        ref == [1 0 0; 0 1 0] || throw(
+            ArgumentError(
+                "the reference channel's registration is $ref, not exactly the " *
+                    "identity [1 0 0; 0 1 0]; JointSplinePSFModel reports positions " *
+                    "on the reference camera, so set registration[$(order[1])] to the " *
+                    "identity and express channel $(order[2])'s transform relative to it"
+            )
+        )
         channels = (mc.channels[order[1]], mc.channels[order[2]])
         limits = (_z_limits(channels[1]), _z_limits(channels[2]))
         for v in 1:2
-            limits[v] === nothing && throw(
+            (limits[v] === nothing || _spline_2d(channels[v])) && throw(
                 ArgumentError(
-                    "channel $(order[v]) is a $(typeof(channels[v]).name.name); each " *
-                        "channel must be a 3D SplinePSF (or a PlanePSF of one)"
+                    "channel $(order[v]) is a $(typeof(channels[v]).name.name)" *
+                        (_spline_2d(channels[v]) ? " with no z axis" : "") *
+                        "; each channel must be a 3D SplinePSF (or a PlanePSF of one)"
                 )
             )
         end

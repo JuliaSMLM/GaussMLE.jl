@@ -1,11 +1,13 @@
 # JointSplinePSFModel: one emitter fitted to two images at once, from a two-channel
 # MicroscopePSFs MultiChannelPSF. Construction and its refusals, a fit of simulated pairs on
 # two IdealCameras with different pixel sizes and a mirrored registration (near the truth),
-# the pair checks, and the emitter type. Bias, scatter against the CRLB, p-values, the
-# sCMOS joint fit, the joint CRLB against each view's and a view with zero transmission are
-# in Long (joint_spline_psf.jl); CPU/GPU agreement is in the GPU group. MultiChannelPSF
-# exists from MicroscopePSFs 0.5.7.
-using Test, GaussMLE, MicroscopePSFs, SMLMData, Random, Statistics
+# the pair checks, the expected counts and their derivatives against MicroscopePSFs'
+# forward law at a rotated, scaled and mirrored registration, the start with a dark image,
+# and the emitter type. Bias, scatter against the CRLB, p-values, the sCMOS joint fit, the
+# joint CRLB against each view's and a view with zero transmission are in Long
+# (joint_spline_psf.jl); CPU/GPU agreement is in the GPU group. MultiChannelPSF exists from
+# MicroscopePSFs 0.5.7.
+using Test, GaussMLE, MicroscopePSFs, SMLMData, StaticArrays, Random, Statistics
 using SMLMSim: poisson_noise
 
 include(joinpath(@__DIR__, "long", "utils", "joint_helpers.jl"))
@@ -54,6 +56,18 @@ else
             for bad in (one, three, analytic, singular)
                 @test_throws ArgumentError JointSplinePSFModel(bad; pixel_size = 0.1)
             end
+            # A reference registration within MicroscopePSFs' tolerance of the identity
+            # but not equal to it: positions are reported on the reference camera
+            near = MultiChannelPSF(;
+                channels = [spline, spline],
+                registration = [[1.0 + 1.0e-9 0 0; 0 1 0], reg]
+            )
+            @test_throws "not exactly the identity" JointSplinePSFModel(near; pixel_size = 0.1)
+            # A 2D SplinePSF channel has no z to fit
+            flat = SplinePSF(AiryPSF(1.4, 0.68), -1.0:0.1:1.0, -1.0:0.1:1.0)
+            @test_throws "no z axis" JointSplinePSFModel(
+                MultiChannelPSF(; channels = [spline, flat]); pixel_size = 0.1
+            )
             # A z_range channel 2 does not cover (z + 0.15 beyond its +0.6)
             @test_throws ArgumentError JointSplinePSFModel(
                 mc; pixel_size = 0.1, z_range = (-0.3, 0.5)
@@ -63,8 +77,8 @@ else
 
         # Camera 1: the left 64 columns at 0.1 um; camera 2: a crop at 0.12 um pixels whose
         # first column is the sensor's 65th, so its pixel edges start at 7.68 um
-        cam1 = IdealCamera(1:64, 1:128, 0.1)
-        cam2 = IdealCamera(65:128, 1:128, 0.12)
+        cam1 = IdealCamera(joint_edges(1, 64, 0.1), joint_edges(1, 128, 0.1))
+        cam2 = IdealCamera(joint_edges(65, 64, 0.12), joint_edges(1, 128, 0.12))
         box, n, photons, bgs = 9, 40, 3000.0, (8.0, 12.0)
         jm = JointSplinePSFModel(mc; pixel_size = 0.1)
         rng = Xoshiro(11)
@@ -105,8 +119,55 @@ else
             shifted = ROIBatch(b2.data, b2.x_corners, b2.y_corners, frames .+ Int32(1), cam2)
             @test_throws ArgumentError fit((b1, shifted), fitter)
             scmos = SCMOSCamera(64, 128, 0.12f0, 1.0f0)
-            @test_throws ArgumentError fit(
+            @test_throws "use one camera type" fit(
                 (b1, ROIBatch(b2.data, b2.x_corners, b2.y_corners, frames, scmos)), fitter
+            )
+            # The corners enter the fit. ROI 2 must be where the registration puts ROI 1:
+            # swapped batches, corners left at 1 and a ROI 2 moved by 4 pixels are refused
+            view2(xc, yc = b2.y_corners; camera = cam2) =
+                ROIBatch(b2.data, xc, yc, frames, camera)
+            @test_throws "pair 1: the registration puts" fit((b2, b1), fitter)
+            ones32 = fill(Int32(1), n)
+            @test_throws "pair 1: the registration puts" fit(
+                (ROIBatch(b1.data, ones32, ones32, frames, cam1), view2(ones32, ones32)),
+                fitter
+            )
+            @test_throws "pair 1: the registration puts" fit(
+                (b1, view2(b2.x_corners .+ Int32(4))), fitter
+            )
+            # Every ROI lies on its own camera, for an IdealCamera too
+            @test_throws "view 2: ROI" fit((b1, view2(b2.x_corners .+ Int32(60))), fitter)
+            # Pixel edges that are not evenly spaced (one column 0.05 um wider)
+            ex = joint_edges(65, 64, 0.12)
+            ex[30:end] .+= 0.05
+            uneven = IdealCamera(ex, joint_edges(1, 128, 0.12))
+            @test_throws "unevenly spaced x pixel edges" fit(
+                (b1, view2(b2.x_corners; camera = uneven)), fitter
+            )
+            # Counts that are not finite after the camera calibration
+            scmos_pair(gain2) = (
+                ROIBatch(
+                    b1.data, b1.x_corners, b1.y_corners, frames,
+                    SCMOSCamera(
+                        Float32.(joint_edges(1, 64, 0.1)), Float32.(joint_edges(1, 128, 0.1));
+                        readnoise = 1.0f0, offset = 0.0f0, gain = 1.0f0, qe = 1.0f0
+                    )
+                ),
+                view2(
+                    b2.x_corners;
+                    camera = SCMOSCamera(
+                        Float32.(joint_edges(65, 64, 0.12)),
+                        Float32.(joint_edges(1, 128, 0.12));
+                        readnoise = 1.0f0, offset = 0.0f0, gain = gain2, qe = 1.0f0
+                    )
+                ),
+            )
+            @test fit(scmos_pair(1.0f0), fitter)[2].n_fits == n
+            @test_throws "view 2: ROI 1 has the count" fit(scmos_pair(NaN32), fitter)
+            # Constraints of another model's size
+            five = GaussMLE.default_constraints(jm.views[1], box)
+            @test_throws "constraints for 5 parameters" fit(
+                (b1, b2), GaussMLEConfig(psf_model = jm, backend = :cpu, constraints = five)
             )
             # A joint model needs a pair; a pair needs a joint model
             @test_throws ArgumentError fit(b1, fitter)
@@ -114,6 +175,151 @@ else
             @test_throws ArgumentError fit(
                 (b1, b2), GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
             )
+        end
+
+        @testset "start with an image that receives no light" begin
+            # An image with zero transmission holds no light of the emitter: its counts
+            # above the background (here one bright pixel off centre) are noise and must
+            # not move the start. Position and photons start from the lit image alone.
+            for dark in (1, 2)
+                lit = 3 - dark
+                mcd = MultiChannelPSF(;
+                    channels = [spline, spline], registration = [I23, reg],
+                    transmission = dark == 2 ? [1.0, 0.0] : [0.0, 1.0],
+                    z_offset = [0.0, 0.15]
+                )
+                pm = GaussMLE._model_for_cameras(
+                    JointSplinePSFModel(mcd; pixel_size = 0.1), cam1, cam2
+                )
+                mud, cd = joint_expected(mcd, (cam1, cam2), truths[1:1]; photons, bgs, box)
+                noise = fill(1000.0f0, box, box)
+                noise[2, 3] = 9000.0f0
+                roi = ntuple(v -> v == dark ? noise : mud[v][:, :, 1], 2)
+                cx = (cd[1][1][1], cd[2][1][1])
+                cy = (cd[1][2][1], cd[2][2][1])
+                θ = GaussMLE._fit_start(roi, box, pm, cx, cy)
+                _, s, x, y = GaussMLE._roi_moments(roi[lit], box, Float32)
+                at = lit == 1 ? [x, y] :
+                    pm.A_px_inv * ([x, y] .- GaussMLE._joint_offset(pm, cx, cy))
+                @test θ[1] ≈ at[1] atol = 1.0e-3
+                @test θ[2] ≈ at[2] atol = 1.0e-3
+                @test θ[4] ≈ s rtol = 1.0e-5
+                @test θ[4 + dark] ≈ 1000.0f0 rtol = 0.05
+            end
+        end
+
+        @testset "forward law at a rotated, scaled and mirrored registration" begin
+            # No fit decides this: the kernel's expected counts are compared with
+            # MicroscopePSFs' integrate_pixels at channel_position, and its derivatives
+            # with central differences. The registration is not symmetric (rotation 28
+            # degrees, scales 1.06 and 0.93, a mirror in y), the two channels have
+            # different PSFs without mirror symmetry, camera 2 has non-square pixels, both
+            # cameras' edges start away from zero, and channel 2 is 0.12 um shallower: a
+            # transposed chain rule, swapped axes or a wrong origin changes the numbers.
+            shaped(phases) = begin
+                zc = ZernikeCoefficients(15)
+                for (k, v) in phases
+                    zc.phase[k] = v
+                end
+                SplinePSF(
+                    ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc);
+                    lateral_range = 1.2, axial_range = 0.6, lateral_step = 0.1,
+                    axial_step = 0.1
+                )
+            end
+            s1 = shaped((5 => 0.45, 7 => 0.3))
+            s2 = shaped((6 => -0.35, 8 => 0.35))
+            θr = deg2rad(28)
+            A = [cos(θr) -sin(θr); sin(θr) cos(θr)] * [1.06 0.0; 0.0 -0.93]
+            camA = IdealCamera(
+                collect(3.2 .+ (0:64) .* 0.1), collect(1.5 .+ (0:128) .* 0.1)
+            )
+            camB = IdealCamera(
+                collect(20.0 .+ (0:96) .* 0.11), collect(0.7 .+ (0:128) .* 0.13)
+            )
+            # the middle of camera A's emitters lands on the middle of camera B
+            t = [20.0 + 48 * 0.11, 0.7 + 64 * 0.13] - A * [6.4, 7.5]
+            mcg = MultiChannelPSF(;
+                channels = [s1, s2], registration = [I23, hcat(A, t)],
+                transmission = [0.4, 0.5], z_offset = [0.0, -0.12]
+            )
+            jmg = JointSplinePSFModel(mcg; pixel_size = 0.1)
+            pm = GaussMLE._model_for_cameras(jmg, camA, camB)
+            boxg, photonsg, bgsg = 11, 4000.0, (6.0, 9.0)
+            rngg = Xoshiro(5)
+            truthsg = [
+                (5.0 + 2.5rand(rngg), 5.0 + 5rand(rngg), 0.7rand(rngg) - 0.35) for _ in 1:12
+            ]
+            musg, cg = joint_expected(
+                mcg, (camA, camB), truthsg; photons = photonsg, bgs = bgsg, box = boxg
+            )
+            # the kernel's counts and derivatives of both views at θ
+            function kernel_counts(θ, cx, cy)
+                o = GaussMLE._joint_offset(pm, cx, cy)
+                blank = (zeros(Float32, boxg, boxg), zeros(Float32, boxg, boxg))
+                u = (zeros(Float32, boxg, boxg), zeros(Float32, boxg, boxg))
+                du = (zeros(Float32, boxg, boxg, 6), zeros(Float32, boxg, boxg, 6))
+                for v in 1:2
+                    vm, _, _, _, _, Av, tr, θv = GaussMLE._view_context(
+                        pm, v, θ, o, blank, blank, cx, cy
+                    )
+                    for j in 1:boxg, i in 1:boxg
+                        u[v][i, j], d = GaussMLE._joint_view_pixel(vm, v, i, j, θv, Av, tr)
+                        du[v][i, j, :] .= d
+                    end
+                end
+                return u, du
+            end
+            count_error = [0.0, 0.0]
+            derivative_error = zeros(6)
+            steps = (0.01f0, 0.01f0, 0.005f0, 1.0f0, 0.1f0, 0.1f0)
+            for (k, (X, Y, z)) in enumerate(truthsg)
+                cx = (cg[1][1][k], cg[2][1][k])
+                cy = (cg[1][2][k], cg[2][2][k])
+                θ = SVector{6, Float32}(
+                    (X - 3.2) / 0.1 + 0.5 - (cx[1] - 1), (Y - 1.5) / 0.1 + 0.5 - (cy[1] - 1),
+                    z, photonsg, bgsg[1], bgsg[2]
+                )
+                u, du = kernel_counts(θ, cx, cy)
+                for v in 1:2
+                    peak = maximum(musg[v][:, :, k]) - bgsg[v]
+                    count_error[v] = max(
+                        count_error[v], maximum(abs, u[v] .- musg[v][:, :, k]) / peak
+                    )
+                end
+                for p in 1:6
+                    e = SVector{6, Float32}(ntuple(q -> q == p ? steps[p] : 0.0f0, 6))
+                    up, _ = kernel_counts(θ + e, cx, cy)
+                    um, _ = kernel_counts(θ - e, cx, cy)
+                    for v in 1:2
+                        fd = (up[v] .- um[v]) ./ (2 * steps[p])
+                        an = du[v][:, :, p]
+                        derivative_error[p] = max(
+                            derivative_error[p],
+                            maximum(abs, fd .- an) / max(maximum(abs, an), 1.0f-6)
+                        )
+                    end
+                end
+            end
+            # 0.4 % and 0.6 % of the peak when right (the table's interpolation error);
+            # the transposed linear part gives tens of percent
+            @test maximum(count_error) < 0.015
+            # 3e-4 at most when right
+            @test maximum(derivative_error) < 2.0e-3
+            # A fit of the expected counts returns the truth (within 0.06 CRLB when right;
+            # the transposed linear part is 89 CRLB off)
+            fr = Int32.(1:length(truthsg))
+            smld, _ = fit(
+                (ROIBatch(musg[1], cg[1]..., fr, camA), ROIBatch(musg[2], cg[2]..., fr, camB));
+                psf_model = jmg, backend = :cpu
+            )
+            for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y), (3, :z, :σ_z))
+                d = [
+                    abs(getfield(e, f) - tr[row]) / getfield(e, sf)
+                        for (e, tr) in zip(smld.emitters, truthsg)
+                ]
+                @test maximum(d) < 0.15
+            end
         end
 
         @testset "Emitter3DFitJoint" begin

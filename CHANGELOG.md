@@ -81,11 +81,17 @@ uncertainties and p-values of every model change.
   (two polarization channels, two focal planes), from a two-channel MicroscopePSFs
   `MultiChannelPSF` (MicroscopePSFs 0.5.7 or later). Shared x, y, z and total photons, one
   background per image; the registration, photon split and z offsets of the
-  `MultiChannelPSF` are held fixed. `fit((batch1, batch2), fitter)` takes one `ROIBatch` per
-  image, each with its own camera, and returns `Emitter3DFitJoint` (the fields of
-  `Emitter3DFitGaussMLE`, then `bg2` and `σ_bg2`). The likelihood, Levenberg-Marquardt fit,
-  stop test, z starts, CRLB and p-value are `SplinePSFModel`'s, over both images; CPU, CUDA
-  and AMDGPU.
+  `MultiChannelPSF` are held fixed, and its reference channel's registration must be exactly
+  the identity. `fit((batch1, batch2), fitter)` takes one `ROIBatch` per image, each with its
+  own camera, `batch1` from the reference channel, and returns a `BasicSMLD` of
+  `Emitter3DFitJoint` (the fields of `Emitter3DFitGaussMLE`, then `bg2` and `σ_bg2`) with the
+  fit information. The corners enter the fit, so a ROI off its camera, a pair whose second
+  ROI is not where the registration puts the first, unevenly spaced pixel edges and counts
+  that are not finite after calibration are refused. The likelihood, Levenberg-Marquardt
+  fit, stop test, z starts, CRLB and p-value are `SplinePSFModel`'s, over both images; CPU,
+  CUDA and AMDGPU.
+- Constraints for a different number of parameters than the model has are refused with an
+  `ArgumentError` (a `BoundsError` before).
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.
 - A precompile workload compiles the first CPU fit of `GaussianXYNBS` and `SplinePSFModel`
   for both cameras.

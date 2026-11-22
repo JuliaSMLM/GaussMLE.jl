@@ -183,7 +183,7 @@ end
 
 # z (µm) of fixed start q = 0 .. m - 1 of m: the center of z_range for m = 1, else m points
 # evenly over the central 80 % of the range (SMAP's wrapper places its starts the same way).
-@inline function _spline_start_z(model::SplinePSFModel{T}, q::Int, m::Int) where {T}
+@inline function _spline_start_z(model::PSFModel{N, T}, q::Int, m::Int) where {N, T}
     zlo, zhi = model.z_range
     R = zhi - zlo
     center = (zlo + zhi) / 2
@@ -822,13 +822,17 @@ function default_constraints(model::SplinePSFModel, box_size)
     )
 end
 
-function _resolve_constraints(
-        constraints::ParameterConstraints{5}, model::SplinePSFModel, box_size
-    )
+_resolve_constraints(
+    constraints::ParameterConstraints{5}, model::SplinePSFModel, box_size
+) = _z_range_constraints(constraints, model)
+
+# Custom constraints with their z interval (parameter 3) cut to the model's z_range; also
+# JointSplinePSFModel's.
+function _z_range_constraints(constraints::ParameterConstraints{N}, model) where {N}
     lo = max(constraints.lower[3], model.z_range[1])
     hi = min(constraints.upper[3], model.z_range[2])
     lo <= hi || throw(ArgumentError("custom z constraints do not intersect model.z_range"))
-    return ParameterConstraints{5}(
+    return ParameterConstraints{N}(
         Base.setindex(constraints.lower, lo, 3), Base.setindex(constraints.upper, hi, 3),
         constraints.max_step
     )

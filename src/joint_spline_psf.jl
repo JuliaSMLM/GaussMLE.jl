@@ -17,7 +17,9 @@ total photons, one background per image. Built from a two-channel
 where `channel_position` maps the reference camera position (microns, absolute pixel-edge
 coordinates) through view `v`'s registration `[A t]` and shifts z by its `z_offset`. The
 registration, transmission (the photon split between the views, learned with the PSF) and
-z offsets are held fixed; the reference view's transform is the identity.
+z offsets are held fixed. The reference view's registration must be exactly the identity
+(MicroscopePSFs accepts one within rounding of it; that is refused here), because the
+fitted position is reported on the reference camera.
 
 # Parameters (in order)
 1. x: x-position in the reference view (fitted in ROI pixels, output in microns)
@@ -32,30 +34,48 @@ z offsets are held fixed; the reference view's transform is the identity.
                         z_range = <the z range both channels cover>,
                         lateral_range = nothing, starts = nothing)
 
-Available when MicroscopePSFs is loaded (package extension). `mc` must have two channels,
-each a 3D `SplinePSF` (or a `PlanePSF` of one), and its reference channel is view 1.
-`z_range` is in the reference view's z; each channel's table must cover it shifted by the
-channel's `z_offset`, else `ArgumentError`. `lateral_range`, `pixel_size` and `starts`
-mean what they mean for [`SplinePSFModel`](@ref), and each view gets that model's checks:
-its grid must cover `lateral_range` plus one pixel, and `fit` refuses an ROI whose
-half-diagonal exceeds `lateral_range`.
+Available when MicroscopePSFs 0.5.7 or later is loaded (package extension; earlier
+versions have no `MultiChannelPSF`). `mc` must have two channels, each a 3D `SplinePSF` (or
+a `PlanePSF` of one) that integrates to one at every z (a 4Pi channel, normalized only on
+average over its fringe, is not supported). View 1 is `mc`'s reference channel
+(`mc.reference`), whichever index it has, and view 2 the other one. `z_range` is in the
+reference view's z; each channel's table must cover it shifted by the channel's `z_offset`,
+else `ArgumentError`. `lateral_range`, `pixel_size` and `starts` mean what they mean for
+[`SplinePSFModel`](@ref), and each view gets that model's checks: its grid must cover
+`lateral_range` plus one pixel, and `fit` refuses an ROI whose half-diagonal exceeds
+`lateral_range`. The registration's linear part must be invertible and not close to
+singular (`|det| > 1e-6` times its largest entry squared).
 
 # Fitting
 `fit((batch1, batch2), fitter)` with two `ROIBatch`es: `batch1` holds the reference view's
-ROIs and `batch2` the other view's, one pair per emitter in the same order, with the same
-ROI size and frame indices. Each batch's corners place its ROIs on its own camera, and
-each batch's camera calibration applies to its own pixels (the two may be the same camera
-object or two crops of one sensor). The camera pixel sizes may differ from `pixel_size` and
-from each other: each view's table is integrated again on its camera's pixel grid. Both
-batches must use the same camera type (`IdealCamera` or `SCMOSCamera`).
+ROIs (the channel `mc.reference`, not necessarily channel 1) and `batch2` the other
+view's, one pair per emitter in the same order, with the same ROI size and frame indices.
+Each batch's corners place its ROIs on its own camera, and each batch's camera calibration
+applies to its own pixels (the two may be the same camera object or two crops of one
+sensor). Both batches must use the same camera type (`IdealCamera` or `SCMOSCamera`), and
+each camera's pixel edges must be evenly spaced.
+
+The corners enter the fit: they and the registration say where the emitter of ROI 1 lies
+in ROI 2. `fit` therefore refuses a ROI that does not lie on its camera, and a pair whose
+ROI 2 is not where the registration puts ROI 1: the centre of ROI 1, mapped to camera 2,
+must lie within rounding of the centre of ROI 2 (half a camera-1 pixel mapped to camera 2,
+plus one camera-2 pixel, per axis). Swapped batches, corners left at 1 and a crop with the
+wrong origin are refused by this check unless the registration is close to the identity.
+
+The camera pixel sizes may differ from `pixel_size` and from each other: each view's table
+is integrated again on its camera's pixel grid, on every `fit` call for a view whose camera
+pixel size is not `pixel_size` (as `SplinePSFModel`'s is).
 
 The likelihood is that of [`SplinePSFModel`](@ref) summed over both images: Poisson for
 `IdealCamera`, Poisson-shifted `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise
 variance for `SCMOSCamera`. The fit is the same Levenberg-Marquardt fit on the full 6 × 6
-Fisher matrix with the same stop test and the same z starts; the start uses both images
-(edge backgrounds, centroids, a joint z scan). Uncertainties are the CRLB from the inverse
-Fisher matrix, and the p-value is the Pearson statistic over both images' pixels against
-χ² with `2 * box^2 - 6` degrees of freedom. CPU, CUDA and AMDGPU.
+Fisher matrix with the same stop test and the same z starts. The start uses both images:
+edge backgrounds, the two centroids weighted by transmission times signal (an image with
+zero transmission sets only its own background), and a z scan of the Poisson likelihood of
+both images (for sCMOS too, as for `SplinePSFModel`; the fit itself uses the sCMOS
+likelihood). Uncertainties are the CRLB from the inverse Fisher matrix, and the p-value is
+the Pearson statistic over both images' pixels against χ² with `2 * box^2 - 6` degrees of
+freedom. CPU, CUDA and AMDGPU.
 
 The result is a `BasicSMLD` of [`Emitter3DFitJoint`](@ref), positions in the reference
 view's camera microns.
@@ -116,21 +136,94 @@ end
 function _model_for_cameras(model::JointSplinePSFModel{T}, camera1, camera2) where {T}
     v1 = _model_for_camera(model.views[1], camera1)
     v2 = _model_for_camera(model.views[2], camera2)
-    origin(c) = SVector{2, Float64}(c.pixel_edges_x[1], c.pixel_edges_y[1])
-    pixel(c) = SVector{2, Float64}(
-        c.pixel_edges_x[2] - c.pixel_edges_x[1], c.pixel_edges_y[2] - c.pixel_edges_y[1]
-    )
-    e1, e2, p1, p2 = origin(camera1), origin(camera2), pixel(camera1), pixel(camera2)
-    A = model.registration[:, SVector(1, 2)]
-    t = model.registration[:, 3]
-    A_px = (A .* p1') ./ p2
-    half = SVector(0.5, 0.5)
-    t_px = (A * e1 + t - e2) ./ p2 - A_px * half + half
+    A_px, t_px = _pixel_registration(model, camera1, camera2)
     A_px_inv = inv(A_px)
     return JointSplinePSFModel{T, typeof(v1), typeof(v2)}(
         (v1, v2), model.transmission, model.z_offset, model.registration, model.z_range,
         model.starts, SMatrix{2, 2, T}(A_px), SVector{2, T}(t_px), SMatrix{2, 2, T}(A_px_inv)
     )
+end
+
+# View 2's registration in camera pixels, in Float64: (A_px, t_px) with view-2 pixel centre
+# = A_px * reference pixel centre + t_px (1-based).
+function _pixel_registration(model::JointSplinePSFModel, camera1, camera2)
+    e1, p1 = _uniform_pixel_grid(camera1, 1)
+    e2, p2 = _uniform_pixel_grid(camera2, 2)
+    A = model.registration[:, SVector(1, 2)]
+    t = model.registration[:, 3]
+    A_px = (A .* p1') ./ p2
+    half = SVector(0.5, 0.5)
+    t_px = (A * e1 + t - e2) ./ p2 - A_px * half + half
+    return A_px, t_px
+end
+
+# A camera's first pixel edge and pixel size per axis (x, y), in Float64. The joint fit
+# places every pixel of both cameras at edge + (index - 1/2) * pixel size, so edges that
+# are not evenly spaced (to 1 % of a pixel anywhere on the sensor) are refused: the
+# registration would be applied at the wrong camera positions. The pixel size is the mean
+# over the sensor: the first pixel's width alone carries the rounding of Float32 edges far
+# from zero, which would add up across the sensor.
+function _uniform_pixel_grid(camera, view::Int)
+    axis(edges, name) = begin
+        n = length(edges) - 1
+        e = Float64(first(edges))
+        p = (Float64(last(edges)) - e) / n
+        (n >= 1 && isfinite(e) && isfinite(p) && p > 0) || throw(
+            ArgumentError("view $view's camera has no positive finite $name pixel size")
+        )
+        for (k, edge) in enumerate(edges)
+            abs(Float64(edge) - (e + (k - 1) * p)) <= 0.01 * p || throw(
+                ArgumentError(
+                    "view $view's camera has unevenly spaced $name pixel edges: edge " *
+                        "$k is at $edge um, and evenly spaced pixels of $p um put it " *
+                        "at $(e + (k - 1) * p) um; a joint fit needs evenly spaced pixels"
+                )
+            )
+        end
+        (e, p)
+    end
+    ex, px = axis(camera.pixel_edges_x, "x")
+    ey, py = axis(camera.pixel_edges_y, "y")
+    return SVector(ex, ey), SVector(px, py)
+end
+
+# Each pair's ROIs must lie on their own cameras, and ROI 2 must be where the registration
+# puts ROI 1: the corners enter the likelihood (`_joint_offset`), so a wrong pair is not an
+# output shift but a wrong fit. The centre of ROI 1 mapped to camera 2 must lie within
+# rounding of the centre of ROI 2 on each axis: half a camera-1 pixel mapped through A_px
+# (the emitter is within half a pixel of its ROI's centre pixel), half a camera-2 pixel
+# (ROI 2 centred to the nearest pixel), and half a pixel more for an even box, whose centre
+# lies between pixels.
+function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, batch2::ROIBatch)
+    box = size(batch1.data, 1)
+    for (v, b) in ((1, batch1), (2, batch2))
+        sensor = (length(b.camera.pixel_edges_y) - 1, length(b.camera.pixel_edges_x) - 1)
+        _validate_roi_corners(box, b.x_corners, b.y_corners, sensor; what = "view $v: ROI")
+    end
+    A_px, t_px = _pixel_registration(model, batch1.camera, batch2.camera)
+    tol = SVector(
+        0.5 * (abs(A_px[1, 1]) + abs(A_px[1, 2])) + 1.0 + 1.0e-6,
+        0.5 * (abs(A_px[2, 1]) + abs(A_px[2, 2])) + 1.0 + 1.0e-6,
+    )
+    half = (box - 1) / 2
+    for k in eachindex(batch1.x_corners)
+        c1 = SVector(batch1.x_corners[k] + half, batch1.y_corners[k] + half)
+        c2 = SVector(batch2.x_corners[k] + half, batch2.y_corners[k] + half)
+        d = A_px * c1 + t_px - c2
+        (abs(d[1]) <= tol[1] && abs(d[2]) <= tol[2]) || throw(
+            ArgumentError(
+                "pair $k: the registration puts the centre of ROI 1 (corner x = " *
+                    "$(batch1.x_corners[k]), y = $(batch1.y_corners[k])) " *
+                    "$(round(d[1]; digits = 2)) px in x and $(round(d[2]; digits = 2)) " *
+                    "px in y from the centre of ROI 2 (corner x = $(batch2.x_corners[k]), " *
+                    "y = $(batch2.y_corners[k])), beyond the $(round(tol[1]; digits = 2)) " *
+                    "and $(round(tol[2]; digits = 2)) px that rounding allows. batch1 " *
+                    "must be the reference channel's ROIs, and each batch's corners must " *
+                    "place its ROIs on its own camera."
+            )
+        )
+    end
+    return nothing
 end
 
 function Adapt.adapt_structure(to, model::JointSplinePSFModel{T}) where {T}
@@ -156,24 +249,16 @@ _fit_pixels(box_size::Int, ::JointSplinePSFModel) = 2 * box_size * box_size
 
 _photon_background_indices(::JointSplinePSFModel) = (4, 5, 6)
 
+_resolve_constraints(
+    constraints::ParameterConstraints{6}, model::JointSplinePSFModel, box_size
+) = _z_range_constraints(constraints, model)
+
 function default_constraints(model::JointSplinePSFModel, box_size)
     lower, upper = _default_position_bounds(box_size)
     return ParameterConstraints{6}(
         SVector{6, Float32}(lower, lower, model.z_range[1], 1.0f0, 0.01f0, 0.01f0),
         SVector{6, Float32}(upper, upper, model.z_range[2], Inf32, Inf32, Inf32),
         SVector{6, Float32}(1.0f0, 1.0f0, 0.05f0, Inf32, Inf32, Inf32)
-    )
-end
-
-function _resolve_constraints(
-        constraints::ParameterConstraints{6}, model::JointSplinePSFModel, box_size
-    )
-    lo = max(constraints.lower[3], model.z_range[1])
-    hi = min(constraints.upper[3], model.z_range[2])
-    lo <= hi || throw(ArgumentError("custom z constraints do not intersect model.z_range"))
-    return ParameterConstraints{6}(
-        Base.setindex(constraints.lower, lo, 3), Base.setindex(constraints.upper, hi, 3),
-        constraints.max_step
     )
 end
 
@@ -311,8 +396,11 @@ end
 end
 
 # Start: each view's edge background; x, y from the two centroids (view 2's mapped back to
-# the reference view), weighted by their in-box sums; N from both sums over the summed
-# transmission; z from a Poisson likelihood scan over both images.
+# the reference view), weighted by transmission times in-box sum; N from the sums of the
+# views that receive light over the summed transmission; z from a Poisson likelihood scan
+# over both images. A view with zero transmission holds no light of the emitter, so its
+# sum above the background is noise: it sets its own background and nothing else. With no
+# signal in a lit view the position starts at the centre of ROI 1.
 @inline function _fit_start(
         roi, box_size::Int, model::JointSplinePSFModel{T}, corner_x, corner_y
     ) where {T}
@@ -320,10 +408,14 @@ end
     bg2, s2, x2, y2 = _roi_moments(roi[2], box_size, T)
     o = _joint_offset(model, corner_x, corner_y)
     p2 = model.A_px_inv * (SVector{2, T}(x2, y2) - o)
-    w = s1 + s2
-    x = w > zero(T) ? (s1 * x1 + s2 * p2[1]) / w : x1
-    y = w > zero(T) ? (s1 * y1 + s2 * p2[2]) / w : y1
-    N = max(w, one(T)) / (model.transmission[1] + model.transmission[2])
+    tr1, tr2 = model.transmission
+    w1, w2 = tr1 * s1, tr2 * s2
+    w = w1 + w2
+    centre = T(box_size + 1) / 2
+    x = w > zero(T) ? (w1 * x1 + w2 * p2[1]) / w : centre
+    y = w > zero(T) ? (w1 * y1 + w2 * p2[2]) / w : centre
+    lit = ifelse(tr1 > zero(T), s1, zero(T)) + ifelse(tr2 > zero(T), s2, zero(T))
+    N = max(lit, one(T)) / (tr1 + tr2)
     return _joint_z_scan(roi, box_size, model, o, x, y, N, bg1, bg2)
 end
 
@@ -353,14 +445,6 @@ end
         end
     end
     return SVector{6, T}(x, y, best_z, N, bg1, bg2)
-end
-
-@inline function _spline_start_z(model::JointSplinePSFModel{T}, q::Int, m::Int) where {T}
-    zlo, zhi = model.z_range
-    R = zhi - zlo
-    center = (zlo + zhi) / 2
-    m == 1 && return center
-    return center + T(0.8) * R * (T(q) / T(m - 1) - T(0.5))
 end
 
 # As SplinePSFModel: the scan start, then `starts - 1` fixed z starts, keeping the fit with

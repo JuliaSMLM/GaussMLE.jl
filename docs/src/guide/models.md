@@ -263,7 +263,9 @@ exports for a multi-channel setup, and fits its forward law: image `v` records
 `N * transmission[v]` photons of channel `v`'s PSF, at the position its registration maps
 the emitter to and at `z + z_offset[v]`. The registration (an affine `[A t]` from the
 reference camera's microns to channel `v`'s), the transmissions (the photon split between
-the images, learned with the PSF) and the z offsets are held fixed.
+the images, learned with the PSF) and the z offsets are held fixed. Each channel must be a
+3D `SplinePSF` (or a `PlanePSF` of one) that integrates to one at every z; a 4Pi channel,
+normalized only on average over its fringe, is not supported.
 
 ```julia
 using GaussMLE, MicroscopePSFs
@@ -275,19 +277,44 @@ smld.emitters[1].bg2                              # the second image's backgroun
 ```
 
 The two `ROIBatch`es hold the same emitters in the same order and frames, the first from
-the reference channel; each batch's corners place its ROIs on its own camera, which may be
-the same camera object (two halves of one sensor) or two crops. Each camera's pixel size
-and calibration apply to its own image, and any invertible registration works, mirrored
-ones included. Positions come back in the reference camera's microns, in
+the reference channel (`mc.reference`, which need not be channel 1); each batch's corners
+place its ROIs on its own camera, which may be the same camera object (two halves of one
+sensor) or two crops. Each camera's pixel size and calibration apply to its own image, and
+any registration with an invertible linear part works, mirrored and rotated ones included
+(one close to singular, `|det|` below `1e-6` times its largest entry squared, is refused).
+The reference channel's registration must be exactly the identity: MicroscopePSFs accepts
+one within rounding of it, and that is refused here, because positions are reported on the
+reference camera. Positions come back in the reference camera's microns, in
 `Emitter3DFitJoint`: the fields of `Emitter3DFitGaussMLE`, with `photons` the total over
 both images before transmission and `bg` the reference image's background, then `bg2` and
 `σ_bg2`.
+
+The corners are part of the fit, not only of the output: with the registration they say
+where the emitter of the first ROI lies in the second. `fit` refuses, with an
+`ArgumentError` that names the pair:
+
+- a ROI that does not lie on its camera (for an `IdealCamera` too);
+- a pair whose second ROI is not where the registration puts the first: the centre of the
+  first ROI, mapped to the second camera, must lie within rounding of the centre of the
+  second ROI (half a first-camera pixel mapped to the second camera, plus one second-camera
+  pixel, per axis). Swapped batches, corners left at 1 and a crop with the wrong origin
+  fail this check, unless the registration is close to the identity;
+- a camera whose pixel edges are not evenly spaced, and counts that are not finite after
+  the camera calibration.
+
+A camera that is a crop of a sensor must carry the crop's pixel edges
+(`IdealCamera(edges_x, edges_y)`); a camera built from a pixel range starts at 0 whatever
+the range's first pixel. When a camera's pixel size differs from the model's `pixel_size`,
+that image's table is integrated again on every `fit` call, as `SplinePSFModel`'s is.
 
 Each image gets `SplinePSFModel`'s checks (its channel's grid must cover `lateral_range`
 plus one pixel, its table must cover the z range shifted by its offset), and the fit is
 `SplinePSFModel`'s: the same likelihood summed over both images, the same
 Levenberg-Marquardt fit on the full (here 6 × 6) Fisher matrix and stop test, and the same
-z starts. The start uses both images, including a z scan of their joint likelihood. The CRLB
+z starts. The start uses both images: each image's edge background, the two centroids
+weighted by transmission times signal (an image with zero transmission sets only its own
+background), and a z scan of the Poisson likelihood of both images, for sCMOS pairs too
+(as `SplinePSFModel`'s scan; the fit then climbs the sCMOS likelihood). The CRLB
 is the inverse Fisher matrix over both images, so it reflects all the information they
 carry together: on simulated pairs of an astigmatic PSF with the second image focused
 0.15 µm deeper, the joint fit's x uncertainty was below either image's alone, and fits
@@ -332,7 +359,7 @@ without them a model is treated as 2D and its bounds are not checked:
 | Parameters | 4 | 5 | 6 | 5 | 5 | 6 |
 | PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape | Tabulated, per image |
 | Dimensions | 2D | 2D | 2D | 3D | 3D | 3D, two images |
-| Speed | Fastest | Medium | Slowest | Medium | Table lookup | About 1.3 × SplinePSFModel |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup | About 1.4 × SplinePSFModel (CPU) |
 | Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration | Depends on calibration |
 | Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 

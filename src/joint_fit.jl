@@ -15,23 +15,38 @@ _array_fit_pixel_size(::JointSplinePSFModel) = _joint_only()
 _model_views(::PSFModel) = 1
 _model_views(::JointSplinePSFModel) = 2
 
-# One view's data for the kernel, `(data, variance_map, use_scmos)`: raw counts for an
-# IdealCamera (Poisson; the map is unused), electrons and the read-noise variance map for
-# an SCMOSCamera, which must lie under every ROI.
-function _joint_view_data(batch::ROIBatch)
+# The camera kinds a pair can have; both batches must have the same one.
+_joint_camera_kind(::SMLMData.SCMOSCamera) = Val(true)
+_joint_camera_kind(::SMLMData.IdealCamera) = Val(false)
+_joint_camera_kind(camera) = throw(ArgumentError("unsupported camera type $(typeof(camera))"))
+
+# View `view`'s data for the kernel, `(data, variance_map)`: raw counts for an IdealCamera
+# (Poisson; the map is unused), electrons and the read-noise variance map for an
+# SCMOSCamera (the ROIs lie on the camera: `_validate_pair_geometry`). The counts the
+# kernel gets must be finite: a calibration with a non-finite or zero gain, or a count
+# beyond Float32, would otherwise come back as a fit.
+function _joint_view_data(batch::ROIBatch, view::Int)
     data = batch.data
     validate_fit_input(data)
     box = size(data, 1)
     camera = batch.camera
     if camera isa SMLMData.SCMOSCamera
         variance_map = extract_variance_map(camera, Float32)
-        _validate_roi_corners(box, batch.x_corners, batch.y_corners, size(variance_map))
         electrons = to_electrons(data, camera, batch.x_corners, batch.y_corners)
-        return convert(Array{Float32, 3}, electrons), variance_map, Val(true)
-    elseif camera isa SMLMData.IdealCamera
-        return convert(Array{Float32, 3}, data), zeros(Float32, box, box), Val(false)
+        counts = convert(Array{Float32, 3}, electrons)
+    else
+        variance_map = zeros(Float32, box, box)
+        counts = convert(Array{Float32, 3}, data)
     end
-    throw(ArgumentError("unsupported camera type $(typeof(camera))"))
+    k = findfirst(!isfinite, counts)
+    k === nothing || throw(
+        ArgumentError(
+            "view $view: ROI $(k[3]) has the count $(counts[k]) at pixel ($(k[1]), " *
+                "$(k[2])) after the camera calibration and conversion to Float32; the " *
+                "data and the camera's offset and gain must give finite counts"
+        )
+    )
+    return counts, variance_map
 end
 
 """
@@ -41,9 +56,13 @@ end
 Fit one emitter to two images at once with a [`JointSplinePSFModel`](@ref) (the only model
 that takes a pair). `batch1` holds the reference view's ROIs and `batch2` the other view's,
 pair `k` being the same emitter in the same frame: equal numbers of ROIs, equal square ROI
-sizes and equal frame indices, else `ArgumentError`. Each batch's corners place its ROIs on
-its own camera, whose calibration applies to its pixels; both cameras must be of one type
-(`IdealCamera` or `SCMOSCamera`).
+sizes and equal frame indices, else `ArgumentError`. `batch1` is the channel
+`mc.reference` of the model's `MultiChannelPSF`, whichever index it has. Each batch's
+corners place its ROIs on its own camera, whose calibration applies to its pixels; both
+cameras must be of one type (`IdealCamera` or `SCMOSCamera`) with evenly spaced pixel
+edges. The corners enter the fit, so every ROI must lie on its camera and ROI 2 must be
+where the model's registration puts ROI 1, to within rounding (see
+[`JointSplinePSFModel`](@ref)); a pair that is not is refused.
 
 Returns a `BasicSMLD` of [`Emitter3DFitJoint`](@ref) on `batch1`'s camera, positions in its
 microns, and the fit information (`n_fits` counts pairs).
@@ -69,14 +88,16 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
         ArgumentError("the two batches' frame indices differ; pair ROIs of the same frame")
     )
 
-    data1, map1, scmos1 = _joint_view_data(batch1)
-    data2, map2, scmos2 = _joint_view_data(batch2)
-    scmos1 === scmos2 || throw(
+    scmos1 = _joint_camera_kind(batch1.camera)
+    scmos1 === _joint_camera_kind(batch2.camera) || throw(
         ArgumentError(
-            "the two batches' cameras are $(typeof(batch1.camera)) and " *
-                "$(typeof(batch2.camera)); use one camera type"
+            "the two batches' cameras are $(nameof(typeof(batch1.camera))) and " *
+                "$(nameof(typeof(batch2.camera))); use one camera type"
         )
     )
+    _validate_pair_geometry(model, batch1, batch2)
+    data1, map1 = _joint_view_data(batch1, 1)
+    data2, map2 = _joint_view_data(batch2, 2)
 
     n_fits = n1
     box_size = size(data1, 1)

@@ -22,7 +22,7 @@ end
 
 function _validate_roi_corners(
         box::Integer, x_corners::AbstractVector, y_corners::AbstractVector,
-        sensor_size::Tuple{Int, Int}
+        sensor_size::Tuple{Int, Int}; what = "ROI"
     )
     rows, columns = sensor_size
     for k in eachindex(x_corners, y_corners)
@@ -30,7 +30,7 @@ function _validate_roi_corners(
         if x < 1 || y < 1 || x + box - 1 > columns || y + box - 1 > rows
             throw(
                 ArgumentError(
-                    "ROI $k with corner (x = $x, y = $y) and box $box does not lie on the \
+                    "$what $k with corner (x = $x, y = $y) and box $box does not lie on the \
                     $columns×$rows sensor (1 <= corner and corner + box - 1 <= sensor \
                     size on both axes)"
                 )
