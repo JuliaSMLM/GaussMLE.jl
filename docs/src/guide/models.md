@@ -290,27 +290,37 @@ both images before transmission and `bg` the reference image's background, then 
 `σ_bg2`.
 
 The corners are part of the fit, not only of the output: with the registration they say
-where the emitter of the first ROI lies in the second. `fit` refuses, with an
-`ArgumentError` that names the pair:
+where the emitter of the first ROI lies in the second. `fit` checks each pair's offset: the
+centre of the first ROI, mapped to the second camera, minus the centre of the second ROI. A
+ROI that touches a sensor edge may sit up to half a box inward of its emitter, as a box
+finder places it, and that part of the offset is not counted.
+
+`fit` refuses, with an `ArgumentError`:
 
 - a ROI that does not lie on its camera (for an `IdealCamera` too);
 - a pair whose first ROI the registration maps entirely outside its second ROI;
-- for a batch of 5 pairs or more, a batch whose second ROIs are not where the registration
-  puts the first ones in the median over the pairs: the centre of the first ROI, mapped to
-  the second camera, within half a first-camera pixel mapped to the second camera plus one
-  second-camera pixel of the centre of the second ROI, per axis. Single pairs may be farther
-  off, as ROIs clamped at a sensor edge are, and are fitted. Swapped batches, corners left
-  at 1 and a crop with the wrong origin fail this check, unless the registration is close
-  to the identity;
+- for a batch of 5 pairs or more, a median offset over the pairs beyond rounding: half a
+  first-camera pixel mapped to the second camera plus one second-camera pixel, per axis.
+  Swapped batches, corners left at 1 and a crop with the wrong origin fail this check,
+  unless the registration is close to the identity;
 - a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
   positive, and counts that are not finite after the camera calibration.
 
-A fit whose emitter ends so far from a ROI's centre, in either image, that some pixel of
-that ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pixel)
-was fitted with a PSF cut off there, and reports infinite uncertainties, as a fit on a
-position bound does. With ROIs centred on their emitters this does not happen; it can for
-an emitter within about a pixel of a sensor edge, or a second ROI placed a few pixels from
-where the registration puts the emitter.
+Two kinds of pair are fitted but report infinite uncertainties, as a fit on a position bound
+does, and leave the other pairs of the batch untouched:
+
+- a single pair whose offset is beyond 1.5 first-camera pixels mapped to the second camera
+  plus 1.5 second-camera pixels, per axis. Two ROIs each centred within 1.5 pixels of the
+  emitter stay inside that, so ROIs centred on a brightest pixel and boxes of even size
+  pass;
+- a fit whose emitter ends so far from a ROI's centre, in either image, that some pixel of
+  that ROI lies beyond the image's table (zero beyond `lateral_range` plus about one
+  pixel): it was fitted with a PSF cut off there. With a box as wide as the table reaches,
+  this includes an emitter in the outermost pixels of a sensor.
+
+A second ROI that is fewer pixels off than these limits cannot be told from a valid one by
+its corners. It is fitted with finite uncertainties and a wrong position, and only the
+p-value shows it, so filter joint fits on the p-value as well as on the uncertainties.
 
 A camera that is a crop of a sensor must carry the crop's pixel edges
 (`IdealCamera(edges_x, edges_y)`); a camera built from a pixel range starts at 0 whatever

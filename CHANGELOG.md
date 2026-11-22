@@ -88,11 +88,12 @@ uncertainties and p-values of every model change.
   fit information. The corners enter the fit, so a ROI off its camera, a pair whose first ROI
   maps entirely outside its second, a batch whose pairs do not follow the registration (in
   the median over 5 pairs or more), unevenly spaced pixel edges, an sCMOS gain that is not
-  finite and positive, and counts that are not finite after calibration are refused; a fit
-  whose PSF table does not reach every pixel of its ROIs reports infinite uncertainties.
-  The likelihood, Levenberg-Marquardt
-  fit, stop test, z starts, CRLB and p-value are `SplinePSFModel`'s, over both images; CPU,
-  CUDA and AMDGPU.
+  finite and positive, and counts that are not finite after calibration are refused. A
+  single pair whose second ROI is several pixels from where the registration puts the first,
+  and a fit whose PSF table does not reach every pixel of its ROIs, report infinite
+  uncertainties; a ROI at a sensor edge is allowed its shift inward. The likelihood,
+  Levenberg-Marquardt fit, stop test, z starts, CRLB and p-value are `SplinePSFModel`'s,
+  over both images; CPU, CUDA and AMDGPU.
 - Constraints for a different number of parameters than the model has are refused with an
   `ArgumentError` (a `BoundsError` before).
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.

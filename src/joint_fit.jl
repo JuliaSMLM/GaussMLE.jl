@@ -68,8 +68,9 @@ sizes and equal frame indices, else `ArgumentError`. `batch1` is the channel
 corners place its ROIs on its own camera, whose calibration applies to its pixels; both
 cameras must be of one type (`IdealCamera` or `SCMOSCamera`) with evenly spaced pixel
 edges. The corners enter the fit, so every ROI must lie on its camera and the pairs must
-follow the model's registration (see [`JointSplinePSFModel`](@ref) for the checks); a fit
-whose PSF table does not reach every pixel of its ROIs reports infinite uncertainties.
+follow the model's registration (see [`JointSplinePSFModel`](@ref) for the checks). A pair
+whose ROI 2 is several pixels from where the registration puts ROI 1, and a fit whose PSF
+table does not reach every pixel of its ROIs, report infinite uncertainties.
 
 Returns a `BasicSMLD` of [`Emitter3DFitJoint`](@ref) on `batch1`'s camera, positions in its
 microns, and the fit information (`n_fits` counts pairs).
@@ -102,7 +103,7 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
                 "$(nameof(typeof(batch2.camera))); use one camera type"
         )
     )
-    _validate_pair_geometry(model, batch1, batch2)
+    misplaced = _validate_pair_geometry(model, batch1, batch2)
     data1, map1 = _joint_view_data(batch1, 1)
     data2, map2 = _joint_view_data(batch2, 2)
 
@@ -137,6 +138,7 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
     _mark_uncovered_fits!(
         uncertainties, covariances, results, psf_pixels, x_corners, y_corners, box_size
     )
+    _mark_misplaced_pairs!(uncertainties, covariances, misplaced)
 
     # Pearson statistic over both images' pixels
     pvalues = _gof_pvalues(chi2, 2 * box_size^2 - n_params)

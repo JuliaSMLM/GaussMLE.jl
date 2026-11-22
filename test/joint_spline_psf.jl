@@ -134,6 +134,30 @@ else
                 fitter
             )
             @test_throws "a median -4" fit((b1, view2(b2.x_corners .+ Int32(4))), fitter)
+            # A single pair whose ROI 2 is 4 pixels from where the registration puts ROI 1
+            # (its data are not at those corners) is fitted with infinite uncertainties
+            # and the rest of the batch is untouched; so is every pair of a batch too
+            # small for the median. ROIs away from the sensor edges.
+            inner(i) = 1 < b1.x_corners[i] < 64 - box + 1 &&
+                1 < b1.y_corners[i] < 128 - box + 1 &&
+                1 < b2.x_corners[i] < 64 - box - 3 && 1 < b2.y_corners[i] < 128 - box + 1
+            four = findall(inner, 1:n)[1:4]
+            k = four[1]
+            xs = copy(b2.x_corners)
+            xs[k] += Int32(4)
+            sm, _ = fit((b1, view2(xs)), fitter)
+            @test isinf(sm.emitters[k].σ_x) && isinf(sm.emitters[k].σ_bg2)
+            @test all(i -> i == k || isfinite(sm.emitters[i].σ_x), 1:n)
+            s4, _ = fit(
+                (
+                    sub(b1, four),
+                    ROIBatch(
+                        b2.data[:, :, four], b2.x_corners[four] .+ Int32(4),
+                        b2.y_corners[four], frames[four], cam2
+                    ),
+                ), fitter
+            )
+            @test all(e -> isinf(e.σ_x), s4.emitters)
             # Every ROI lies on its own camera, for an IdealCamera too
             @test_throws "view 2: ROI" fit((b1, view2(b2.x_corners .+ Int32(60))), fitter)
             # Pixel edges that are not evenly spaced (one column 0.05 um wider)
@@ -202,6 +226,24 @@ else
             )
             for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y))
                 d = [abs(getfield(e, f) - t[row]) / getfield(e, sf) for (e, t) in zip(se.emitters, te)]
+                @test all(isfinite, d) && maximum(d) < 5
+            end
+
+            # A batch whose pairs are all clamped at one sensor edge is as valid: the edge
+            # explains their offsets (about 2 pixels in y here), so the batch is fitted
+            top = [(1.5 + 0.5i, 0.1 + 0.02i, 0.0) for i in 1:8]
+            mut, ct = joint_expected(mc, (cam1, cam2), top; photons, bgs, box)
+            @test all(==(1), ct[1][2]) && all(==(1), ct[2][2])
+            ft = Int32.(1:length(top))
+            st, _ = fit(
+                (
+                    ROIBatch(Float32.(poisson_noise(mut[1])), ct[1]..., ft, cam1),
+                    ROIBatch(Float32.(poisson_noise(mut[2])), ct[2]..., ft, cam2),
+                ),
+                GaussMLEConfig(psf_model = jm, backend = :cpu)
+            )
+            for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y))
+                d = [abs(getfield(e, f) - t[row]) / getfield(e, sf) for (e, t) in zip(st.emitters, top)]
                 @test all(isfinite, d) && maximum(d) < 5
             end
 
