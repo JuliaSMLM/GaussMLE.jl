@@ -122,22 +122,41 @@ else
             @test_throws "use one camera type" fit(
                 (b1, ROIBatch(b2.data, b2.x_corners, b2.y_corners, frames, scmos)), fitter
             )
-            # The corners enter the fit. The pairs must follow the registration: swapped
-            # batches, corners left at 1 and a ROI 2 moved by 4 pixels in every pair are
-            # refused (single pairs off by a few pixels are not: next testset)
+            # The corners enter the fit. Impossible pairs are refused: corners left at 1
+            # map ROI 1 entirely outside ROI 2 here
             view2(xc, yc = b2.y_corners; camera = cam2) =
                 ROIBatch(b2.data, xc, yc, frames, camera)
-            @test_throws "batch1 must be the reference channel's ROIs" fit((b2, b1), fitter)
             ones32 = fill(Int32(1), n)
             @test_throws "entirely outside ROI 2" fit(
                 (ROIBatch(b1.data, ones32, ones32, frames, cam1), view2(ones32, ones32)),
                 fitter
             )
-            @test_throws "a median -4" fit((b1, view2(b2.x_corners .+ Int32(4))), fitter)
-            # A single pair whose ROI 2 is 4 pixels from where the registration puts ROI 1
-            # (its data are not at those corners) is fitted with infinite uncertainties
-            # and the rest of the batch is untouched; so is every pair of a batch too
-            # small for the median. ROIs away from the sensor edges.
+            # Footprints that overlap on both camera axes but not along the diagonal of a
+            # rotated registration are apart as well
+            turned = JointSplinePSFModel(
+                MultiChannelPSF(;
+                    channels = [spline, spline],
+                    registration = [I23, [1.0 -1.0 4.75; 1.0 1.0 1.85]]
+                ); pixel_size = 0.1
+            )
+            cam30 = IdealCamera(joint_edges(1, 30, 0.1), joint_edges(1, 30, 0.1))
+            blank(cx, cy) = ROIBatch(zeros(Float32, 9, 9, 1), Int32[cx], Int32[cy], Int32[1], cam30)
+            @test_throws "entirely outside ROI 2" GaussMLE._validate_pair_geometry(
+                turned, blank(1, 11), blank(22, 22)
+            )
+            # Pairs that only look wrong are warned about and fitted as given, no result
+            # changed: a ROI 2 moved by 4 pixels in every pair (the median), in one pair
+            # of the batch, and in every pair of a batch too small for a median. A valid
+            # batch gives no warning.
+            warn = Base.CoreLogging.Warn
+            @test_logs min_level = warn fit((b1, b2), fitter)
+            # swapped batches: the ROIs still overlap here, 6 pixels apart in y
+            @test_logs (:warn, r"a median .* batch1 is not the reference channel's ROIs") match_mode = :any fit(
+                (b2, b1), fitter
+            )
+            @test_logs (:warn, r"a median -4") match_mode = :any fit(
+                (b1, view2(b2.x_corners .+ Int32(4))), fitter
+            )
             inner(i) = 1 < b1.x_corners[i] < 64 - box + 1 &&
                 1 < b1.y_corners[i] < 128 - box + 1 &&
                 1 < b2.x_corners[i] < 64 - box - 3 && 1 < b2.y_corners[i] < 128 - box + 1
@@ -145,10 +164,12 @@ else
             k = four[1]
             xs = copy(b2.x_corners)
             xs[k] += Int32(4)
-            sm, _ = fit((b1, view2(xs)), fitter)
-            @test isinf(sm.emitters[k].σ_x) && isinf(sm.emitters[k].σ_bg2)
-            @test all(i -> i == k || isfinite(sm.emitters[i].σ_x), 1:n)
-            s4, _ = fit(
+            got = Ref{Any}()
+            @test_logs (:warn, Regex("in 1 of the \\d+ pairs away from the sensor edges \\(the first is pair $k\\)")) match_mode = :any (
+                got[] = fit((b1, view2(xs)), fitter)
+            )
+            @test all(e -> isfinite(e.σ_x) && isfinite(e.σ_bg2), got[][1].emitters)
+            @test_logs (:warn, r"in 4 of the 4 pairs") match_mode = :any fit(
                 (
                     sub(b1, four),
                     ROIBatch(
@@ -157,7 +178,6 @@ else
                     ),
                 ), fitter
             )
-            @test all(e -> isinf(e.σ_x), s4.emitters)
             # Every ROI lies on its own camera, for an IdealCamera too
             @test_throws "view 2: ROI" fit((b1, view2(b2.x_corners .+ Int32(60))), fitter)
             # Pixel edges that are not evenly spaced (one column 0.05 um wider)
@@ -167,6 +187,12 @@ else
             @test_throws "unevenly spaced x pixel edges" fit(
                 (b1, view2(b2.x_corners; camera = uneven)), fitter
             )
+            # Evenly spaced edges stored as Float32 far from zero are within their own
+            # precision of even spacing
+            far32 = IdealCamera(
+                Float32.(16384 .+ (0:64) .* 0.1), Float32.(joint_edges(1, 128, 0.1))
+            )
+            @test GaussMLE._uniform_pixel_grid(far32, 1)[2][1] ≈ 0.1 rtol = 1.0e-4
             # A gain that is not finite and positive, and counts that are not finite after
             # the camera calibration
             scmos_pair(gain2, offset2 = 0.0f0) = (
@@ -224,57 +250,35 @@ else
                 ),
                 GaussMLEConfig(psf_model = jm, backend = :cpu)
             )
-            for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y))
-                d = [abs(getfield(e, f) - t[row]) / getfield(e, sf) for (e, t) in zip(se.emitters, te)]
-                @test all(isfinite, d) && maximum(d) < 5
-            end
+            # finite uncertainties, and x and y within 5 of them of the truth
+            near(sm, ts) = all(e -> isfinite(e.σ_x) && isfinite(e.σ_y), sm.emitters) && all(
+                abs(e.x - t[1]) < 5 * e.σ_x && abs(e.y - t[2]) < 5 * e.σ_y
+                    for (e, t) in zip(sm.emitters, ts)
+            )
+            @test near(se, te)
 
-            # A batch whose pairs are all clamped at one sensor edge is as valid: the edge
-            # explains their offsets (about 2 pixels in y here), so the batch is fitted
+            # A batch whose pairs are all clamped at one sensor edge (their ROI centres
+            # about 2 pixels apart in y under the registration) is as valid: fitted, and
+            # no warning, since pairs at an edge are not judged on their offset
+            warn = Base.CoreLogging.Warn
             top = [(1.5 + 0.5i, 0.1 + 0.02i, 0.0) for i in 1:8]
             mut, ct = joint_expected(mc, (cam1, cam2), top; photons, bgs, box)
             @test all(==(1), ct[1][2]) && all(==(1), ct[2][2])
             ft = Int32.(1:length(top))
-            st, _ = fit(
-                (
-                    ROIBatch(Float32.(poisson_noise(mut[1])), ct[1]..., ft, cam1),
-                    ROIBatch(Float32.(poisson_noise(mut[2])), ct[2]..., ft, cam2),
-                ),
-                GaussMLEConfig(psf_model = jm, backend = :cpu)
-            )
-            for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y))
-                d = [abs(getfield(e, f) - t[row]) / getfield(e, sf) for (e, t) in zip(st.emitters, top)]
-                @test all(isfinite, d) && maximum(d) < 5
-            end
-
-            # Only ROI 2 at an edge (camera 2's last columns; ROI 1 inside), and only ROI 1
-            # at an edge (camera 1's last columns, which the mirror maps into camera 2's
-            # interior): each edge explains offsets of one sign, through A_px for ROI 1
-            fit_clean(ts) = begin
-                mu, cs = joint_expected(mc, (cam1, cam2), ts; photons, bgs, box)
-                fr = Int32.(1:length(ts))
-                s, _ = fit(
+            got = Ref{Any}()
+            @test_logs min_level = warn (
+                got[] = fit(
                     (
-                        ROIBatch(Float32.(poisson_noise(mu[1])), cs[1]..., fr, cam1),
-                        ROIBatch(Float32.(poisson_noise(mu[2])), cs[2]..., fr, cam2),
+                        ROIBatch(Float32.(poisson_noise(mut[1])), ct[1]..., ft, cam1),
+                        ROIBatch(Float32.(poisson_noise(mut[2])), ct[2]..., ft, cam2),
                     ),
                     GaussMLEConfig(psf_model = jm, backend = :cpu)
                 )
-                d = [abs(e.x - t[1]) / e.σ_x for (e, t) in zip(s.emitters, ts)]
-                (cs, all(isfinite, d) && maximum(d) < 5)
-            end
-            right2 = [(0.7 + 0.02i, 3.0 + 0.6i, 0.0) for i in 1:10]
-            c2e, ok2 = fit_clean(right2)
-            @test all(==(64 - box + 1), c2e[2][1]) && all(c -> 1 < c < 64 - box + 1, c2e[1][1])
-            @test ok2
-            right1 = [(6.1 + 0.02i, 3.0 + 0.6i, 0.0) for i in 1:10]
-            c1e, ok1 = fit_clean(right1)
-            @test all(==(64 - box + 1), c1e[1][1]) && all(c -> 1 < c < 64 - box + 1, c1e[2][1])
-            @test ok1
+            )
+            @test near(got[][1], top)
 
-            # A registration 2 camera-2 pixels wrong in y is refused from the pairs away
-            # from the edges, although most pairs of the batch sit at the top edge, where
-            # the edge would explain that offset
+            # A registration 2 camera-2 pixels wrong in y is warned about from the pairs
+            # away from the edges, although most pairs of the batch sit at the top edge
             mcw = MultiChannelPSF(;
                 channels = [spline, spline],
                 registration = [I23, [-1.0 0.0 16.0; 0.0 1.0 0.54]],
@@ -283,7 +287,7 @@ else
             mixed = vcat(top, inner[1:6])
             mum, cm = joint_expected(mc, (cam1, cam2), mixed; photons, bgs, box)
             fm = Int32.(1:length(mixed))
-            @test_throws "a median" fit(
+            @test_logs (:warn, r"a median .* over the 6 pairs away from the sensor edges") match_mode = :any fit(
                 (ROIBatch(mum[1], cm[1]..., fm, cam1), ROIBatch(mum[2], cm[2]..., fm, cam2)),
                 GaussMLEConfig(psf_model = JointSplinePSFModel(mcw; pixel_size = 0.1), backend = :cpu)
             )
@@ -312,12 +316,62 @@ else
                 spline, ex, ey, [Emitter3D(X2, Y2, z2, photons * 0.55)]; sampling = 4
             )
             fh = Int32.(1:length(th))
-            sh, _ = fit(
-                (ROIBatch(muh[1], ch[1]..., fh, camL), ROIBatch(m2, cxs, ch[2][2], fh, camR)),
-                GaussMLEConfig(psf_model = jmh, backend = :cpu)
+            @test_logs (:warn, r"in 1 of the 20 pairs") match_mode = :any (
+                got[] = fit(
+                    (ROIBatch(muh[1], ch[1]..., fh, camL), ROIBatch(m2, cxs, ch[2][2], fh, camR)),
+                    GaussMLEConfig(psf_model = jmh, backend = :cpu)
+                )
             )
+            sh = got[][1]
             @test isinf(sh.emitters[1].σ_x) && isinf(sh.emitters[1].σ_bg2)
             @test all(e -> isfinite(e.σ_x) && isfinite(e.σ_bg2), sh.emitters[2:end])
+
+            # An image with zero transmission has no PSF to cut off. Its ROI is clamped at
+            # camera R's first column with the emitter in that column, so its far columns
+            # are beyond the table; the lit ROI is centred. The fits keep their
+            # uncertainties.
+            mcd = MultiChannelPSF(;
+                channels = [spline, spline], registration = [I23, [-1.0 0.0 9.65; 0.0 1.0 0.0]],
+                transmission = [1.0, 0.0]
+            )
+            td = [(3.2 + 0.008i, 5.0 + 0.3i, 0.0) for i in 1:5]
+            mud, cdk = joint_expected(mcd, (camL, camR), td; photons, bgs, box)
+            @test all(==(1), cdk[2][1])
+            fd = Int32.(1:length(td))
+            sd, _ = fit(
+                (
+                    ROIBatch(Float32.(poisson_noise(mud[1])), cdk[1]..., fd, camL),
+                    ROIBatch(Float32.(poisson_noise(mud[2])), cdk[2]..., fd, camR),
+                ),
+                GaussMLEConfig(
+                    psf_model = JointSplinePSFModel(mcd; pixel_size = 0.1, lateral_range = 0.65),
+                    backend = :cpu
+                )
+            )
+            @test near(sd, td)
+
+            # One pixel size per camera serves the tables, the registration and the output.
+            # Float32 edges far from zero make the first pixel's width differ from the mean
+            # by 1e-3 of a pixel, which over 2,000 pixels is 0.2 um.
+            camF = IdealCamera(
+                Float32.(4096 .+ (0:2048) .* 0.1), Float32.(joint_edges(1, 128, 0.1))
+            )
+            mcf = MultiChannelPSF(;
+                channels = [spline, spline],
+                registration = [I23, [-1.0 0.0 4306.95; 0.0 1.0 0.3]],
+                transmission = [0.45, 0.55]
+            )
+            tf = [(4295.95, 6.05, 0.0)]
+            muf, cf = joint_expected(mcf, (camF, cam2), tf; photons, bgs, box)
+            sf, _ = fit(
+                (
+                    ROIBatch(Float32.(muf[1]), cf[1]..., Int32[1], camF),
+                    ROIBatch(Float32.(muf[2]), cf[2]..., Int32[1], cam2),
+                ),
+                GaussMLEConfig(psf_model = JointSplinePSFModel(mcf; pixel_size = 0.1), backend = :cpu)
+            )
+            @test sf.emitters[1].x ≈ 4295.95 atol = 0.003
+            @test sf.emitters[1].y ≈ 6.05 atol = 0.003
         end
 
         @testset "start with an image that receives no light" begin
@@ -348,6 +402,13 @@ else
                 @test θ[2] ≈ at[2] atol = 1.0e-3
                 @test θ[4] ≈ s rtol = 1.0e-5
                 @test θ[4 + dark] ≈ 1000.0f0 rtol = 0.05
+                # nor does the dark image's level choose the z start: its likelihood is
+                # the same at every z, and at 1e9 counts would hide the lit image's
+                zstart(level) = GaussMLE._fit_start(
+                    ntuple(v -> v == dark ? fill(level, box, box) : mud[v][:, :, 1], 2),
+                    box, pm, cx, cy
+                )[3]
+                @test zstart(1.0f9) == zstart(5.0f0)
             end
         end
 

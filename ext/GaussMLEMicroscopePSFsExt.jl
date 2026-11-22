@@ -18,10 +18,11 @@ function GaussMLE._compute_psf_scale(
         ArgumentError(
             "MicroscopePSFs PSF is not a normalized photon density in µm^-2: " *
                 "pixel-integrated sum on the lateral_range patch at z = $z_ref is " *
-                "$photon_sum, outside [0.5, 1.05]. Normalize the input stack as a " *
-                "photon density before constructing SplinePSFModel. A PSF whose " *
+                "$photon_sum, outside [0.5, 1.05]. If the stack is not a photon " *
+                "density, normalize it before constructing SplinePSFModel. A PSF whose " *
                 "integral changes with z (a 4Pi channel, normalized only on average " *
-                "over its fringe) is not supported."
+                "over its fringe) is not supported, and renormalizing it per plane " *
+                "would change its photon split."
         )
     )
     return pixel_area

@@ -290,40 +290,39 @@ both images before transmission and `bg` the reference image's background, then 
 `σ_bg2`.
 
 The corners are part of the fit, not only of the output: with the registration they say
-where the emitter of the first ROI lies in the second. `fit` checks each pair's offset: the
-centre of the first ROI, mapped to the second camera, minus the centre of the second ROI. A
-ROI that touches a sensor edge may sit up to half a box inward of its emitter, as a box
-finder places it, and that part of the offset is not counted.
+where the emitter of the first ROI lies in the second. A pair with wrong corners is
+therefore a wrong fit, and its corners alone cannot show that unless the pair is impossible.
 
-`fit` refuses, with an `ArgumentError`:
+`fit` refuses, with an `ArgumentError`, what no valid input is:
 
 - a ROI that does not lie on its camera (for an `IdealCamera` too);
-- a pair whose first ROI the registration maps entirely outside its second ROI;
-- for a batch of 5 pairs or more, a median offset over the pairs beyond rounding: half a
-  first-camera pixel mapped to the second camera plus one second-camera pixel, per axis.
-  Swapped batches, corners left at 1 and a crop with the wrong origin fail this check,
-  unless the registration is close to the identity. The median is taken over the pairs away
-  from the sensor edges when there are at least 5; a batch that lies along an edge can hide
-  an offset of up to half a box toward that edge;
+- a pair whose first ROI the registration maps entirely outside its second ROI: the emitter
+  cannot be in both;
 - a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
   positive, and counts that are not finite after the camera calibration.
 
-Two kinds of pair are fitted but report infinite uncertainties, as a fit on a position bound
-does, and leave the other pairs of the batch untouched:
+`fit` warns, and fits every pair as given, when second ROIs are farther from where the
+registration puts the first ones than two ROIs each placed on the pixel that holds the
+emitter can be: one first-camera pixel mapped to the second camera plus one second-camera
+pixel, per axis, between the mapped centre of the first ROI and the centre of the second.
+The warning comes when the median over at least 5 pairs is beyond that, or single pairs are
+beyond 1.5 times that. Pairs with a ROI at a sensor edge are not counted: a box finder
+moves such a ROI inward of its emitter. Swapped batches, corners left at 1 and a crop with
+the wrong origin give this warning when they are not refused. Valid pairs placed another
+way give it too, for example ROIs centred on the brightest pixel of a PSF whose peak is off
+its emitter, which is why it is a warning.
 
-- a single pair whose offset is beyond 1.5 first-camera pixels mapped to the second camera
-  plus 1.5 second-camera pixels, per axis. Two ROIs each centred within 1.5 pixels of the
-  emitter stay inside that, so boxes of even size pass, and so do ROIs centred on a
-  brightest pixel at good signal; at low signal (a few hundred photons on a background of
-  tens) a few in a thousand land farther off and are marked;
-- a fit whose emitter ends so far from a ROI's centre, in either image, that some pixel of
-  that ROI lies beyond the image's table (zero beyond `lateral_range` plus about one
-  pixel): it was fitted with a PSF cut off there. With a box as wide as the table reaches,
-  this includes an emitter in the outermost pixels of a sensor.
+A fit reports infinite uncertainties, as a fit on a position bound does, when its emitter
+ends so far from a ROI's centre, in an image that receives light, that some pixel of that
+ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pixel): it
+was fitted with a PSF cut off there. With a box as wide as the table reaches, this includes
+an emitter in the outermost pixels of a sensor.
 
-A second ROI that is fewer pixels off than these limits cannot be told from a valid one by
-its corners. It is fitted with finite uncertainties and a wrong position, and only the
-p-value shows it, so filter joint fits on the p-value as well as on the uncertainties.
+A second ROI that is a pixel or two from where it should be is fitted with finite
+uncertainties and a wrong position, and neither filter is sure to catch it. The p-value
+shows a large error of this kind, but at a few hundred photons most fits with a one-pixel
+error pass `p > 0.05`. The pairing is the caller's to get right; the simplest way is to
+find ROIs in the reference image and place the second ROI through the registration.
 
 A camera that is a crop of a sensor must carry the crop's pixel edges
 (`IdealCamera(edges_x, edges_y)`); a camera built from a pixel range starts at 0 whatever

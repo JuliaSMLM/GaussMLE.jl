@@ -292,10 +292,13 @@ function _to_emitter_xyznb(
         camera::SMLMData.AbstractCamera;
         dataset::Int,
         track_id::Int,
-        id::Int
+        id::Int,
+        pixel_size = (
+            camera.pixel_edges_x[2] - camera.pixel_edges_x[1],
+            camera.pixel_edges_y[2] - camera.pixel_edges_y[1],
+        )
     ) where {T}
-    pixel_size_x = camera.pixel_edges_x[2] - camera.pixel_edges_x[1]
-    pixel_size_y = camera.pixel_edges_y[2] - camera.pixel_edges_y[1]
+    pixel_size_x, pixel_size_y = pixel_size
 
     # Convert x,y to microns (using camera origin for proper coordinate mapping)
     # Position x=1.0 means center of pixel 1, which is at pixel_edges[1] + pixel_size/2
