@@ -65,10 +65,15 @@ emitter, as a box finder places it, and that part of the offset is not counted.
 - Refused, for a batch of at least 5 pairs: a median offset over the pairs beyond rounding
   (half a camera-1 pixel mapped to camera 2 plus one camera-2 pixel, per axis). Swapped
   batches, corners left at 1 and a crop with the wrong origin are refused by this, unless
-  the registration is close to the identity.
+  the registration is close to the identity. The median is taken over the pairs away from
+  the sensor edges when there are at least 5; a batch that lies along an edge can hide an
+  offset of up to half a box toward that edge.
 - Fitted, with infinite uncertainties: a single pair whose offset is beyond 1.5 camera-1
   pixels mapped to camera 2 plus 1.5 camera-2 pixels, per axis, the most that two ROIs
-  each centred within 1.5 pixels of the emitter give. The other pairs are unaffected.
+  each centred within 1.5 pixels of the emitter give. The other pairs are unaffected. ROIs
+  centred on a brightest pixel stay inside that at good signal; at low signal (a few
+  hundred photons on a background of tens) a few in a thousand land farther off and are
+  marked.
 - Fitted, with infinite uncertainties, as a fit on a position bound is: a fit whose emitter
   ends so far from a ROI's centre, in either image, that some pixel of that ROI is beyond
   the image's table (zero beyond `lateral_range` plus about one pixel). With a box as wide
@@ -235,6 +240,14 @@ function _edge_allowance(A_px, h, low1, high1, low2, high2, a::Int)
     return lo, hi
 end
 
+# The median offset of a batch on one axis: over the pairs whose offset no sensor edge
+# explains (`free`), when there are at least JOINT_MEDIAN_MIN_PAIRS of them, so that pairs at
+# an edge cannot absorb a wrong registration in the direction their allowance covers; else
+# over all pairs, each less its allowance.
+function _median_offset(offsets::Vector{Float64}, free::Vector{Bool})
+    return count(free) >= JOINT_MEDIAN_MIN_PAIRS ? _median(offsets[free]) : _median(offsets)
+end
+
 # The corners enter the likelihood (`_joint_offset`), so a wrong pair is a wrong fit, not an
 # output shift. Checked here, before anything reads the data, from the offset of each pair:
 # the centre of ROI 1 mapped to camera 2, minus the centre of ROI 2, less what a ROI at a
@@ -245,7 +258,10 @@ end
 # - For a batch of at least JOINT_MEDIAN_MIN_PAIRS pairs, the median offset over the pairs
 #   is within rounding: half a camera-1 pixel mapped through A_px plus one camera-2 pixel,
 #   per axis; else the fit is refused. Swapped batches, corners left at 1, a crop with the
-#   wrong origin and a ROI 2 moved for every pair shift the median.
+#   wrong origin and a ROI 2 moved for every pair shift the median. It is taken over the
+#   pairs away from the sensor edges when there are enough of them (`_median_offset`); a
+#   batch that lies along an edge can hide an offset of up to half a box in the direction
+#   the edge explains.
 # - A single pair is not refused for its offset: a box finder that centres each ROI on a
 #   brightest pixel puts some valid pairs beyond rounding. The offset of a pair whose ROIs
 #   are each centred within 1.5 pixels of the emitter is at most 1.5 camera-1 pixels mapped
@@ -276,6 +292,8 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
     n = length(batch1.x_corners)
     ex = Vector{Float64}(undef, n)
     ey = Vector{Float64}(undef, n)
+    freex = fill(false, n)  # no sensor edge explains any offset of this pair in x
+    freey = fill(false, n)
     misplaced = fill(false, n)
     for k in 1:n
         k1 = SVector(Int(batch1.x_corners[k]), Int(batch1.y_corners[k]))
@@ -297,16 +315,18 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
         loy, hiy = _edge_allowance(A_px, h, low1, high1, low2, high2, 2)
         ex[k] = d[1] - clamp(d[1], lox, hix)
         ey[k] = d[2] - clamp(d[2], loy, hiy)
+        freex[k] = lox == 0 && hix == 0
+        freey[k] = loy == 0 && hiy == 0
         misplaced[k] = abs(ex[k]) > pair_tol[1] || abs(ey[k]) > pair_tol[2]
     end
     n >= JOINT_MEDIAN_MIN_PAIRS || return misplaced
-    m = SVector(_median(ex), _median(ey))
+    m = SVector(_median_offset(ex, freex), _median_offset(ey, freey))
     tol = 0.5 .* row .+ 1.0 .+ 1.0e-6
     (abs(m[1]) <= tol[1] && abs(m[2]) <= tol[2]) || throw(
         ArgumentError(
             "the registration puts the centres of ROI 1 a median $(round(m[1]; digits = 2)) " *
                 "px in x and $(round(m[2]; digits = 2)) px in y from the centres of ROI 2 " *
-                "over the $n pairs, beyond the $(round(tol[1]; digits = 2)) and " *
+                "over the batch, beyond the $(round(tol[1]; digits = 2)) and " *
                 "$(round(tol[2]; digits = 2)) px that rounding allows: the pairs do not " *
                 "follow the registration. batch1 must be the reference channel's ROIs, and " *
                 "each batch's corners must place its ROIs on its own camera."

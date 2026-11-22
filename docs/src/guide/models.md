@@ -302,7 +302,9 @@ finder places it, and that part of the offset is not counted.
 - for a batch of 5 pairs or more, a median offset over the pairs beyond rounding: half a
   first-camera pixel mapped to the second camera plus one second-camera pixel, per axis.
   Swapped batches, corners left at 1 and a crop with the wrong origin fail this check,
-  unless the registration is close to the identity;
+  unless the registration is close to the identity. The median is taken over the pairs away
+  from the sensor edges when there are at least 5; a batch that lies along an edge can hide
+  an offset of up to half a box toward that edge;
 - a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
   positive, and counts that are not finite after the camera calibration.
 
@@ -311,8 +313,9 @@ does, and leave the other pairs of the batch untouched:
 
 - a single pair whose offset is beyond 1.5 first-camera pixels mapped to the second camera
   plus 1.5 second-camera pixels, per axis. Two ROIs each centred within 1.5 pixels of the
-  emitter stay inside that, so ROIs centred on a brightest pixel and boxes of even size
-  pass;
+  emitter stay inside that, so boxes of even size pass, and so do ROIs centred on a
+  brightest pixel at good signal; at low signal (a few hundred photons on a background of
+  tens) a few in a thousand land farther off and are marked;
 - a fit whose emitter ends so far from a ROI's centre, in either image, that some pixel of
   that ROI lies beyond the image's table (zero beyond `lateral_range` plus about one
   pixel): it was fitted with a PSF cut off there. With a box as wide as the table reaches,

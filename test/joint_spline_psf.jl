@@ -247,6 +247,47 @@ else
                 @test all(isfinite, d) && maximum(d) < 5
             end
 
+            # Only ROI 2 at an edge (camera 2's last columns; ROI 1 inside), and only ROI 1
+            # at an edge (camera 1's last columns, which the mirror maps into camera 2's
+            # interior): each edge explains offsets of one sign, through A_px for ROI 1
+            fit_clean(ts) = begin
+                mu, cs = joint_expected(mc, (cam1, cam2), ts; photons, bgs, box)
+                fr = Int32.(1:length(ts))
+                s, _ = fit(
+                    (
+                        ROIBatch(Float32.(poisson_noise(mu[1])), cs[1]..., fr, cam1),
+                        ROIBatch(Float32.(poisson_noise(mu[2])), cs[2]..., fr, cam2),
+                    ),
+                    GaussMLEConfig(psf_model = jm, backend = :cpu)
+                )
+                d = [abs(e.x - t[1]) / e.σ_x for (e, t) in zip(s.emitters, ts)]
+                (cs, all(isfinite, d) && maximum(d) < 5)
+            end
+            right2 = [(0.7 + 0.02i, 3.0 + 0.6i, 0.0) for i in 1:10]
+            c2e, ok2 = fit_clean(right2)
+            @test all(==(64 - box + 1), c2e[2][1]) && all(c -> 1 < c < 64 - box + 1, c2e[1][1])
+            @test ok2
+            right1 = [(6.1 + 0.02i, 3.0 + 0.6i, 0.0) for i in 1:10]
+            c1e, ok1 = fit_clean(right1)
+            @test all(==(64 - box + 1), c1e[1][1]) && all(c -> 1 < c < 64 - box + 1, c1e[2][1])
+            @test ok1
+
+            # A registration 2 camera-2 pixels wrong in y is refused from the pairs away
+            # from the edges, although most pairs of the batch sit at the top edge, where
+            # the edge would explain that offset
+            mcw = MultiChannelPSF(;
+                channels = [spline, spline],
+                registration = [I23, [-1.0 0.0 16.0; 0.0 1.0 0.54]],
+                transmission = [0.45, 0.55], z_offset = [0.0, 0.15]
+            )
+            mixed = vcat(top, inner[1:6])
+            mum, cm = joint_expected(mc, (cam1, cam2), mixed; photons, bgs, box)
+            fm = Int32.(1:length(mixed))
+            @test_throws "a median" fit(
+                (ROIBatch(mum[1], cm[1]..., fm, cam1), ROIBatch(mum[2], cm[2]..., fm, cam2)),
+                GaussMLEConfig(psf_model = JointSplinePSFModel(mcw; pixel_size = 0.1), backend = :cpu)
+            )
+
             # A ROI 2 placed 4 pixels from its emitter, in one pair of a batch that follows
             # the registration: fitted, but the emitter sits on ROI 2's first column, so
             # its far columns lie beyond the table (lateral_range 0.65 um plus a pixel) and
