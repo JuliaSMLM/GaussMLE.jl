@@ -165,7 +165,7 @@ else
             xs = copy(b2.x_corners)
             xs[k] += Int32(4)
             got = Ref{Any}()
-            @test_logs (:warn, Regex("in 1 of the \\d+ pairs away from the sensor edges \\(the first is pair $k\\)")) match_mode = :any (
+            @test_logs (:warn, Regex("in 1 of the \\d+ pairs away from the sensor edges \\(the first is pair $k, at -?[0-9.]+ px in x")) match_mode = :any (
                 got[] = fit((b1, view2(xs)), fitter)
             )
             @test all(e -> isfinite(e.σ_x) && isfinite(e.σ_bg2), got[][1].emitters)
@@ -372,6 +372,19 @@ else
                 )
             )
             @test near(sd10, td)
+            # The reference ROI is another matter, dark or not: the fitted position is in
+            # its pixels and within its box, so it must still map onto ROI 2
+            mcd1 = MultiChannelPSF(;
+                channels = [spline, spline], registration = [I23, [-1.0 0.0 9.65; 0.0 1.0 0.0]],
+                transmission = [0.0, 1.0]
+            )
+            @test_throws "entirely outside ROI 2" fit(
+                (
+                    ROIBatch(Float32.(mud[1]), cdk[1][1] .+ Int32(12), cdk[1][2], fd, camL),
+                    ROIBatch(Float32.(mud[2]), cdk[2]..., fd, camR),
+                ),
+                GaussMLEConfig(psf_model = JointSplinePSFModel(mcd1; pixel_size = 0.1), backend = :cpu)
+            )
 
             # One pixel size per camera serves the tables, the registration and the output.
             # Float32 edges far from zero make the first pixel's width differ from the mean

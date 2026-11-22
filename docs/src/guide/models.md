@@ -310,8 +310,10 @@ The warning comes when the median over at least 5 pairs is beyond that, or singl
 beyond 1.5 times that. Pairs with a ROI at a sensor edge are not counted: a box finder
 moves such a ROI inward of its emitter. A registration that does not match the cameras,
 swapped batches and a crop with the wrong origin give this warning when they are not
-refused. Valid pairs placed another way give it too, for example ROIs centred on the
-brightest pixel of a PSF whose peak is off its emitter, which is why it is a warning.
+refused and move the ROIs beyond that limit; an error of a pixel gives none, so silence is
+not a confirmation. Valid pairs placed another way give the warning too, for example ROIs
+centred on the brightest pixel of a PSF whose peak is off its emitter, which is why it is a
+warning.
 
 Every pair's offset is in the result, as `smld.metadata["pair_offsets_px"]`: a 2 × n
 matrix, x and y in second-camera pixels, of the centre of the first ROI mapped to the
@@ -324,9 +326,15 @@ ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pi
 was fitted with a PSF cut off there. With a box as wide as the table reaches, this includes
 an emitter in the outermost pixels of a sensor.
 
-An image with zero transmission holds no light of the emitter. Its ROI may lie anywhere on
-its camera, its table need not reach the box, and it takes no part in the refusal, the
-warning or the infinite uncertainties above.
+An image with zero transmission holds no light of the emitter. Its table need not reach the
+box, and its ROI is not judged for a cut-off PSF. If it is the second image, its ROI may lie
+anywhere on its camera, and the pair is neither refused nor warned about. The reference ROI
+is judged whatever its transmission, because the fitted position is in its pixels and
+within its box.
+
+With `starts = 1` the fit relies on the z scan of its start alone. Where two z, one on each
+side of focus, fit the start almost equally well, the scan can take the wrong one and the
+fit then converges there; the default starts are there for that.
 
 A second ROI that is a pixel or two from where it should be is fitted with finite
 uncertainties and a wrong position, and neither filter is sure to catch it. The p-value

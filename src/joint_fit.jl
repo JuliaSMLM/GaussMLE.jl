@@ -71,7 +71,7 @@ edges. The corners enter the fit, so every ROI must lie on its camera and contai
 emitter's position, and the pairs must follow the model's registration (see
 [`JointSplinePSFModel`](@ref) for what is refused and what is warned about). A fit whose
 PSF table does not reach every pixel of a ROI that receives light reports infinite
-uncertainties; an image with zero transmission takes no part in these checks.
+uncertainties; a second image with zero transmission takes no part in these checks.
 
 Returns a `BasicSMLD` of [`Emitter3DFitJoint`](@ref) on `batch1`'s camera, positions in its
 microns, and the fit information (`n_fits` counts pairs). `smld.metadata["pair_offsets_px"]`

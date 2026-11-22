@@ -69,8 +69,9 @@ pair by the corners alone:
   at least 5 pairs is beyond that, or single pairs are beyond 1.5 times that; pairs with a
   ROI at a sensor edge, which sits inward of its emitter, are not counted. A wrong
   registration, swapped batches and a crop with the wrong origin give this warning when
-  they are not refused. So do valid pairs placed another way, such as on the brightest
-  pixel of a PSF whose peak is off its emitter.
+  they are not refused and move the ROIs beyond that limit; a smaller error gives none. So
+  do valid pairs placed another way, such as on the brightest pixel of a PSF whose peak is
+  off its emitter.
 - Reported: every pair's offset, in `smld.metadata["pair_offsets_px"]` (2 × n, x and y in
   camera-2 pixels: the centre of ROI 1 mapped to camera 2, minus the centre of ROI 2), so a
   caller who knows how the ROIs were placed can apply a limit of its own.
@@ -80,8 +81,11 @@ pair by the corners alone:
   With a box as wide as the table reaches, that includes an emitter in the outermost
   pixels of a sensor.
 
-An image with zero transmission holds no light of the emitter: its ROI may lie anywhere on
-its camera, its table need not reach the box, and it is left out of all of the above.
+An image with zero transmission holds no light of the emitter: its table need not reach
+the box and its ROI is not judged for a cut-off PSF. If it is the second image, its ROI may
+lie anywhere on its camera and the pair is neither refused nor warned about. The reference
+ROI is judged whatever its transmission, because the fitted position is in its pixels and
+within its box.
 
 A ROI 2 that is a pixel or two from where it should be is fitted as given, with finite
 uncertainties and a wrong position. The p-value shows a large error of this kind, but at a
@@ -95,7 +99,9 @@ pixel size is not `pixel_size` (as `SplinePSFModel`'s is).
 The likelihood is that of [`SplinePSFModel`](@ref) summed over both images: Poisson for
 `IdealCamera`, Poisson-shifted `(d + v) log(μ + v) - (μ + v)` with `v` the read-noise
 variance for `SCMOSCamera`. The fit is the same Levenberg-Marquardt fit on the full 6 × 6
-Fisher matrix with the same stop test and the same z starts. The start uses both images:
+Fisher matrix with the same stop test and the same z starts (with `starts = 1` the fit
+relies on the scan alone, which can take the wrong side of focus where two z fit the start
+almost equally well; the default starts are there for that). The start uses both images:
 edge backgrounds, the two centroids weighted by transmission times signal (an image with
 zero transmission sets only its own background), and a z scan of the Poisson likelihood of
 the images that receive light (for sCMOS too, as for `SplinePSFModel`; the fit itself uses
@@ -281,8 +287,9 @@ end
 # ROIs placed some other way (on a brightest pixel of a PSF whose peak is off its emitter,
 # say) also give such offsets and are fitted correctly, so the fit continues and no result
 # is changed. A ROI that touches a sensor edge sits inward of its emitter, as a box finder
-# places it, by up to half a box; pairs with such a ROI are left out of both counts. With an
-# image of zero transmission nothing is judged: its ROI holds no light of the emitter.
+# places it, by up to half a box; pairs with such a ROI are left out of both counts. With a
+# second image of zero transmission nothing is judged: its ROI holds no light of the
+# emitter.
 # Returns every pair's offset (2 x n, x and y in camera-2 pixels), which `fit` puts in the
 # result's metadata so a caller can apply a limit of its own.
 function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, batch2::ROIBatch)
@@ -303,12 +310,13 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
     )
     tol = row .+ 1.0 .+ 1.0e-6
     offsets = Matrix{Float32}(undef, 2, length(batch1.x_corners))
-    # an image with zero transmission holds no light of the emitter: where its ROI lies
-    # says nothing about the pair
-    lit = model.transmission[1] > 0 && model.transmission[2] > 0
+    # a second image with zero transmission holds no light of the emitter: where its ROI
+    # lies says nothing about the pair. The reference ROI is judged whatever its
+    # transmission: the fitted position is in its pixels, within its box.
+    lit = model.transmission[2] > 0
     dx = Float64[]  # offsets of the pairs away from the sensor edges
     dy = Float64[]
-    far, first_far = 0, 0
+    far, first_far, first_d = 0, 0, SVector(0.0, 0.0)
     for k in eachindex(batch1.x_corners)
         k1 = SVector(Int(batch1.x_corners[k]), Int(batch1.y_corners[k]))
         k2 = SVector(Int(batch2.x_corners[k]), Int(batch2.y_corners[k]))
@@ -333,7 +341,7 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
         push!(dy, d[2])
         if abs(d[1]) > 1.5 * tol[1] || abs(d[2]) > 1.5 * tol[2]
             far += 1
-            first_far == 0 && (first_far = k)
+            first_far == 0 && ((first_far, first_d) = (k, d))
         end
     end
     n = length(dx)
@@ -351,8 +359,9 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
             "the $n pairs away from the sensor edges. " * advice
     elseif far > 0
         @warn "JointSplinePSFModel: in $far of the $n pairs away from the sensor edges " *
-            "(the first is pair $first_far), the registration puts the centre of ROI 1 " *
-            "more than $(round(1.5 * tol[1]; digits = 2)) px in x or " *
+            "(the first is pair $first_far, at $(round(first_d[1]; digits = 2)) px in x " *
+            "and $(round(first_d[2]; digits = 2)) px in y), the registration puts the " *
+            "centre of ROI 1 more than $(round(1.5 * tol[1]; digits = 2)) px in x or " *
             "$(round(1.5 * tol[2]; digits = 2)) px in y from the centre of ROI 2. " * advice
     end
     return offsets
