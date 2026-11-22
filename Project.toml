@@ -1,7 +1,7 @@
 name = "GaussMLE"
 uuid = "39799108-5025-4d0e-9a62-95a61c8c6061"
 authors = ["klidke@unm.edu"]
-version = "0.4.3-DEV"
+version = "0.5.0-DEV"
 
 [deps]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
@@ -10,41 +10,61 @@ Distributions = "31c24e10-a181-5473-b8eb-7969acd0382f"
 StatsAPI = "82ae8749-77ed-4fe6-ae5f-f523153014b0"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+PrecompileTools = "aea7be01-6a6a-4083-8856-8a6e6704d82a"
 Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
 SMLMData = "5488f106-40b8-4660-84c5-84a168990d1b"
 SpecialFunctions = "276daf66-3868-5448-9aa4-cd146d93841b"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
-Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+
+[weakdeps]
+AMDGPU = "21141c5a-9bdb-4563-92ae-f87d6854732e"
+MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
+
+[extensions]
+GaussMLEAMDGPUExt = "AMDGPU"
+GaussMLEMicroscopePSFsExt = "MicroscopePSFs"
 
 [compat]
+AMDGPU = "2.10"
 Adapt = "3, 4"
 Aqua = "0.8"
-CUDA = "4, 5"
+CUDA = "5.9 - 5, 6.5"
 Distributions = "0.25"
 Documenter = "1"
 ExplicitImports = "1"
-KernelAbstractions = "0.9"
+KernelAbstractions = "0.9.38 - 0.10"
 LinearAlgebra = "1"
+Logging = "1"
+MicroscopePSFs = "0.5.6"
 Pkg = "1"
+PrecompileTools = "1"
 Printf = "1"
 Random = "1"
 SMLMData = "0.7"
+SMLMSim = "0.7"
 SpecialFunctions = "2"
 StaticArrays = "1"
 Statistics = "1"
 StatsAPI = "1"
 TOML = "1"
 Test = "1"
-julia = "1.10"
+julia = "1.11"
 
 [extras]
 Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
 ExplicitImports = "7d51a73a-1435-4ff3-83d9-f097790105c7"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+MicroscopePSFs = "de9ac726-48a4-48ab-84b0-1c03c7c18929"
 Pkg = "44cfe95a-1eb2-52ea-b672-e2afdf69b78f"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
+SMLMSim = "5a0a87e4-02d4-41f5-bf26-b8c94c784a04"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
 TOML = "fa267f1f-6049-4f14-aa54-33bafae1ed76"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [targets]
-test = ["Aqua", "Documenter", "ExplicitImports", "Pkg", "Printf", "TOML", "Test"]
+test = [
+    "Aqua", "Documenter", "ExplicitImports", "Logging", "MicroscopePSFs", "Pkg", "Printf",
+    "SMLMSim", "Statistics", "TOML", "Test",
+]

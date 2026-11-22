@@ -97,7 +97,7 @@ println("="^70)
 # Create fitter
 fitter = GaussMLE.GaussMLEConfig(
     psf_model = psf_model,
-    device = GaussMLE.CPU(),
+    backend = :cpu,
     iterations = 100
 )
 

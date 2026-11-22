@@ -23,7 +23,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynb, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -47,7 +47,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynbs, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -73,7 +73,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynbsxsy, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -101,7 +101,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 n_photons = 200.0f0,
                 background = 5.0f0,
                 sigma = 1.3f0,
@@ -120,7 +120,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;  # Increased from 200 for better statistics
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 n_photons = 5000.0f0,
                 background = 20.0f0,
                 sigma = 1.3f0,
@@ -141,7 +141,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.0f0,
                 verbose = verbose
             )
@@ -158,7 +158,7 @@ Comprehensive CPU model tests for all PSF models with both ideal and sCMOS camer
             passed, results = run_model_validation(
                 :xynb, psf_model, 200;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 2.0f0,
                 verbose = verbose
             )

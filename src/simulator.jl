@@ -14,6 +14,9 @@ get_default_params(::AstigmaticXYZNB) = Float32[6.0, 6.0, 0.0, 1000.0, 10.0]
 
 Generate synthetic ROI data with camera-appropriate noise.
 
+Supports `GaussianXYNB`, `GaussianXYNBS`, `GaussianXYNBSXSY`, and `AstigmaticXYZNB`.
+`SplinePSFModel` is not supported by `generate_roi_batch`, even with `true_params`.
+
 # Arguments
 - `camera::AbstractCamera`: Camera model (IdealCamera or SCMOSCamera)
 - `psf_model::PSFModel`: PSF model determining parameter structure
@@ -21,7 +24,10 @@ Generate synthetic ROI data with camera-appropriate noise.
 # Keywords
 - `n_rois::Int = 100`: Number of ROIs to generate
 - `roi_size::Int = 11`: Size of each ROI (square)
-- `true_params::Union{Nothing, Matrix} = nothing`: Parameters or use PSF defaults
+- `true_params::Union{Nothing, Matrix} = nothing`: An `n_params × n_rois` matrix in model
+  parameter order, or use PSF defaults. x/y are ROI-local pixels (centers at integers),
+  fitted widths are pixels, and astigmatic z is microns. Signal and background use photons
+  before sCMOS quantum efficiency is applied; background is per pixel
 - `corners::Union{Nothing, Matrix{Int32}} = nothing`: ROI corners or auto-generate
 - `frame_indices::Union{Nothing, Vector{Int32}} = nothing`: Frame indices or all frame 1
 - `xy_variation::Float32 = 1.0`: Position variation (±pixels) when using defaults
@@ -306,15 +312,15 @@ function _generate_single_roi!(
         expected_photons = _evaluate_psf_pixel(psf_model, i, j, params)
 
         # Apply QE and Poisson noise (photons → electrons)
-        qe = camera.qe isa Number ? camera.qe :
-            camera.qe[i + x_corner - 1, j + y_corner - 1]
+        # Calibration maps are (rows, columns) = (y, x), as the camera and the fit index them
+        cam_i = i + y_corner - 1
+        cam_j = j + x_corner - 1
+        qe = camera.qe isa Number ? camera.qe : camera.qe[cam_i, cam_j]
         expected_electrons = expected_photons * qe
         signal_electrons = expected_electrons > 0 ?
             Float32(rand(Poisson(expected_electrons))) : 0.0f0
 
         # Add readout noise (Gaussian, in electrons)
-        cam_i = i + x_corner - 1
-        cam_j = j + y_corner - 1
         readnoise = camera.readnoise isa Number ? camera.readnoise :
             camera.readnoise[cam_i, cam_j]
         total_electrons = signal_electrons + randn(Float32) * readnoise

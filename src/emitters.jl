@@ -8,7 +8,7 @@ subtyping AbstractEmitter for full ecosystem compatibility.
 All emitter types include:
 - Position and photometry (standard)
 - CRLB uncertainties (standard)
-- Goodness-of-fit p-value (from χ² test)
+- Goodness-of-fit p-value (Pearson χ² statistic against χ²(df))
 - PSF-specific parameters (σ, σx, σy, z)
 
 IdealCamera photometry uses photons and photons/pixel; sCMOS photometry uses electrons
@@ -31,6 +31,9 @@ Equivalent localization fields to SMLMData.Emitter2DFit, with an additional `pva
 - `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -38,7 +41,9 @@ Equivalent localization fields to SMLMData.Emitter2DFit, with an additional `pva
   electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -89,6 +94,9 @@ end
 - `σ::T`: Fitted PSF width (microns)
 
 ## Uncertainties (CRLB)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -97,7 +105,9 @@ end
 - `σ_σ::T`: PSF width uncertainty (microns)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -152,6 +162,9 @@ end
 - `σx::T`, `σy::T`: Fitted PSF widths in x and y (microns)
 
 ## Uncertainties (CRLB)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`: Position uncertainties (microns)
 - `σ_xy::T`: Position covariance (microns²) - off-diagonal of Fisher matrix inverse
 - `σ_photons::T`: Signal uncertainty (photons for IdealCamera, electrons for sCMOS)
@@ -160,7 +173,9 @@ end
 - `σ_σx::T`, `σ_σy::T`: PSF width uncertainties (microns)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number
@@ -203,7 +218,7 @@ end
 """
     Emitter3DFitGaussMLE{T} <: AbstractEmitter
 
-3D emitter for astigmatic PSF (AstigmaticXYZNB) with goodness-of-fit.
+3D emitter for `AstigmaticXYZNB` and `SplinePSFModel` with goodness-of-fit.
 
 Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pvalue` field.
 
@@ -216,6 +231,9 @@ Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pva
 - `bg::T`: Background (photons/pixel for IdealCamera, electrons/pixel for sCMOS)
 
 ## Uncertainties (CRLB, microns for spatial)
+Every uncertainty is `Inf` (and the covariances zero) for a fit that ended on a
+position bound or whose Fisher matrix is singular to working precision.
+
 - `σ_x::T`, `σ_y::T`, `σ_z::T`: Position uncertainties (microns)
 - `σ_xy::T`, `σ_xz::T`, `σ_yz::T`: Position covariances (microns²) - off-diagonals of
   Fisher matrix inverse
@@ -224,7 +242,9 @@ Equivalent localization fields to SMLMData.Emitter3DFit, with an additional `pva
   electrons/pixel for sCMOS)
 
 ## Goodness-of-Fit
-- `pvalue::T`: P-value from χ² test (df = n_pixels - n_params)
+- `pvalue::T`: Goodness-of-fit p-value: the Pearson statistic ∑(d - μ)²/(μ + v) over the
+  ROI's pixels, v the sCMOS read-noise variance (zero for IdealCamera), against
+  χ²(df), df = n_pixels - n_params
 
 ## Metadata
 - `frame::Int`: Frame number

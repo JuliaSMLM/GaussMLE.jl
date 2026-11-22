@@ -4,11 +4,13 @@ This example demonstrates the most common use case: fitting Gaussian blobs with 
 
 ## Running the Example
 
-The complete example is available in `examples/basic_fitting.jl`:
+The complete example is available in `examples/basic_fitting.jl`. Run it from the repository root using the active project:
 
 ```bash
-julia --project=. examples/basic_fitting.jl
+julia --project examples/basic_fitting.jl
 ```
+
+The other short scripts use the same command with `scmos_camera.jl`, `gpu_acceleration.jl`, or `astigmatic_3d.jl`. They use `smld, info = fit(data, fitter)` and select devices with `backend`. The sCMOS example fits an `ROIBatch` with a calibrated camera; the GPU comparison needs functional CUDA or AMDGPU. When CUDA is unavailable, the GPU script loads AMDGPU if it is in the active environment.
 
 ## Step-by-Step Walkthrough
 
@@ -25,14 +27,14 @@ using Statistics
 # Create fitter with default settings
 # - GaussianXYNB(0.13f0): fixed PSF width of 130nm
 # - Auto backend selection (GPU if available)
-# - 20 Newton-Raphson iterations
+# - Levenberg-Marquardt fits that stop once converged (at most 100 pixel passes)
 fitter = GaussMLEConfig()
 
 # Or with explicit configuration
 fitter = GaussMLEConfig(
     psf_model = GaussianXYNB(0.13f0),  # sigma = 130nm in microns
     backend = :cpu,                      # Force CPU
-    iterations = 20
+    iterations = 100                     # cap on pixel passes (the default)
 )
 ```
 
@@ -131,7 +133,7 @@ Each emitter in `smld.emitters` is an `Emitter2DFitGaussMLE` containing:
 | `σ_xy` | Position covariance (off-diagonal of Fisher matrix inverse) | microns² |
 | `σ_photons` | Signal uncertainty | photons (IdealCamera), electrons (sCMOS) |
 | `σ_bg` | Background uncertainty | photons/pixel (IdealCamera), electrons/pixel (sCMOS) |
-| `pvalue` | Goodness-of-fit p-value (χ² test) | 0-1 |
+| `pvalue` | Goodness-of-fit p-value (Pearson χ² statistic, df = n_pixels - n_params) | 0-1 |
 | `frame` | Frame number | integer |
 | `dataset`, `track_id`, `id` | Metadata fields | integer |
 
@@ -242,7 +244,8 @@ The ROI should be large enough to capture the full PSF:
 ### Handling Edge Cases
 
 ```julia
-# Filter by finite position uncertainties and goodness-of-fit (not convergence)
+# Keep fits with finite position uncertainties (off the bounds, Fisher matrix invertible)
+# and an acceptable goodness of fit; info.n_converged counts the fits that converged
 good_emitters = filter(
     e -> isfinite(e.σ_x) && isfinite(e.σ_y) && e.pvalue > 0.01, smld.emitters
 )

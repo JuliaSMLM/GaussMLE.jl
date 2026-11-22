@@ -3,8 +3,7 @@ Basic GaussMLE fitting example
 Demonstrates the simplest workflow: fit Gaussian blobs with default settings
 """
 
-using Pkg
-Pkg.activate(@__DIR__)  # Activate examples environment
+# Run from the repository root: julia --project examples/basic_fitting.jl
 
 using GaussMLE
 using SMLMData
@@ -22,7 +21,7 @@ fitter = GaussMLEConfig()
 
 # Fit
 println("Fitting $(size(data, 3)) ROIs...")
-smld = fit(fitter, data)
+smld, info = fit(data, fitter)
 
 # Display results
 println("\n=== Results ===")

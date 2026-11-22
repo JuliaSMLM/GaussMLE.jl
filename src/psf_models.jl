@@ -9,6 +9,17 @@ Abstract type for point spread function models.
 
 The type parameter `NParams` specifies the number of fitting parameters at compile time,
 enabling type-stable code generation. The type parameter `T` specifies the numeric type.
+
+# Custom models
+Since 0.5 the kernel receives every model through `Adapt.adapt_structure`, on GPUs and on
+the CPU backend of KernelAbstractions 0.10 (POCL), so a model defined outside this package
+must be `isbits` after Adapt there (the CPU backend of KernelAbstractions 0.9 does not
+require it):
+numbers, `SVector`s, and arrays that `Adapt.adapt_structure` converts to device arrays, with
+any host-only field (a callable, a heap array) dropped there, as `SplinePSFModel` drops its
+point PSF. `simple_initialize` must return an `SVector`, not an `MVector`. A model that is
+not `isbits` after Adapt fails with a `GPUCompiler.KernelError` ("passing non-bitstype
+argument").
 """
 abstract type PSFModel{NParams, T} end
 
@@ -163,6 +174,14 @@ const Params{N} = SVector{N, Float32}
 Base.length(::Type{<:PSFModel{N, T}}) where {N, T} = N
 Base.length(::PSFModel{N, T}) where {N, T} = N
 
+# Gaussian models contain only scalars. Tabulated models specialize these host helpers.
+_prepare_psf_model(backend, model::PSFModel) = model
+_psf_table_bytes(::PSFModel) = 0
+
+# Whether parameter 3 is axial position (x, y, z, N, bg ordering).
+_has_axial_position(::Type{<:PSFModel}) = false
+_has_axial_position(::Type{<:AstigmaticXYZNB}) = true
+
 # PSF evaluation interface
 
 # Fixed sigma model
@@ -205,75 +224,6 @@ end
 end
 
 # Note: compute_pixel_derivatives is implemented in psf_derivatives.jl for each model type
-
-# Parameter initialization based on data
-function initialize_parameters(roi::AbstractMatrix{T}, psf::GaussianXYNB) where {T}
-    box_size = size(roi, 1)
-    center = (box_size + 1) / 2
-
-    # Simple COM initialization
-    total = sum(roi)
-    bg = minimum(roi)
-    signal = roi .- bg
-
-    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
-    N = sum(signal)
-
-    return Params{4}(T(x), T(y), T(N), T(bg))
-end
-
-function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBS) where {T}
-    box_size = size(roi, 1)
-    center = (box_size + 1) / 2
-
-    total = sum(roi)
-    bg = minimum(roi)
-    signal = roi .- bg
-
-    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
-    N = sum(signal)
-    σ = T(1.3)  # Default starting value
-
-    return Params{5}(T(x), T(y), T(N), T(bg), σ)
-end
-
-function initialize_parameters(roi::AbstractMatrix{T}, ::GaussianXYNBSXSY) where {T}
-    box_size = size(roi, 1)
-    center = (box_size + 1) / 2
-
-    total = sum(roi)
-    bg = minimum(roi)
-    signal = roi .- bg
-
-    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
-    N = sum(signal)
-    σx = T(1.3)
-    σy = T(1.3)
-
-    return Params{6}(T(x), T(y), T(N), T(bg), σx, σy)
-end
-
-function initialize_parameters(roi::AbstractMatrix{T}, psf::AstigmaticXYZNB) where {T}
-    box_size = size(roi, 1)
-    center = (box_size + 1) / 2
-
-    total = sum(roi)
-    bg = minimum(roi)
-    signal = roi .- bg
-
-    y = sum((1:box_size) .* sum(signal, dims = 2)[:]) / sum(signal)
-    x = sum((1:box_size) .* sum(signal, dims = 1)[:]) / sum(signal)
-    N = sum(signal)
-
-    # Initialize z to zero - with proper gamma parameter, this is not a local minimum
-    # The focal planes are separated by 2γ, so z=0 is a good starting point
-    z = T(0)
-
-    return Params{5}(T(x), T(y), z, T(N), T(bg))
-end
 
 # Pretty printing for PSF models
 Base.show(io::IO, psf::GaussianXYNB) = print(io, "GaussianXYNB(σ=$(psf.σ))")

@@ -14,7 +14,16 @@ const PKG = getfield(@__MODULE__, PKGNAME)
     # Opt-out, piracy: fit(::ROIBatch) is GaussMLE's data-first API (v0.4). StatsAPI.fit is
     # the shared verb and ROIBatch is SMLMData's shared ROI type, so GaussMLE owns this
     # method by design.
-    Aqua.test_all(PKG; piracies = (treat_as_own = [PKG.ROIBatch],))
+    # Opt-out, persistent tasks: Aqua 0.8.18 builds this check's manifest from each
+    # dependency's Project.toml. CUDA_Runtime_jll 0.25 omits CUDA_Compiler_jll there,
+    # although its wrappers load it and General lists the dependency. Loading CUDA 6.5
+    # in that environment fails for any package with
+    # "Cannot load CUDA_Compiler_jll into CUDA_Runtime_jll". Re-enable when either
+    # Aqua's manifest construction or CUDA_Runtime_jll's metadata is fixed.
+    # Loading GaussMLE is still covered by every other group.
+    Aqua.test_all(
+        PKG; piracies = (treat_as_own = [PKG.ROIBatch],), persistent_tasks = false,
+    )
     # Opt-out: switch off one check and state the reason beside it, e.g.
     #   Aqua.test_all(PKG; ambiguities=false)
     #   # reason: ambiguities come from ForwardDiff's Dual methods

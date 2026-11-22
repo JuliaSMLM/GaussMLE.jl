@@ -23,7 +23,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynb, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -49,7 +49,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynbs, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -77,7 +77,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynbsxsy, psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.3f0,
                 verbose = verbose
             )
@@ -119,7 +119,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = validate_roibatch_fitting(
                 psf_model, n_test_blobs;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 n_photons = 2000.0f0,  # Higher SNR needed for reliable z-fitting
                 background = 1.0f0,     # Lower background improves SNR
                 verbose = verbose
@@ -148,7 +148,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;  # Fewer spots for speed
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 n_photons = 200.0f0,
                 background = 5.0f0,  # Realistic background level
                 sigma = 1.3f0,
@@ -165,7 +165,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 n_photons = 5000.0f0,
                 background = 20.0f0,
                 sigma = 1.3f0,
@@ -186,7 +186,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 1.0f0,
                 verbose = verbose
             )
@@ -201,7 +201,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             passed, results = run_model_validation(
                 :xynb, psf_model, 500;
                 box_size = box_size,
-                device = GaussMLE.CPU(),
+                backend = :cpu,
                 sigma = 2.0f0,
                 verbose = verbose
             )
@@ -258,7 +258,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
         # Fit with sCMOS model via ROIBatch
         fitter = GaussMLE.GaussMLEConfig(
             psf_model = psf_model,
-            device = GaussMLE.CPU()
+            backend = :cpu
         )
 
         smld, _info = GaussMLE.fit(batch, fitter)
@@ -321,7 +321,7 @@ Tests that fitted values and uncertainties match expectations within tolerance
             end
 
             # Fit
-            fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, device = GaussMLE.CPU())
+            fitter = GaussMLE.GaussMLEConfig(psf_model = psf_model, backend = :cpu)
             smld, _info = GaussMLE.fit(data, fitter)
 
             # Check that fitting doesn't fail catastrophically
