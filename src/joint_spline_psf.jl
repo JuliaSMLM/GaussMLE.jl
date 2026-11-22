@@ -56,7 +56,8 @@ sensor). Both batches must use the same camera type (`IdealCamera` or `SCMOSCame
 each camera's pixel edges must be evenly spaced.
 
 The corners enter the fit: they and the registration say where the emitter of ROI 1 lies
-in ROI 2. Each ROI must contain its emitter's position in its image. A pair whose corners
+in ROI 2. Each ROI must contain its emitter's position in its image; that is the caller's
+to ensure, and `fit` checks only that the two ROIs of a pair overlap. A pair whose corners
 are wrong is a wrong fit, and beyond that requirement `fit` cannot tell it from a valid
 pair by the corners alone:
 
@@ -69,7 +70,8 @@ pair by the corners alone:
   at least 5 pairs is beyond that, or single pairs are beyond 1.5 times that; pairs with a
   ROI at a sensor edge, which sits inward of its emitter, are not counted. A wrong
   registration, swapped batches and a crop with the wrong origin give this warning when
-  they are not refused and move the ROIs beyond that limit; a smaller error gives none. So
+  they are not refused and move the ROIs beyond that limit; a smaller error, such as a crop
+  origin one pixel off, can give none. So
   do valid pairs placed another way, such as on the brightest pixel of a PSF whose peak is
   off its emitter.
 - Reported: every pair's offset, in `smld.metadata["pair_offsets_px"]` (2 × n, x and y in
@@ -84,8 +86,8 @@ pair by the corners alone:
 An image with zero transmission holds no light of the emitter: its table need not reach
 the box and its ROI is not judged for a cut-off PSF. If it is the second image, its ROI may
 lie anywhere on its camera and the pair is neither refused nor warned about. The reference
-ROI is judged whatever its transmission, because the fitted position is in its pixels and
-within its box.
+ROI is judged whatever its transmission, because the fitted position is expressed in its
+pixels and bounded near its box (the default bounds reach about a pixel beyond it).
 
 A ROI 2 that is a pixel or two from where it should be is fitted as given, with finite
 uncertainties and a wrong position. The p-value shows a large error of this kind, but at a
@@ -312,7 +314,7 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
     offsets = Matrix{Float32}(undef, 2, length(batch1.x_corners))
     # a second image with zero transmission holds no light of the emitter: where its ROI
     # lies says nothing about the pair. The reference ROI is judged whatever its
-    # transmission: the fitted position is in its pixels, within its box.
+    # transmission: the fitted position is in its pixels, bounded near its box.
     lit = model.transmission[2] > 0
     dx = Float64[]  # offsets of the pairs away from the sensor edges
     dy = Float64[]

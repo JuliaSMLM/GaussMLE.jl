@@ -291,7 +291,8 @@ both images before transmission and `bg` the reference image's background, then 
 
 The corners are part of the fit, not only of the output: with the registration they say
 where the emitter of the first ROI lies in the second. Each ROI must contain its emitter's
-position in its image. A pair with wrong corners is a wrong fit, and beyond that
+position in its image; that is the caller's to ensure, and `fit` checks only that the two
+ROIs of a pair overlap. A pair with wrong corners is a wrong fit, and beyond that
 requirement its corners alone cannot show it.
 
 `fit` refuses, with an `ArgumentError`:
@@ -310,8 +311,8 @@ The warning comes when the median over at least 5 pairs is beyond that, or singl
 beyond 1.5 times that. Pairs with a ROI at a sensor edge are not counted: a box finder
 moves such a ROI inward of its emitter. A registration that does not match the cameras,
 swapped batches and a crop with the wrong origin give this warning when they are not
-refused and move the ROIs beyond that limit; an error of a pixel gives none, so silence is
-not a confirmation. Valid pairs placed another way give the warning too, for example ROIs
+refused and move the ROIs beyond that limit; a smaller error, such as a crop origin one
+pixel off, can give none, so silence is not a confirmation. Valid pairs placed another way give the warning too, for example ROIs
 centred on the brightest pixel of a PSF whose peak is off its emitter, which is why it is a
 warning.
 
@@ -329,8 +330,8 @@ an emitter in the outermost pixels of a sensor.
 An image with zero transmission holds no light of the emitter. Its table need not reach the
 box, and its ROI is not judged for a cut-off PSF. If it is the second image, its ROI may lie
 anywhere on its camera, and the pair is neither refused nor warned about. The reference ROI
-is judged whatever its transmission, because the fitted position is in its pixels and
-within its box.
+is judged whatever its transmission, because the fitted position is expressed in its pixels
+and bounded near its box (the default bounds reach about a pixel beyond it).
 
 With `starts = 1` the fit relies on the z scan of its start alone. Where two z, one on each
 side of focus, fit the start almost equally well, the scan can take the wrong one and the
