@@ -67,13 +67,16 @@ sizes and equal frame indices, else `ArgumentError`. `batch1` is the channel
 `mc.reference` of the model's `MultiChannelPSF`, whichever index it has. Each batch's
 corners place its ROIs on its own camera, whose calibration applies to its pixels; both
 cameras must be of one type (`IdealCamera` or `SCMOSCamera`) with evenly spaced pixel
-edges. The corners enter the fit, so every ROI must lie on its camera and the pairs must
-follow the model's registration (see [`JointSplinePSFModel`](@ref) for what is refused and
-what is warned about). A fit whose PSF table does not reach every pixel of its ROIs reports
-infinite uncertainties.
+edges. The corners enter the fit, so every ROI must lie on its camera and contain its
+emitter's position, and the pairs must follow the model's registration (see
+[`JointSplinePSFModel`](@ref) for what is refused and what is warned about). A fit whose
+PSF table does not reach every pixel of a ROI that receives light reports infinite
+uncertainties; an image with zero transmission takes no part in these checks.
 
 Returns a `BasicSMLD` of [`Emitter3DFitJoint`](@ref) on `batch1`'s camera, positions in its
-microns, and the fit information (`n_fits` counts pairs).
+microns, and the fit information (`n_fits` counts pairs). `smld.metadata["pair_offsets_px"]`
+holds every pair's offset (2 × n, x and y in camera-2 pixels): the centre of ROI 1 mapped
+to camera 2, minus the centre of ROI 2.
 """
 function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
     t0 = time_ns()
@@ -103,7 +106,7 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
                 "$(nameof(typeof(batch2.camera))); use one camera type"
         )
     )
-    _validate_pair_geometry(model, batch1, batch2)
+    pair_offsets = _validate_pair_geometry(model, batch1, batch2)
     data1, map1 = _joint_view_data(batch1, 1)
     data2, map2 = _joint_view_data(batch2, 2)
 
@@ -154,7 +157,8 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
         elapsed_s, actual_backend, device_id, n_fits, count(!iszero, converged),
         actual_batch_size, actual_n_batches, memory_per_batch
     )
-    return (to_smld(loc_result, batch1), info)
+    metadata = Dict{String, Any}("pair_offsets_px" => pair_offsets)
+    return (to_smld(loc_result, batch1; metadata), info)
 end
 
 """

@@ -151,7 +151,7 @@ else
             warn = Base.CoreLogging.Warn
             @test_logs min_level = warn fit((b1, b2), fitter)
             # swapped batches: the ROIs still overlap here, 6 pixels apart in y
-            @test_logs (:warn, r"a median .* batch1 is not the reference channel's ROIs") match_mode = :any fit(
+            @test_logs (:warn, r"a median .* which batch is the reference channel's") match_mode = :any fit(
                 (b2, b1), fitter
             )
             @test_logs (:warn, r"a median -4") match_mode = :any fit(
@@ -169,6 +169,13 @@ else
                 got[] = fit((b1, view2(xs)), fitter)
             )
             @test all(e -> isfinite(e.σ_x) && isfinite(e.σ_bg2), got[][1].emitters)
+            # every pair's offset (centre of ROI 1 mapped to camera 2, minus the centre of
+            # ROI 2, in camera-2 pixels) is in the result, for a limit of the caller's own
+            off = got[][1].metadata["pair_offsets_px"]
+            valid = fit((b1, b2), fitter)[1].metadata["pair_offsets_px"]
+            @test size(off) == (2, n)
+            @test off[1, k] ≈ valid[1, k] - 4 && off[2, k] == valid[2, k]
+            @test all(abs.(valid) .< 2)
             @test_logs (:warn, r"in 4 of the 4 pairs") match_mode = :any fit(
                 (
                     sub(b1, four),
@@ -193,6 +200,9 @@ else
                 Float32.(16384 .+ (0:64) .* 0.1), Float32.(joint_edges(1, 128, 0.1))
             )
             @test GaussMLE._uniform_pixel_grid(far32, 1)[2][1] ≈ 0.1 rtol = 1.0e-4
+            # and edges of an exact type are judged as they are
+            exact = IdealCamera([i // 10 for i in 0:64], [i // 10 for i in 0:128])
+            @test GaussMLE._uniform_pixel_grid(exact, 1)[2][1] ≈ 0.1
             # A gain that is not finite and positive, and counts that are not finite after
             # the camera calibration
             scmos_pair(gain2, offset2 = 0.0f0) = (
@@ -349,6 +359,19 @@ else
                 )
             )
             @test near(sd, td)
+            # nor does it matter where the dark image's ROI lies: ten columns away, where a
+            # lit ROI would be refused, the fits are the same
+            sd10, _ = fit(
+                (
+                    ROIBatch(Float32.(poisson_noise(mud[1])), cdk[1]..., fd, camL),
+                    ROIBatch(Float32.(poisson_noise(mud[2])), cdk[2][1] .+ Int32(10), cdk[2][2], fd, camR),
+                ),
+                GaussMLEConfig(
+                    psf_model = JointSplinePSFModel(mcd; pixel_size = 0.1, lateral_range = 0.65),
+                    backend = :cpu
+                )
+            )
+            @test near(sd10, td)
 
             # One pixel size per camera serves the tables, the registration and the output.
             # Float32 edges far from zero make the first pixel's width differ from the mean
@@ -409,6 +432,44 @@ else
                     box, pm, cx, cy
                 )[3]
                 @test zstart(1.0f9) == zstart(5.0f0)
+            end
+        end
+
+        @testset "z start on a bright background" begin
+            # With the lit image's background far above the emitter's signal, the scan must
+            # still rank z as the likelihood does. A Float32 sum of r log(μ) - μ, or of its
+            # excess over the background's, loses the differences between z there; the
+            # deviance form keeps them. Compared with the same scan summed in Float64.
+            mcb = MultiChannelPSF(;
+                channels = [spline, spline], registration = [I23, reg],
+                transmission = [1.0, 0.0]
+            )
+            pm = GaussMLE._model_for_cameras(
+                JointSplinePSFModel(mcb; pixel_size = 0.1), cam1, cam2
+            )
+            zlo, zhi = pm.z_range
+            nz = max(2, ceil(Int, (zhi - zlo) / GaussMLE.SPLINE_Z_SCAN_STEP) + 1)
+            zgrid = [zlo + (zhi - zlo) * Float32(k) / Float32(nz - 1) for k in 0:(nz - 1)]
+            for zt in (-0.17, -0.11, 0.11, 0.17)
+                mub, cb = joint_expected(
+                    mcb, (cam1, cam2), [(3.25, 6.05, zt)];
+                    photons = 400.0, bgs = (5000.0, 1.0), box
+                )
+                roi = (mub[1][:, :, 1], mub[2][:, :, 1])
+                cx = (cb[1][1][1], cb[2][1][1])
+                cy = (cb[1][2][1], cb[2][2][1])
+                θ = GaussMLE._fit_start(roi, box, pm, cx, cy)
+                score(z) = sum(
+                    begin
+                        μ = Float64(
+                            GaussMLE.evaluate_psf(
+                                pm.views[1], i, j, SVector{5, Float32}(θ[1], θ[2], z, θ[4], θ[5])
+                            )
+                        )
+                        Float64(roi[1][i, j]) * log(μ) - μ
+                    end for j in 1:box, i in 1:box
+                )
+                @test θ[3] == zgrid[argmax(score.(zgrid))]
             end
         end
 

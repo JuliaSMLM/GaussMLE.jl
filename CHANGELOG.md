@@ -89,8 +89,10 @@ uncertainties and p-values of every model change.
   maps entirely outside its second, unevenly spaced pixel edges, an sCMOS gain that is not
   finite and positive, and counts that are not finite after calibration are refused. Pairs
   whose second ROIs are farther from where the registration puts the first than ROIs placed
-  on their emitters can be give a warning and are fitted as given. A fit whose PSF table
-  does not reach every pixel of its ROIs reports infinite uncertainties. One pixel size per
+  on their emitters can be give a warning and are fitted as given, and every pair's offset
+  is in `smld.metadata["pair_offsets_px"]`. A fit whose PSF table does not reach every pixel
+  of a ROI that receives light reports infinite uncertainties; an image with zero
+  transmission takes no part in these checks. One pixel size per
   camera, the mean over the sensor, serves the tables, the registration and the output
   positions. The likelihood, Levenberg-Marquardt fit, stop test, z starts, CRLB and p-value
   are `SplinePSFModel`'s, over both images; CPU, CUDA and AMDGPU.

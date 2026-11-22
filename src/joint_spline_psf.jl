@@ -56,25 +56,32 @@ sensor). Both batches must use the same camera type (`IdealCamera` or `SCMOSCame
 each camera's pixel edges must be evenly spaced.
 
 The corners enter the fit: they and the registration say where the emitter of ROI 1 lies
-in ROI 2. A pair whose corners are wrong is therefore a wrong fit, and `fit` cannot tell it
-from a valid pair by the corners alone unless the pair is impossible:
+in ROI 2. Each ROI must contain its emitter's position in its image. A pair whose corners
+are wrong is a wrong fit, and beyond that requirement `fit` cannot tell it from a valid
+pair by the corners alone:
 
 - Refused: a ROI that does not lie on its camera, and a pair whose ROI 1 the registration
-  maps entirely outside its ROI 2 (the emitter cannot be in both).
+  maps entirely outside its ROI 2, so that no position is in both.
 - Warned about, and fitted unchanged: pairs whose ROI 2 is farther from where the
   registration puts ROI 1 than two ROIs each placed on the pixel that holds the emitter can
   be (one camera-1 pixel mapped to camera 2 plus one camera-2 pixel, per axis, between the
   mapped centre of ROI 1 and the centre of ROI 2). The warning comes when the median over
   at least 5 pairs is beyond that, or single pairs are beyond 1.5 times that; pairs with a
-  ROI at a sensor edge, which sits inward of its emitter, are not counted. Swapped batches,
-  corners left at 1 and a crop with the wrong origin give this warning when they are not
-  refused. So do valid pairs placed another way, such as on the brightest pixel of a PSF
-  whose peak is off its emitter.
+  ROI at a sensor edge, which sits inward of its emitter, are not counted. A wrong
+  registration, swapped batches and a crop with the wrong origin give this warning when
+  they are not refused. So do valid pairs placed another way, such as on the brightest
+  pixel of a PSF whose peak is off its emitter.
+- Reported: every pair's offset, in `smld.metadata["pair_offsets_px"]` (2 × n, x and y in
+  camera-2 pixels: the centre of ROI 1 mapped to camera 2, minus the centre of ROI 2), so a
+  caller who knows how the ROIs were placed can apply a limit of its own.
 - Fitted, with infinite uncertainties, as a fit on a position bound is: a fit whose emitter
   ends so far from a ROI's centre, in an image that receives light, that some pixel of
   that ROI is beyond the image's table (zero beyond `lateral_range` plus about one pixel).
   With a box as wide as the table reaches, that includes an emitter in the outermost
   pixels of a sensor.
+
+An image with zero transmission holds no light of the emitter: its ROI may lie anywhere on
+its camera, its table need not reach the box, and it is left out of all of the above.
 
 A ROI 2 that is a pixel or two from where it should be is fitted as given, with finite
 uncertainties and a wrong position. The p-value shows a large error of this kind, but at a
@@ -91,8 +98,8 @@ variance for `SCMOSCamera`. The fit is the same Levenberg-Marquardt fit on the f
 Fisher matrix with the same stop test and the same z starts. The start uses both images:
 edge backgrounds, the two centroids weighted by transmission times signal (an image with
 zero transmission sets only its own background), and a z scan of the Poisson likelihood of
-both images (for sCMOS too, as for `SplinePSFModel`; the fit itself uses the sCMOS
-likelihood). Uncertainties are the CRLB from the inverse Fisher matrix, and the p-value is
+the images that receive light (for sCMOS too, as for `SplinePSFModel`; the fit itself uses
+the sCMOS likelihood). Uncertainties are the CRLB from the inverse Fisher matrix, and the p-value is
 the Pearson statistic over both images' pixels against χ² with `2 * box^2 - 6` degrees of
 freedom (all six parameters counted, also when bounds hold some fixed, as for every model).
 CPU, CUDA and AMDGPU.
@@ -198,7 +205,7 @@ function _uniform_pixel_grid(camera, view::Int)
             ArgumentError("view $view's camera has no positive finite $name pixel size")
         )
         # an edge is stored to the precision of its type at its magnitude
-        tol = 0.01 * p + Float64(eps(max(abs(first(edges)), abs(last(edges)))))
+        tol = 0.01 * p + Float64(eps(float(max(abs(first(edges)), abs(last(edges))))))
         for (k, edge) in enumerate(edges)
             abs(Float64(edge) - (e + (k - 1) * p)) <= tol || throw(
                 ArgumentError(
@@ -257,10 +264,11 @@ end
 # data, from the offset of each pair: the centre of ROI 1 mapped to camera 2, minus the
 # centre of ROI 2.
 #
-# Refused, because no valid pair is like this:
+# Refused:
 # - a ROI that does not lie on its own camera, for both camera types;
-# - a pair whose ROI 1 maps entirely outside its ROI 2 (`_rois_overlap`): the emitter
-#   cannot be in both.
+# - a pair whose ROI 1 maps entirely outside its ROI 2 (`_rois_overlap`): no position is in
+#   both, and `fit` requires each ROI to contain its emitter's position in its image.
+#   Footprints within 1e-9 of their reach of touching count as touching.
 #
 # Warned about, because a valid pair can be like this and the corners cannot tell:
 # - a median offset, over at least JOINT_MEDIAN_MIN_PAIRS pairs, beyond one camera-1 pixel
@@ -273,7 +281,10 @@ end
 # ROIs placed some other way (on a brightest pixel of a PSF whose peak is off its emitter,
 # say) also give such offsets and are fitted correctly, so the fit continues and no result
 # is changed. A ROI that touches a sensor edge sits inward of its emitter, as a box finder
-# places it, by up to half a box; pairs with such a ROI are left out of both counts.
+# places it, by up to half a box; pairs with such a ROI are left out of both counts. With an
+# image of zero transmission nothing is judged: its ROI holds no light of the emitter.
+# Returns every pair's offset (2 x n, x and y in camera-2 pixels), which `fit` puts in the
+# result's metadata so a caller can apply a limit of its own.
 function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, batch2::ROIBatch)
     box = size(batch1.data, 1)
     for (v, b) in ((1, batch1), (2, batch2))
@@ -291,6 +302,10 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
         length(batch2.camera.pixel_edges_x) - box, length(batch2.camera.pixel_edges_y) - box
     )
     tol = row .+ 1.0 .+ 1.0e-6
+    offsets = Matrix{Float32}(undef, 2, length(batch1.x_corners))
+    # an image with zero transmission holds no light of the emitter: where its ROI lies
+    # says nothing about the pair
+    lit = model.transmission[1] > 0 && model.transmission[2] > 0
     dx = Float64[]  # offsets of the pairs away from the sensor edges
     dy = Float64[]
     far, first_far = 0, 0
@@ -298,14 +313,18 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
         k1 = SVector(Int(batch1.x_corners[k]), Int(batch1.y_corners[k]))
         k2 = SVector(Int(batch2.x_corners[k]), Int(batch2.y_corners[k]))
         d = A_px * (k1 .- 1 .+ centre) + t_px - (k2 .- 1 .+ centre)
+        offsets[1, k], offsets[2, k] = d[1], d[2]
+        lit || continue
         _rois_overlap(A_px, d, box) || throw(
             ArgumentError(
                 "pair $k: the registration maps ROI 1 (corner x = $(k1[1]), y = $(k1[2])) " *
                     "entirely outside ROI 2 (corner x = $(k2[1]), y = $(k2[2])): its " *
                     "centre lands $(round(d[1]; digits = 1)) px in x and " *
-                    "$(round(d[2]; digits = 1)) px in y from ROI 2's centre. batch1 must " *
-                    "be the reference channel's ROIs, and each batch's corners must place " *
-                    "its ROIs on its own camera."
+                    "$(round(d[2]; digits = 1)) px in y from ROI 2's centre, so no " *
+                    "position is in both ROIs. Each ROI must contain its emitter's " *
+                    "position in its image. batch1 must be the reference channel's ROIs, " *
+                    "each batch's corners must place its ROIs on its own camera, and the " *
+                    "registration must be the one between these cameras."
             )
         )
         (any(k1 .== 1) || any(k1 .== last1) || any(k2 .== 1) || any(k2 .== last2)) &&
@@ -320,9 +339,10 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
     n = length(dx)
     advice = "ROIs each placed on the pixel that holds their emitter stay within " *
         "$(round(tol[1]; digits = 2)) px in x and $(round(tol[2]; digits = 2)) px in y. " *
-        "If these were placed that way, batch1 is not the reference channel's ROIs or " *
-        "the corners do not place the ROIs on their cameras, and the fitted positions " *
-        "are wrong. The fit continues."
+        "Check the registration against these cameras, which batch is the reference " *
+        "channel's, the order of the pairs, each batch's corners (a crop's origin) and " *
+        "how the ROIs were placed. The pairs are fitted as given; " *
+        "smld.metadata[\"pair_offsets_px\"] holds every pair's offset."
     if n >= JOINT_MEDIAN_MIN_PAIRS &&
             (abs(_median(dx)) > tol[1] || abs(_median(dy)) > tol[2])
         @warn "JointSplinePSFModel: the registration puts the centres of ROI 1 a median " *
@@ -335,7 +355,7 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
             "more than $(round(1.5 * tol[1]; digits = 2)) px in x or " *
             "$(round(1.5 * tol[2]; digits = 2)) px in y from the centre of ROI 2. " * advice
     end
-    return nothing
+    return offsets
 end
 
 # Whether `view`'s table reaches every pixel of a box x box ROI for an emitter at ROI
@@ -397,9 +417,12 @@ _prepare_psf_model(backend, model::JointSplinePSFModel) = Adapt.adapt(backend, m
 _psf_table_bytes(model::JointSplinePSFModel) =
     _psf_table_bytes(model.views[1]) + _psf_table_bytes(model.views[2])
 
-function _validate_psf_box(model::JointSplinePSFModel, box_size::Integer)
-    _validate_psf_box(model.views[1], box_size)
-    _validate_psf_box(model.views[2], box_size)
+# An image with zero transmission has no PSF in the fit (its expected count is its
+# background), so its table need not reach the box.
+function _validate_psf_box(model::JointSplinePSFModel{T}, box_size::Integer) where {T}
+    for v in 1:2
+        model.transmission[v] > zero(T) && _validate_psf_box(model.views[v], box_size)
+    end
     return nothing
 end
 
@@ -577,10 +600,12 @@ end
     return _joint_z_scan(roi, box_size, model, o, x, y, N, bg1, bg2)
 end
 
-# The scan ranks z by the Poisson log-likelihood less its value for the background alone,
-# r log(μ / b) - (μ - b) per pixel. The part left out is the same at every z; kept in, a
-# large background would use up the Float32 sum's digits and hide the differences between
-# z, and an image with zero transmission (μ = b) would add nothing but that.
+# The scan ranks z by the Poisson log-likelihood of the images that receive light, each
+# pixel in the deviance form the fit itself climbs (`_fit_objective`): r log(μ) - μ less its
+# value at μ = r, which is the same at every z. The plain sum carries the background's
+# r log(r) - r in every pixel, which uses up the Float32 sum's digits and hides the
+# differences between z; an image with zero transmission (μ its background at every z)
+# would add nothing but that, so it is left out.
 @inline function _joint_z_scan(
         roi, box_size::Int, model::JointSplinePSFModel{T}, o, x, y, N, bg1, bg2
     ) where {T}
@@ -594,13 +619,14 @@ end
         θ = SVector{6, T}(x, y, z, N, b1, b2)
         ll = zero(T)
         for v in 1:2
-            vmodel, r, _, _, _, _, _, θv = _view_context(
+            vmodel, r, _, _, _, _, tr, θv = _view_context(
                 model, v, θ, o, roi, roi, (0, 0), (0, 0)
             )
-            b = θv[5]
-            @inbounds for j in 1:box_size, i in 1:box_size
-                μ = evaluate_psf(vmodel, i, j, θv)
-                ll += T(r[i, j]) * log(μ / b) - (μ - b)
+            if tr > zero(T)
+                @inbounds for j in 1:box_size, i in 1:box_size
+                    μ = evaluate_psf(vmodel, i, j, θv)
+                    ll += _fit_objective(T(r[i, j]), μ, zero(T))
+                end
             end
         end
         if ll > best_ll

@@ -290,14 +290,15 @@ both images before transmission and `bg` the reference image's background, then 
 `σ_bg2`.
 
 The corners are part of the fit, not only of the output: with the registration they say
-where the emitter of the first ROI lies in the second. A pair with wrong corners is
-therefore a wrong fit, and its corners alone cannot show that unless the pair is impossible.
+where the emitter of the first ROI lies in the second. Each ROI must contain its emitter's
+position in its image. A pair with wrong corners is a wrong fit, and beyond that
+requirement its corners alone cannot show it.
 
-`fit` refuses, with an `ArgumentError`, what no valid input is:
+`fit` refuses, with an `ArgumentError`:
 
 - a ROI that does not lie on its camera (for an `IdealCamera` too);
-- a pair whose first ROI the registration maps entirely outside its second ROI: the emitter
-  cannot be in both;
+- a pair whose first ROI the registration maps entirely outside its second ROI, so that no
+  position is in both;
 - a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
   positive, and counts that are not finite after the camera calibration.
 
@@ -307,16 +308,25 @@ emitter can be: one first-camera pixel mapped to the second camera plus one seco
 pixel, per axis, between the mapped centre of the first ROI and the centre of the second.
 The warning comes when the median over at least 5 pairs is beyond that, or single pairs are
 beyond 1.5 times that. Pairs with a ROI at a sensor edge are not counted: a box finder
-moves such a ROI inward of its emitter. Swapped batches, corners left at 1 and a crop with
-the wrong origin give this warning when they are not refused. Valid pairs placed another
-way give it too, for example ROIs centred on the brightest pixel of a PSF whose peak is off
-its emitter, which is why it is a warning.
+moves such a ROI inward of its emitter. A registration that does not match the cameras,
+swapped batches and a crop with the wrong origin give this warning when they are not
+refused. Valid pairs placed another way give it too, for example ROIs centred on the
+brightest pixel of a PSF whose peak is off its emitter, which is why it is a warning.
+
+Every pair's offset is in the result, as `smld.metadata["pair_offsets_px"]`: a 2 × n
+matrix, x and y in second-camera pixels, of the centre of the first ROI mapped to the
+second camera minus the centre of the second ROI. A caller who knows how the ROIs were
+placed can filter on it with a limit of its own.
 
 A fit reports infinite uncertainties, as a fit on a position bound does, when its emitter
 ends so far from a ROI's centre, in an image that receives light, that some pixel of that
 ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pixel): it
 was fitted with a PSF cut off there. With a box as wide as the table reaches, this includes
 an emitter in the outermost pixels of a sensor.
+
+An image with zero transmission holds no light of the emitter. Its ROI may lie anywhere on
+its camera, its table need not reach the box, and it takes no part in the refusal, the
+warning or the infinite uncertainties above.
 
 A second ROI that is a pixel or two from where it should be is fitted with finite
 uncertainties and a wrong position, and neither filter is sure to catch it. The p-value
