@@ -294,13 +294,23 @@ where the emitter of the first ROI lies in the second. `fit` refuses, with an
 `ArgumentError` that names the pair:
 
 - a ROI that does not lie on its camera (for an `IdealCamera` too);
-- a pair whose second ROI is not where the registration puts the first: the centre of the
-  first ROI, mapped to the second camera, must lie within rounding of the centre of the
-  second ROI (half a first-camera pixel mapped to the second camera, plus one second-camera
-  pixel, per axis). Swapped batches, corners left at 1 and a crop with the wrong origin
-  fail this check, unless the registration is close to the identity;
-- a camera whose pixel edges are not evenly spaced, and counts that are not finite after
-  the camera calibration.
+- a pair whose first ROI the registration maps entirely outside its second ROI;
+- for a batch of 5 pairs or more, a batch whose second ROIs are not where the registration
+  puts the first ones in the median over the pairs: the centre of the first ROI, mapped to
+  the second camera, within half a first-camera pixel mapped to the second camera plus one
+  second-camera pixel of the centre of the second ROI, per axis. Single pairs may be farther
+  off, as ROIs clamped at a sensor edge are, and are fitted. Swapped batches, corners left
+  at 1 and a crop with the wrong origin fail this check, unless the registration is close
+  to the identity;
+- a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
+  positive, and counts that are not finite after the camera calibration.
+
+A fit whose emitter ends so far from a ROI's centre, in either image, that some pixel of
+that ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pixel)
+was fitted with a PSF cut off there, and reports infinite uncertainties, as a fit on a
+position bound does. With ROIs centred on their emitters this does not happen; it can for
+an emitter within about a pixel of a sensor edge, or a second ROI placed a few pixels from
+where the registration puts the emitter.
 
 A camera that is a crop of a sensor must carry the crop's pixel edges
 (`IdealCamera(edges_x, edges_y)`); a camera built from a pixel range starts at 0 whatever

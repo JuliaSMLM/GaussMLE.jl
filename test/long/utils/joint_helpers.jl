@@ -24,8 +24,9 @@ joint_edges(first, count, px) = collect(((first - 1):(first - 1 + count)) .* px)
 
 # Expected counts `(mu1, mu2)` (box, box, n) and corners `((x1, y1), (x2, y2))` of the two
 # views of emitters at reference camera positions `truths` = [(X, Y, z), ...] in microns.
-# Each view's ROI is centred on the emitter's position in that view to the nearest pixel,
-# and its pixel edges are the camera's own, so a ROI off its camera is a BoundsError.
+# Each view's ROI is centred on the emitter's position in that view to the nearest pixel and
+# clamped to lie on the camera, as SMLMBoxer clamps ROIs at a sensor edge; its pixel edges
+# are the camera's own.
 function joint_expected(mc, cameras, truths; photons, bgs, box, sampling = 4)
     n = length(truths)
     mus = (zeros(Float32, box, box, n), zeros(Float32, box, box, n))
@@ -38,6 +39,8 @@ function joint_expected(mc, cameras, truths; photons, bgs, box, sampling = 4)
         py = cam.pixel_edges_y[2] - ey0
         cx = round(Int32, (Xv - ex0) / px - box / 2) + Int32(1)
         cy = round(Int32, (Yv - ey0) / py - box / 2) + Int32(1)
+        cx = clamp(cx, Int32(1), Int32(length(cam.pixel_edges_x) - box))
+        cy = clamp(cy, Int32(1), Int32(length(cam.pixel_edges_y) - box))
         corners[v][1][k], corners[v][2][k] = cx, cy
         ex = Float64.(cam.pixel_edges_x[cx:(cx + box)])
         ey = Float64.(cam.pixel_edges_y[cy:(cy + box)])

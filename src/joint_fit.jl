@@ -22,15 +22,22 @@ _joint_camera_kind(camera) = throw(ArgumentError("unsupported camera type $(type
 
 # View `view`'s data for the kernel, `(data, variance_map)`: raw counts for an IdealCamera
 # (Poisson; the map is unused), electrons and the read-noise variance map for an
-# SCMOSCamera (the ROIs lie on the camera: `_validate_pair_geometry`). The counts the
-# kernel gets must be finite: a calibration with a non-finite or zero gain, or a count
-# beyond Float32, would otherwise come back as a fit.
+# SCMOSCamera (the ROIs lie on the camera: `_validate_pair_geometry`). The gain must be
+# finite and positive (a zero gain makes every count zero), and the counts the kernel gets
+# must be finite: a non-finite offset, or a count beyond Float32, would otherwise come back
+# as a fit.
 function _joint_view_data(batch::ROIBatch, view::Int)
     data = batch.data
     validate_fit_input(data)
     box = size(data, 1)
     camera = batch.camera
     if camera isa SMLMData.SCMOSCamera
+        all(g -> isfinite(g) && g > zero(g), camera.gain) || throw(
+            ArgumentError(
+                "view $view: the camera gain must be finite and positive (e-/ADU) at " *
+                    "every pixel"
+            )
+        )
         variance_map = extract_variance_map(camera, Float32)
         electrons = to_electrons(data, camera, batch.x_corners, batch.y_corners)
         counts = convert(Array{Float32, 3}, electrons)
@@ -60,9 +67,9 @@ sizes and equal frame indices, else `ArgumentError`. `batch1` is the channel
 `mc.reference` of the model's `MultiChannelPSF`, whichever index it has. Each batch's
 corners place its ROIs on its own camera, whose calibration applies to its pixels; both
 cameras must be of one type (`IdealCamera` or `SCMOSCamera`) with evenly spaced pixel
-edges. The corners enter the fit, so every ROI must lie on its camera and ROI 2 must be
-where the model's registration puts ROI 1, to within rounding (see
-[`JointSplinePSFModel`](@ref)); a pair that is not is refused.
+edges. The corners enter the fit, so every ROI must lie on its camera and the pairs must
+follow the model's registration (see [`JointSplinePSFModel`](@ref) for the checks); a fit
+whose PSF table does not reach every pixel of its ROIs reports infinite uncertainties.
 
 Returns a `BasicSMLD` of [`Emitter3DFitJoint`](@ref) on `batch1`'s camera, positions in its
 microns, and the fit information (`n_fits` counts pairs).
@@ -125,6 +132,10 @@ function fit(batches::Tuple{ROIBatch, ROIBatch}, fitter::GaussMLEConfig)
         results, uncertainties, covariances, chi2,
         data, psf_pixels, scmos1, variance_maps, x_corners, y_corners,
         fitter; converged
+    )
+
+    _mark_uncovered_fits!(
+        uncertainties, covariances, results, psf_pixels, x_corners, y_corners, box_size
     )
 
     # Pearson statistic over both images' pixels

@@ -85,9 +85,12 @@ uncertainties and p-values of every model change.
   the identity. `fit((batch1, batch2), fitter)` takes one `ROIBatch` per image, each with its
   own camera, `batch1` from the reference channel, and returns a `BasicSMLD` of
   `Emitter3DFitJoint` (the fields of `Emitter3DFitGaussMLE`, then `bg2` and `σ_bg2`) with the
-  fit information. The corners enter the fit, so a ROI off its camera, a pair whose second
-  ROI is not where the registration puts the first, unevenly spaced pixel edges and counts
-  that are not finite after calibration are refused. The likelihood, Levenberg-Marquardt
+  fit information. The corners enter the fit, so a ROI off its camera, a pair whose first ROI
+  maps entirely outside its second, a batch whose pairs do not follow the registration (in
+  the median over 5 pairs or more), unevenly spaced pixel edges, an sCMOS gain that is not
+  finite and positive, and counts that are not finite after calibration are refused; a fit
+  whose PSF table does not reach every pixel of its ROIs reports infinite uncertainties.
+  The likelihood, Levenberg-Marquardt
   fit, stop test, z starts, CRLB and p-value are `SplinePSFModel`'s, over both images; CPU,
   CUDA and AMDGPU.
 - Constraints for a different number of parameters than the model has are refused with an

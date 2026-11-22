@@ -56,11 +56,16 @@ sensor). Both batches must use the same camera type (`IdealCamera` or `SCMOSCame
 each camera's pixel edges must be evenly spaced.
 
 The corners enter the fit: they and the registration say where the emitter of ROI 1 lies
-in ROI 2. `fit` therefore refuses a ROI that does not lie on its camera, and a pair whose
-ROI 2 is not where the registration puts ROI 1: the centre of ROI 1, mapped to camera 2,
-must lie within rounding of the centre of ROI 2 (half a camera-1 pixel mapped to camera 2,
-plus one camera-2 pixel, per axis). Swapped batches, corners left at 1 and a crop with the
-wrong origin are refused by this check unless the registration is close to the identity.
+in ROI 2. `fit` therefore refuses a ROI that does not lie on its camera; a pair whose ROI 1
+the registration maps entirely outside its ROI 2; and, for a batch of at least 5 pairs, a
+batch whose ROI 2 is not where the registration puts ROI 1 in the median over the pairs (the
+centre of ROI 1, mapped to camera 2, within half a camera-1 pixel mapped to camera 2 plus
+one camera-2 pixel of the centre of ROI 2, per axis). Single pairs may be farther off, as
+ROIs clamped at a sensor edge are: they are fitted. Swapped batches, corners left at 1 and
+a crop with the wrong origin are refused, unless the registration is close to the
+identity. A fit whose emitter ends so far from a ROI's centre, in either image, that some
+pixel of that ROI is beyond the image's table (zero beyond `lateral_range` plus about one
+pixel) reports infinite uncertainties, as a fit on a position bound does.
 
 The camera pixel sizes may differ from `pixel_size` and from each other: each view's table
 is integrated again on its camera's pixel grid, on every `fit` call for a view whose camera
@@ -75,7 +80,8 @@ zero transmission sets only its own background), and a z scan of the Poisson lik
 both images (for sCMOS too, as for `SplinePSFModel`; the fit itself uses the sCMOS
 likelihood). Uncertainties are the CRLB from the inverse Fisher matrix, and the p-value is
 the Pearson statistic over both images' pixels against χ² with `2 * box^2 - 6` degrees of
-freedom. CPU, CUDA and AMDGPU.
+freedom (all six parameters counted, also when bounds hold some fixed, as for every model).
+CPU, CUDA and AMDGPU.
 
 The result is a `BasicSMLD` of [`Emitter3DFitJoint`](@ref), positions in the reference
 view's camera microns.
@@ -187,13 +193,29 @@ function _uniform_pixel_grid(camera, view::Int)
     return SVector(ex, ey), SVector(px, py)
 end
 
-# Each pair's ROIs must lie on their own cameras, and ROI 2 must be where the registration
-# puts ROI 1: the corners enter the likelihood (`_joint_offset`), so a wrong pair is not an
-# output shift but a wrong fit. The centre of ROI 1 mapped to camera 2 must lie within
-# rounding of the centre of ROI 2 on each axis: half a camera-1 pixel mapped through A_px
-# (the emitter is within half a pixel of its ROI's centre pixel), half a camera-2 pixel
-# (ROI 2 centred to the nearest pixel), and half a pixel more for an even box, whose centre
-# lies between pixels.
+# Pairs needed before the median offset of a batch is judged (`_validate_pair_geometry`).
+const JOINT_MEDIAN_MIN_PAIRS = 5
+
+# The median of a vector of numbers (GaussMLE does not depend on Statistics).
+function _median(v::AbstractVector)
+    s = sort(v)
+    n = length(s)
+    return isodd(n) ? s[(n + 1) ÷ 2] : (s[n ÷ 2] + s[n ÷ 2 + 1]) / 2
+end
+
+# The corners enter the likelihood (`_joint_offset`), so a wrong pair is a wrong fit, not an
+# output shift. Checked here, before anything reads the data:
+# - every ROI lies on its own camera, for both camera types;
+# - for each pair, some point of ROI 1 maps into ROI 2 (else the emitter cannot be in both);
+# - for a batch of at least JOINT_MEDIAN_MIN_PAIRS pairs, the median over the pairs of the
+#   offset between the centre of ROI 1 mapped to camera 2 and the centre of ROI 2 is within
+#   rounding: half a camera-1 pixel mapped through A_px plus one camera-2 pixel, per axis.
+# A box finder that centres each ROI on its emitter gives offsets within rounding, but one
+# that clamps ROIs at a sensor edge, or centres them on a brightest pixel, gives some pairs
+# larger ones; those are valid, so no single pair is judged on its offset. Swapped batches,
+# corners left at 1, a crop with the wrong origin and a ROI 2 moved for every pair shift the
+# median. A pair whose emitter ends far from a ROI's centre is caught after the fit instead
+# (`_mark_uncovered_fits!`).
 function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, batch2::ROIBatch)
     box = size(batch1.data, 1)
     for (v, b) in ((1, batch1), (2, batch2))
@@ -201,27 +223,76 @@ function _validate_pair_geometry(model::JointSplinePSFModel, batch1::ROIBatch, b
         _validate_roi_corners(box, b.x_corners, b.y_corners, sensor; what = "view $v: ROI")
     end
     A_px, t_px = _pixel_registration(model, batch1.camera, batch2.camera)
-    tol = SVector(
-        0.5 * (abs(A_px[1, 1]) + abs(A_px[1, 2])) + 1.0 + 1.0e-6,
-        0.5 * (abs(A_px[2, 1]) + abs(A_px[2, 2])) + 1.0 + 1.0e-6,
-    )
-    half = (box - 1) / 2
-    for k in eachindex(batch1.x_corners)
-        c1 = SVector(batch1.x_corners[k] + half, batch1.y_corners[k] + half)
-        c2 = SVector(batch2.x_corners[k] + half, batch2.y_corners[k] + half)
+    row = SVector(abs(A_px[1, 1]) + abs(A_px[1, 2]), abs(A_px[2, 1]) + abs(A_px[2, 2]))
+    reach = (box / 2) .* row  # ROI 1's half-width mapped to camera 2, per axis
+    centre = (box + 1) / 2   # a ROI's centre in its own pixel coordinates
+    n = length(batch1.x_corners)
+    dx = Vector{Float64}(undef, n)
+    dy = Vector{Float64}(undef, n)
+    for k in 1:n
+        c1 = SVector(batch1.x_corners[k] - 1 + centre, batch1.y_corners[k] - 1 + centre)
+        c2 = SVector(batch2.x_corners[k] - 1 + centre, batch2.y_corners[k] - 1 + centre)
         d = A_px * c1 + t_px - c2
-        (abs(d[1]) <= tol[1] && abs(d[2]) <= tol[2]) || throw(
+        dx[k], dy[k] = d[1], d[2]
+        (abs(d[1]) <= box / 2 + reach[1] && abs(d[2]) <= box / 2 + reach[2]) || throw(
             ArgumentError(
-                "pair $k: the registration puts the centre of ROI 1 (corner x = " *
-                    "$(batch1.x_corners[k]), y = $(batch1.y_corners[k])) " *
-                    "$(round(d[1]; digits = 2)) px in x and $(round(d[2]; digits = 2)) " *
-                    "px in y from the centre of ROI 2 (corner x = $(batch2.x_corners[k]), " *
-                    "y = $(batch2.y_corners[k])), beyond the $(round(tol[1]; digits = 2)) " *
-                    "and $(round(tol[2]; digits = 2)) px that rounding allows. batch1 " *
-                    "must be the reference channel's ROIs, and each batch's corners must " *
-                    "place its ROIs on its own camera."
+                "pair $k: the registration maps ROI 1 (corner x = $(batch1.x_corners[k]), " *
+                    "y = $(batch1.y_corners[k])) entirely outside ROI 2 (corner x = " *
+                    "$(batch2.x_corners[k]), y = $(batch2.y_corners[k])): its centre lands " *
+                    "$(round(d[1]; digits = 1)) px in x and $(round(d[2]; digits = 1)) px " *
+                    "in y from ROI 2's centre. batch1 must be the reference channel's ROIs, " *
+                    "and each batch's corners must place its ROIs on its own camera."
             )
         )
+    end
+    n >= JOINT_MEDIAN_MIN_PAIRS || return nothing
+    m = SVector(_median(dx), _median(dy))
+    tol = 0.5 .* row .+ 1.0 .+ 1.0e-6
+    (abs(m[1]) <= tol[1] && abs(m[2]) <= tol[2]) || throw(
+        ArgumentError(
+            "the registration puts the centres of ROI 1 a median $(round(m[1]; digits = 2)) " *
+                "px in x and $(round(m[2]; digits = 2)) px in y from the centres of ROI 2 " *
+                "over the $n pairs, beyond the $(round(tol[1]; digits = 2)) and " *
+                "$(round(tol[2]; digits = 2)) px that rounding allows: the pairs do not " *
+                "follow the registration. batch1 must be the reference channel's ROIs, and " *
+                "each batch's corners must place its ROIs on its own camera."
+        )
+    )
+    return nothing
+end
+
+# Whether every pixel centre of a box x box ROI is within `view`'s table of the emitter at
+# ROI position p (x, y): the table is zero beyond its lateral radius on each axis.
+function _view_covers(view::SplinePSFModel, p::SVector{2, Float64}, box::Int)
+    rx, ry = view.pixel_psf.lateral_radius
+    px, py = view.pixel_size
+    far(c) = max(abs(1 - c), abs(box - c))
+    return far(p[1]) * px <= rx && far(p[2]) * py <= ry
+end
+
+# A fit whose emitter, in either image, ends so far from its ROI's centre that some pixel of
+# that ROI is beyond the image's table was fitted with a PSF cut off there (the table is
+# zero beyond lateral_range plus about one pixel). Its uncertainties are set to Inf and its
+# covariances to zero, as for a fit on a position bound, so the result is not mistaken for a
+# localization. With a ROI centred on its emitter this does not happen (the half-diagonal
+# check); it does for an emitter at a ROI's edge, as a ROI 2 placed a few pixels from where
+# the registration puts the emitter gives.
+function _mark_uncovered_fits!(
+        uncertainties::Matrix{Float32}, covariances::Matrix{Float32},
+        results::Matrix{Float32}, model::JointSplinePSFModel,
+        x_corners::AbstractMatrix, y_corners::AbstractMatrix, box::Int
+    )
+    A = SMatrix{2, 2, Float64}(model.A_px)
+    t = SVector{2, Float64}(model.t_px)
+    for k in axes(results, 2)
+        p1 = SVector{2, Float64}(results[1, k], results[2, k])
+        c1 = SVector{2, Float64}(x_corners[1, k] - 1, y_corners[1, k] - 1)
+        c2 = SVector{2, Float64}(x_corners[2, k] - 1, y_corners[2, k] - 1)
+        p2 = A * p1 + (A * c1 + t - c2)
+        if !(_view_covers(model.views[1], p1, box) && _view_covers(model.views[2], p2, box))
+            uncertainties[:, k] .= Inf32
+            covariances[:, k] .= 0.0f0
+        end
     end
     return nothing
 end

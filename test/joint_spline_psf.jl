@@ -122,19 +122,18 @@ else
             @test_throws "use one camera type" fit(
                 (b1, ROIBatch(b2.data, b2.x_corners, b2.y_corners, frames, scmos)), fitter
             )
-            # The corners enter the fit. ROI 2 must be where the registration puts ROI 1:
-            # swapped batches, corners left at 1 and a ROI 2 moved by 4 pixels are refused
+            # The corners enter the fit. The pairs must follow the registration: swapped
+            # batches, corners left at 1 and a ROI 2 moved by 4 pixels in every pair are
+            # refused (single pairs off by a few pixels are not: next testset)
             view2(xc, yc = b2.y_corners; camera = cam2) =
                 ROIBatch(b2.data, xc, yc, frames, camera)
-            @test_throws "pair 1: the registration puts" fit((b2, b1), fitter)
+            @test_throws "batch1 must be the reference channel's ROIs" fit((b2, b1), fitter)
             ones32 = fill(Int32(1), n)
-            @test_throws "pair 1: the registration puts" fit(
+            @test_throws "entirely outside ROI 2" fit(
                 (ROIBatch(b1.data, ones32, ones32, frames, cam1), view2(ones32, ones32)),
                 fitter
             )
-            @test_throws "pair 1: the registration puts" fit(
-                (b1, view2(b2.x_corners .+ Int32(4))), fitter
-            )
+            @test_throws "a median -4" fit((b1, view2(b2.x_corners .+ Int32(4))), fitter)
             # Every ROI lies on its own camera, for an IdealCamera too
             @test_throws "view 2: ROI" fit((b1, view2(b2.x_corners .+ Int32(60))), fitter)
             # Pixel edges that are not evenly spaced (one column 0.05 um wider)
@@ -144,8 +143,9 @@ else
             @test_throws "unevenly spaced x pixel edges" fit(
                 (b1, view2(b2.x_corners; camera = uneven)), fitter
             )
-            # Counts that are not finite after the camera calibration
-            scmos_pair(gain2) = (
+            # A gain that is not finite and positive, and counts that are not finite after
+            # the camera calibration
+            scmos_pair(gain2, offset2 = 0.0f0) = (
                 ROIBatch(
                     b1.data, b1.x_corners, b1.y_corners, frames,
                     SCMOSCamera(
@@ -158,12 +158,14 @@ else
                     camera = SCMOSCamera(
                         Float32.(joint_edges(65, 64, 0.12)),
                         Float32.(joint_edges(1, 128, 0.12));
-                        readnoise = 1.0f0, offset = 0.0f0, gain = gain2, qe = 1.0f0
+                        readnoise = 1.0f0, offset = offset2, gain = gain2, qe = 1.0f0
                     )
                 ),
             )
             @test fit(scmos_pair(1.0f0), fitter)[2].n_fits == n
-            @test_throws "view 2: ROI 1 has the count" fit(scmos_pair(NaN32), fitter)
+            @test_throws "view 2: the camera gain" fit(scmos_pair(0.0f0), fitter)
+            @test_throws "view 2: the camera gain" fit(scmos_pair(NaN32), fitter)
+            @test_throws "view 2: ROI 1 has the count" fit(scmos_pair(1.0f0, NaN32), fitter)
             # Constraints of another model's size
             five = GaussMLE.default_constraints(jm.views[1], box)
             @test_throws "constraints for 5 parameters" fit(
@@ -175,6 +177,64 @@ else
             @test_throws ArgumentError fit(
                 (b1, b2), GaussMLEConfig(psf_model = GaussianXYNB(0.13f0))
             )
+        end
+
+        @testset "pairs at a sensor edge, an even box, a ROI 2 off its emitter" begin
+            # ROIs clamped at a sensor edge leave their emitters off centre, in one view or
+            # both, and an even box has no centre pixel: such pairs are valid and fitted.
+            boxe = 10
+            edge = [
+                (3.03, 0.12, 0.0), (6.3, 5.0, 0.1), (2.5, 12.7, -0.1), (6.32, 0.15, 0.0),
+            ]
+            rnge = Xoshiro(13)
+            Random.seed!(13)
+            inner = [(2 + 3rand(rnge), 2 + 8rand(rnge), 0.6rand(rnge) - 0.3) for _ in 1:16]
+            te = vcat(edge, inner)
+            mue, ce = joint_expected(mc, (cam1, cam2), te; photons, bgs, box = boxe)
+            @test ce[1][2][1] == 1 && ce[1][1][2] == 64 - boxe + 1  # clamped
+            fe = Int32.(1:length(te))
+            se, _ = fit(
+                (
+                    ROIBatch(Float32.(poisson_noise(mue[1])), ce[1]..., fe, cam1),
+                    ROIBatch(Float32.(poisson_noise(mue[2])), ce[2]..., fe, cam2),
+                ),
+                GaussMLEConfig(psf_model = jm, backend = :cpu)
+            )
+            for (row, f, sf) in ((1, :x, :σ_x), (2, :y, :σ_y))
+                d = [abs(getfield(e, f) - t[row]) / getfield(e, sf) for (e, t) in zip(se.emitters, te)]
+                @test all(isfinite, d) && maximum(d) < 5
+            end
+
+            # A ROI 2 placed 4 pixels from its emitter, in one pair of a batch that follows
+            # the registration: fitted, but the emitter sits on ROI 2's first column, so
+            # its far columns lie beyond the table (lateral_range 0.65 um plus a pixel) and
+            # the fit reports infinite uncertainties. Two halves of one sensor at 0.1 um.
+            camL = IdealCamera(joint_edges(1, 64, 0.1), joint_edges(1, 128, 0.1))
+            camR = IdealCamera(joint_edges(65, 64, 0.1), joint_edges(1, 128, 0.1))
+            mch = MultiChannelPSF(;
+                channels = [spline, spline], registration = [I23, [-1.0 0.0 12.8; 0.0 1.0 0.0]],
+                transmission = [0.45, 0.55]
+            )
+            jmh = JointSplinePSFModel(mch; pixel_size = 0.1, lateral_range = 0.65)
+            # the first emitter on a pixel centre in both views (column 34 and 31)
+            th = vcat([(3.35, 6.05, 0.0)], [(2 + 3rand(rnge), 2 + 8rand(rnge), 0.0) for _ in 1:19])
+            muh, ch = joint_expected(mch, (camL, camR), th; photons, bgs, box)
+            cxs = copy(ch[2][1])
+            cxs[1] += Int32(4)
+            ex = Float64.(camR.pixel_edges_x[cxs[1]:(cxs[1] + box)])
+            ey = Float64.(camR.pixel_edges_y[ch[2][2][1]:(ch[2][2][1] + box)])
+            X2, Y2, z2 = channel_position(mch, 2, th[1]...)
+            m2 = copy(muh[2])
+            m2[:, :, 1] .= bgs[2] .+ MicroscopePSFs.integrate_pixels(
+                spline, ex, ey, [Emitter3D(X2, Y2, z2, photons * 0.55)]; sampling = 4
+            )
+            fh = Int32.(1:length(th))
+            sh, _ = fit(
+                (ROIBatch(muh[1], ch[1]..., fh, camL), ROIBatch(m2, cxs, ch[2][2], fh, camR)),
+                GaussMLEConfig(psf_model = jmh, backend = :cpu)
+            )
+            @test isinf(sh.emitters[1].σ_x) && isinf(sh.emitters[1].σ_bg2)
+            @test all(e -> isfinite(e.σ_x) && isfinite(e.σ_bg2), sh.emitters[2:end])
         end
 
         @testset "start with an image that receives no light" begin
