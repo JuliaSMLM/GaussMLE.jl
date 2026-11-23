@@ -27,9 +27,6 @@ elseif CUDA.functional()
         n = 200_000
         big = rois(11, n)
         ideal_batch = ROIBatch(big, corners(n), corners(n), Int32.(1:n), ideal)
-        # unused pool memory a fit may leave: the trim returns it all; where CUDA.jl lacks
-        # the trim, the package's threshold for a full reclaim
-        limit = GaussMLE._cuda_trim_available() ? 64 * 2^20 : GaussMLE._GPU_CACHE_TRIM_BYTES
         cases = (
             ("GaussianXYNB, IdealCamera", ideal_batch, GaussianXYNB(0.13f0), n, false),
             (
@@ -66,8 +63,12 @@ elseif CUDA.functional()
                 @test info.backend == :gpu
                 @test info.n_batches == cld(size(batch.data, 3), nb)
                 @test CUDA.used_memory() <= used
-                # the pool's unused memory is returned
-                @test CUDA.cached_memory() - CUDA.used_memory() <= limit
+                # the pool's unused memory is returned: all of it by the trim; where the trim
+                # does not run on this CUDA.jl (the internals it calls changed), down to the
+                # package's threshold for a full reclaim
+                unused = CUDA.cached_memory() - CUDA.used_memory()
+                trimmed = GaussMLE._cuda_trim_pool()
+                @test unused <= (trimmed ? 64 * 2^20 : GaussMLE._GPU_CACHE_TRIM_BYTES)
             end
         end
     end

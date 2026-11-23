@@ -339,6 +339,56 @@ end
     return acc
 end
 
+# One pixel's share of the log-likelihood difference L(θa) - L(θb) (`_objective_difference`),
+# from the expected counts ua and ub there, added to `acc = (difference, e2, run)`. The
+# difference of two `_fit_objective` values cancels the large terms they share, and a pixel
+# whose count far exceeds its expected count loses most of each term to rounding: about
+# eps (d + v)^2 / (mu + v), 0.4 in the log-likelihood for an 18,000-count hot pixel on a
+# background of 20. Written as s log1p((ua - ub) / (ub + v)) - (ua - ub), s = d + v, it is
+# computed from the two counts' difference instead. Its Float32 error, in units of eps: at
+# each pixel about |term| + |ua - ub| + |s / (u + v) - 1| (|ua| + |ub|) (the last from the
+# counts' own rounding), independent between pixels, so their squares add in e2; and the
+# running sum's own rounding, at most the sum of its magnitudes, in run. A pixel where
+# either count plus v is not positive has no likelihood difference: NaN, which no
+# comparison passes.
+@inline function _diff_accumulate(acc, d::T, ua::T, ub::T, v::T) where {T}
+    diff, e2, run = acc
+    s = d + v
+    wa = ua + v
+    wb = ub + v
+    du = ua - ub
+    if s == zero(T)
+        # the limit of s log(w) - w at s = 0, as in `_fit_objective`
+        term = wa >= zero(T) && wb >= zero(T) ? -du : T(NaN)
+        k = one(T)
+    else
+        term = wa > zero(T) && wb > zero(T) ? s * log1p(du / wb) - du : T(NaN)
+        k = max(abs(s / wa - one(T)), abs(s / wb - one(T)))
+    end
+    e = abs(term) + abs(du) + k * (abs(ua) + abs(ub))
+    diff += term
+    return (diff, e2 + e * e, run + abs(diff))
+end
+
+# L(θa) - L(θb) of the objective the fit climbs, over the ROI, with the scales of its
+# Float32 error: `(difference, e2, run)` (`_diff_accumulate`). The spline models'
+# `_optimize` compares its end start with the best fit by this. Not inlined: the kernel
+# holds one copy (POCL, as `_lm_solve`). A model fitted to several images at once
+# (JointSplinePSFModel) has its own method.
+@noinline function _objective_difference(
+        θa, θb, roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
+        corner_x, corner_y
+    ) where {N, T}
+    acc = (zero(T), zero(T), zero(T))
+    @inbounds for j in 1:box_size, i in 1:box_size
+        ua, _ = compute_pixel_derivatives(i, j, θa, psf_model)
+        ub, _ = compute_pixel_derivatives(i, j, θb, psf_model)
+        v = _readout_variance(camera_model, ua, variance_map, corner_x, corner_y, i, j)
+        acc = _diff_accumulate(acc, roi[i, j], ua, ub, v)
+    end
+    return acc
+end
+
 # One pixel's share of the final pass, added to `acc = (chi2, H)`: the Pearson statistic
 # and the Fisher matrix for the CRLB.
 @inline function _final_accumulate(acc, d::T, model::T, dudt, v::T) where {T}
@@ -400,11 +450,10 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
 # - The whole step is scaled to the step limits instead of clamping each component.
 # - A trial that rounds to the accepted point with lambda at its cap ends the fit (every
 #   later pass would make the same trial).
-# Returns the last accepted point, the objective there, the pixel passes made, whether the
-# stop test ended the fit, and the scale of the objective's Float32 rounding there
-# (`_lm_accumulate`), `(θ_acc, obj_acc, passes, stopped, rounding_acc)`: the first pass
-# always accepts its start, so iterations = 1 returns the clamped start with its objective.
-# The multi-start `_optimize` methods compare these objectives.
+# Returns the last accepted point, the objective there, the pixel passes made and whether
+# the stop test ended the fit, `(θ_acc, obj_acc, passes, stopped)`: the first pass always
+# accepts its start, so iterations = 1 returns the clamped start with its objective. The
+# multi-start `_optimize` methods compare these objectives.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -416,7 +465,6 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
     g_acc = zero(SVector{N, T})
     F_acc = zero(SMatrix{N, N, T})
     obj_acc = zero(T)
-    rounding_acc = zero(T)
     λ = T(1.0e-3)
     ν = T(2)
     pred = zero(T)
@@ -446,7 +494,6 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
             g_acc = g
             F_acc = F
             obj_acc = obj
-            rounding_acc = rounding
             if iter > 1
                 # Damping from rho, the actual over the predicted gain (Nielsen 1999)
                 ρ = pred > zero(T) ? gain / pred : T(0.5)
@@ -501,7 +548,7 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
         # cap a larger lambda gives a new step, which can differ.)
         ok && λ >= T(1.0e7) && θ == θ_acc && break
     end
-    return θ_acc, obj_acc, passes, stopped, rounding_acc
+    return θ_acc, obj_acc, passes, stopped
 end
 
 # Next trial of a fit, `(θ, pred)`. The whole step is scaled so that no

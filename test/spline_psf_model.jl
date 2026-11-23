@@ -615,13 +615,27 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test θ_one == first(GaussMLE._lm_fit(roi, box, one_start, args...))
         @test first(GaussMLE._end_start(one_start, θ_one[3]))
 
-        # The end start replaces the best fit only when its objective is higher by more than
-        # the stop tolerance and the Float32 rounding of the two sums (scale from `_lm_fit`)
-        @test !GaussMLE._end_start_wins(-9.087356f0, 157.0f0, -9.087357f0, 157.0f0)
-        @test GaussMLE._end_start_wins(-9.0f0, 157.0f0, -9.01f0, 157.0f0)
-        @test GaussMLE._end_start_wins(-9.0f0, 157.0f0, -Inf32, Inf32)
-        @test !GaussMLE._end_start_wins(-Inf32, Inf32, -9.0f0, 157.0f0)
-        @test !GaussMLE._end_start_wins(NaN32, NaN32, -9.0f0, 157.0f0)
+        # The end start replaces the best fit only when their log-likelihood difference,
+        # summed pixel by pixel from the two fits' expected counts, is above the stop
+        # tolerance (1e-4) plus its Float32 error, eps (10 sqrt(e2) + run)
+        @test !GaussMLE._end_start_wins(5.0f-5, 0.0f0, 0.0f0)
+        @test GaussMLE._end_start_wins(2.0f-4, 0.0f0, 0.0f0)
+        @test !GaussMLE._end_start_wins(0.1f0, 1.0f10, 0.0f0)
+        @test GaussMLE._end_start_wins(0.2f0, 1.0f10, 0.0f0)
+        @test !GaussMLE._end_start_wins(0.1f0, 0.0f0, 1.0f6)
+        @test !GaussMLE._end_start_wins(NaN32, 0.0f0, 0.0f0)
+        # an 18,000-count hot pixel on a background of 20: the difference of the two fits'
+        # objectives there is off by tenths, the pixel-by-pixel difference is not
+        hot, ua, ub = 18020.0f0, 20.31f0, 20.17f0
+        ref = Float64(hot) * log(Float64(ua) / Float64(ub)) - (Float64(ua) - Float64(ub))
+        naive = GaussMLE._fit_objective(hot, ua, 0.0f0) - GaussMLE._fit_objective(hot, ub, 0.0f0)
+        dh, e2h, runh = GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), hot, ua, ub, 0.0f0)
+        @test abs(dh - ref) < 1.0e-3
+        @test abs(dh - ref) < eps(Float32) * (10 * sqrt(e2h) + runh)
+        @test abs(naive - ref) > 0.05
+        # a pixel without a likelihood (count plus v not positive) gives NaN
+        @test isnan(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 5.0f0, -1.0f0, 2.0f0, 0.0f0)))
+        @test first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 0.0f0, 3.0f0, 2.0f0, 0.0f0)) == -1.0f0
 
         # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
         # begins on that bound and stops there, within the stop tolerance of the maximum;
@@ -648,6 +662,22 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test 0.4999f0 < θ5[3] < mt.z_range[2]
         e5, _ = fit(roi5, GaussMLEConfig(; psf_model = mt, backend = :cpu))
         @test e5.z < mt.z_range[2] && isfinite(e5.σ_z) && isfinite(e5.σ_x)
+
+        # the pixel-by-pixel difference equals the difference of the objectives where those
+        # are exact enough (two fits far apart), for both cameras; a fit against itself is 0
+        θb5 = Base.setindex(θ5, 0.0f0, 3)
+        for (cam, vmap) in ((Val(false), zeros(Float32, 5, 5)), (Val(true), fill(2.5f0, 5, 5)))
+            obj5(θ) = first(GaussMLE._lm_pass(θ, roi5, 5, mt, cam, vmap, Int32(1), Int32(1)))
+            dd(a, b) = first(
+                GaussMLE._objective_difference(a, b, roi5, 5, mt, cam, vmap, Int32(1), Int32(1))
+            )
+            @test dd(θ5, θb5) ≈ obj5(θ5) - obj5(θb5) rtol = 1.0e-3
+            @test dd(θ5, θ5) == 0
+        end
+        # a best fit with no likelihood gives way to the end start's; one with none never wins
+        args5 = (roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1))
+        @test GaussMLE._end_start_replaces(θ5, -9.0f0, θb5, -Inf32, args5...)
+        @test !GaussMLE._end_start_replaces(θ5, -Inf32, θb5, -9.0f0, args5...)
     end
 
     @testset "starts: an emitter between the focus and the near end of z_range" begin

@@ -203,12 +203,12 @@ end
 # emitter between a focus in the outer tenth of the range and that end has no fixed start on
 # its side. Its fit can then end on the other side, at the mirror of the emitter about the
 # focus, within 0.2 R of the end. On simulated pairs of a weakly astigmatic PSF whose focus
-# lies 0.075 µm inside the end of a 1 µm range, the fixed starts ended in a lower maximum
-# than a fit from 81 starts over the whole range for up to half of the emitters between the
-# focus and the end; with this start, for none at 20,000 or 2,000 photons, where a
-# threshold of 0.2 R still missed one in 300. (At 2,000 photons the best maximum itself lies
-# on the wrong side of focus for many of these ROIs: the noise decides that, not the
-# starts.) Starts at both ends on every fit cleared the same cases at 1.5 times the fit
+# lies 0.075 µm inside the end of a 1 µm range, the joint fit with the fixed starts ended
+# more than 0.03 µm in z from a fit from 81 starts over the whole range for up to half of
+# the emitters between the focus and the end; with this start, for none at 20,000 or 2,000
+# photons, where a threshold of 0.2 R still missed one in 300. (At 2,000 photons the 81-start
+# fit itself lies more than 0.03 µm from the truth for most of these ROIs: the noise decides
+# the side of focus there, not the starts.) Starts at both ends on every fit cleared the same cases at 1.5 times the fit
 # time; this start costs a fit only near an end, and it replaces the best fit only when
 # `_end_start_wins`.
 @inline function _end_start(model::PSFModel{N, T}, z) where {N, T}
@@ -219,18 +219,37 @@ end
     return false, z
 end
 
-# Whether the end start's fit (objective `obj`, rounding scale `rnd` from `_lm_fit`) replaces
-# the best fit so far: only when its objective is higher by more than the stop test's
-# tolerance (`_LM_GAIN_TOL`: each fit stops within about that of its maximum) and the two
-# objectives' Float32 rounding. The end start begins on a bound of z, and a fit that starts
-# within the stop tolerance of a maximum stops where it starts; won on rounding alone, it
-# would turn an interior fit into one on the bound, whose uncertainties are `Inf`
-# (`_mark_pinned_fits!`). So a result differs from the fixed starts' only where the end start
-# reaches a higher maximum that the fit resolves.
-@inline function _end_start_wins(obj::T, rnd::T, obj_best::T, rnd_best::T) where {T}
+# Whether the end start's fit replaces the best fit so far, from the difference of their
+# log-likelihoods computed pixel by pixel (`_objective_difference`, with its error scales e2
+# and run): only when that is above the stop test's tolerance (`_LM_GAIN_TOL`: each fit
+# stops within about that of its maximum, so a smaller difference does not tell two maxima
+# apart) plus eps (10 sqrt(e2) + run), ten times the pixels' independent rounding and all of
+# the sum's. The end start begins on a bound of z, and a fit that starts within the stop
+# tolerance of a maximum stops where it starts; won on rounding, it would put an interior
+# fit on the bound, whose uncertainties are `Inf` (`_mark_pinned_fits!`). The two fits' own
+# Float32 objectives do not tell: a pixel whose count far exceeds its expected count loses
+# tenths of a log-likelihood unit to rounding in each. A NaN difference (no likelihood at
+# some pixel) never wins. On simulated ROIs this difference was within 2.4e-4 of the Float64
+# value where the two objectives' difference was off by 0.26 (a hot pixel), and within
+# 1.5e-5 for two maxima 0.0009 apart. So a result differs from the fixed starts' only where
+# the end start reaches a higher maximum that the fit resolves.
+@inline function _end_start_wins(diff::T, e2::T, run::T) where {T}
+    return diff > T(_LM_GAIN_TOL) + eps(T) * (10 * sqrt(e2) + run)
+end
+
+# The end start's fit θ (objective obj) against the best fit so far: a best fit with no
+# likelihood (a non-finite objective) gives way to one with a likelihood; otherwise
+# `_end_start_wins` on their pixel-by-pixel difference.
+@inline function _end_start_replaces(
+        θ, obj::T, θ_best, obj_best::T, roi, box_size, psf_model, camera_model, variance_map,
+        corner_x, corner_y
+    ) where {T}
     isfinite(obj) || return false
     isfinite(obj_best) || return true
-    return obj - obj_best > T(_LM_GAIN_TOL) + 10 * eps(T) * max(rnd, rnd_best)
+    diff, e2, run = _objective_difference(
+        θ, θ_best, roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y
+    )
+    return _end_start_wins(diff, e2, run)
 end
 
 function _spline_pixel_size(::Type{T}, pixel_size::Union{Real, Tuple{Real, Real}}) where {T}
@@ -839,7 +858,6 @@ end
     ) where {T}
     θ_best = θ0
     obj_best = T(-Inf)
-    rnd_best = zero(T)
     stopped_best = false
     m = psf_model.starts - 1
     for q in -1:m
@@ -852,14 +870,23 @@ end
             z = _spline_start_z(psf_model, q, m)
         end
         θs = SVector{5, T}(θ0[1], θ0[2], z, θ0[4], θ0[5])
-        θ, obj, _, stopped, rnd = _lm_fit(
+        θ, obj, _, stopped = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        if q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, rnd, obj_best, rnd_best))
+        better = if q < 0
+            true
+        elseif q < m
+            obj > obj_best
+        else
+            _end_start_replaces(
+                θ, obj, θ_best, obj_best, roi, box_size, psf_model, camera_model,
+                variance_map, corner_x, corner_y
+            )
+        end
+        if better
             θ_best = θ
             obj_best = obj
-            rnd_best = rnd
             stopped_best = stopped
         end
     end

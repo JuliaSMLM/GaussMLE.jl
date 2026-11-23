@@ -46,8 +46,9 @@ end
 
 # The pool trim of CUDA.jl 6's `RECLAIM_GC` level alone, through CUDA.jl internals: `true`
 # when it ran or was skipped for a graph capture, `false` when those internals are missing,
-# have another signature, or throw. It runs inside CUDA.jl's `releasing`, which skips it
-# while a graph capture is in progress, as CUDA.jl's own reclaim does.
+# have another signature, or throw (an interrupt is passed on). It runs inside CUDA.jl's
+# `releasing`, which skips it while a graph capture is in progress, as CUDA.jl's own
+# reclaim does.
 function _cuda_trim_pool()
     _cuda_trim_available() || return false
     core = CUDA.CUDACore
@@ -55,7 +56,8 @@ function _cuda_trim_pool()
         dev = CUDA.device()
         so = core.stream_ordered(dev)
         core.releasing(() -> core.trim_pools(dev, so); blocking = true)
-    catch
+    catch err
+        err isa InterruptException && rethrow()
         return false
     end
     return true
@@ -69,7 +71,8 @@ function _cuda_trim_available()
         return false
     dev = CUDA.device()
     return applicable(core.stream_ordered, dev) &&
-        applicable(core.trim_pools, dev, true) && applicable(core.releasing, () -> nothing)
+        applicable(core.trim_pools, dev, true) &&
+        hasmethod(core.releasing, Tuple{Function}, (:blocking,))
 end
 
 # After a failed attempt, when the arrays are left to the garbage collector: the vendor's

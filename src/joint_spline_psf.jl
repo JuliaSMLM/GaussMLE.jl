@@ -537,6 +537,34 @@ end
     return acc
 end
 
+# L(θa) - L(θb) over both views (`_objective_difference`), one loop over the views as in
+# `_lm_pass`.
+@inline function _objective_difference(
+        θa, θb, roi, box_size::Int, model::JointSplinePSFModel{T}, camera_model, variance_map,
+        corner_x, corner_y
+    ) where {T}
+    o = _joint_offset(model, corner_x, corner_y)
+    acc = (zero(T), zero(T), zero(T))
+    for v in 1:2
+        ca = _view_context(model, v, θa, o, roi, variance_map, corner_x, corner_y)
+        θbv = _view_context(model, v, θb, o, roi, variance_map, corner_x, corner_y)[8]
+        acc = _view_objective_difference(acc, box_size, camera_model, ca..., θbv)
+    end
+    return acc
+end
+
+@noinline function _view_objective_difference(
+        acc, box_size::Int, camera_model, vmodel, r, vmap, cx, cy, A, tr, θav, θbv
+    )
+    @inbounds for j in 1:box_size, i in 1:box_size
+        ua, _ = compute_pixel_derivatives(i, j, θav, vmodel)
+        ub, _ = compute_pixel_derivatives(i, j, θbv, vmodel)
+        w = _readout_variance(camera_model, ua, vmap, cx, cy, i, j)
+        acc = _diff_accumulate(acc, r[i, j], ua, ub, w)
+    end
+    return acc
+end
+
 @inline function _final_pass(
         θ, roi, box_size::Int, model::JointSplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y
@@ -659,7 +687,6 @@ end
     ) where {T}
     θ_best = θ0
     obj_best = T(-Inf)
-    rnd_best = zero(T)
     stopped_best = false
     m = psf_model.starts - 1
     for q in -1:m
@@ -672,14 +699,23 @@ end
             z = _spline_start_z(psf_model, q, m)
         end
         θs = Base.setindex(θ0, z, 3)
-        θ, obj, _, stopped, rnd = _lm_fit(
+        θ, obj, _, stopped = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        if q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, rnd, obj_best, rnd_best))
+        better = if q < 0
+            true
+        elseif q < m
+            obj > obj_best
+        else
+            _end_start_replaces(
+                θ, obj, θ_best, obj_best, roi, box_size, psf_model, camera_model,
+                variance_map, corner_x, corner_y
+            )
+        end
+        if better
             θ_best = θ
             obj_best = obj
-            rnd_best = rnd
             stopped_best = stopped
         end
     end

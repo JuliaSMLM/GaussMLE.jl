@@ -486,6 +486,29 @@ else
             end
         end
 
+        @testset "end start: log-likelihood difference over both views" begin
+            # The end start's fit is compared with the best fit by a log-likelihood difference
+            # summed pixel by pixel over both views; where the two fits' own objectives are
+            # exact enough (two θ far apart), it is their difference
+            pm = GaussMLE._model_for_cameras(
+                JointSplinePSFModel(mc; pixel_size = 0.1), cam1, cam2
+            )
+            mu, cd = joint_expected(mc, (cam1, cam2), truths[1:1]; photons, bgs, box)
+            roi = (mu[1][:, :, 1], mu[2][:, :, 1])
+            cx = (cd[1][1][1], cd[2][1][1])
+            cy = (cd[1][2][1], cd[2][2][1])
+            vm = (zeros(Float32, 1, 1), zeros(Float32, 1, 1))
+            θa = GaussMLE._fit_start(roi, box, pm, cx, cy)
+            θb = Base.setindex(θa, θa[3] + 0.2f0, 3)
+            obj(θ) = first(GaussMLE._lm_pass(θ, roi, box, pm, Val(false), vm, cx, cy))
+            dd(a, b) = first(
+                GaussMLE._objective_difference(a, b, roi, box, pm, Val(false), vm, cx, cy)
+            )
+            @test dd(θa, θb) ≈ obj(θa) - obj(θb) rtol = 1.0e-3
+            @test dd(θb, θa) ≈ -dd(θa, θb) rtol = 1.0e-3
+            @test dd(θa, θa) == 0
+        end
+
         @testset "forward law at a rotated, scaled and mirrored registration" begin
             # No fit decides this: the kernel's expected counts are compared with
             # MicroscopePSFs' integrate_pixels at channel_position, and its derivatives

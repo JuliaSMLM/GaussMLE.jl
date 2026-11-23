@@ -238,17 +238,21 @@ focus it starts on, and the fixed starts reach only to `0.1 R` from each end, so
 calibration's focus lies near an end of its range, an emitter between the focus and that
 end has no fixed start on its side; with a weakly astigmatic PSF, whose two sides of focus
 look alike, its fit then often ends on the other side, which lies within `0.2 R` of the end.
-On simulated ROIs of such a PSF, its focus 0.075 µm inside the end of a 1 µm range, the fit
-ended in a lower maximum than a fit from 81 starts over the whole range for up to half of
-the emitters 0.015 to 0.055 µm from the end without this start, and for none with it, at
-20,000 and at 2,000 photons. (At 2,000 photons the highest maximum itself lies on the wrong
-side of focus for many of these ROIs: the noise decides that, and no start changes it.)
-Fits away from the ends take no more time. The end start's fit replaces the best one only
-when its log-likelihood is higher by more than the fit resolves (the stop test's tolerance of
-1e-4 plus the Float32 rounding of the two sums): the end start begins on the bound of z, and a
-fit on a bound reports infinite uncertainties, so a win by rounding alone would cost an
-interior fit its uncertainties. A result therefore differs from the fixed starts' only where
-the end start reaches a higher maximum.
+On simulated pairs of ROIs of such a PSF, its focus 0.075 µm inside the end of a 1 µm range,
+the joint fit ended more than 0.03 µm in z from a fit from 81 starts over the whole range for
+up to half of the emitters 0.015 to 0.055 µm from the end without this start, and for none
+with it, at 20,000 and at 2,000 photons. (At 2,000 photons the 81-start fit itself lies more
+than 0.03 µm from the truth for most of these ROIs: the noise decides the side of focus
+there, and no start changes it.) Fits away from the ends take no more time.
+
+The end start's fit replaces the best one only when its log-likelihood is higher by more than
+the fit resolves: above 1e-4 (each fit stops within about that of its maximum) plus the
+Float32 error of the difference. The difference is computed pixel by pixel from the two fits'
+expected counts, because each fit's own Float32 log-likelihood can be off by tenths at a pixel
+whose count far exceeds its expected count (a hot pixel). The end start begins on the bound of
+z, and a fit on a bound reports infinite uncertainties, so a win by rounding alone would cost
+an interior fit its uncertainties. A result therefore differs from the fixed starts' only
+where the end start reaches a higher maximum.
 
 `starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
 defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
