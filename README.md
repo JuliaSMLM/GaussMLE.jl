@@ -105,15 +105,15 @@ Fits per second on an AMD Ryzen 9 5950X (16 threads) and an NVIDIA RTX 4090 (CUD
 
 | Model | CPU, 10K fits | GPU, 10K fits | GPU, 100K fits in one batch |
 |-------|--------------:|--------------:|----------------------------:|
-| GaussianXYNB (ideal) | 200,000 | 2,200,000 | 1,800,000 |
+| GaussianXYNB (ideal) | 200,000 | 2,500,000 | 1,700,000 |
 | GaussianXYNB (sCMOS) | 190,000 | 1,700,000 | 1,200,000 |
-| GaussianXYNBS (ideal) | 170,000 | 1,900,000 | 1,600,000 |
+| GaussianXYNBS (ideal) | 170,000 | 1,700,000 | 1,700,000 |
 | GaussianXYNBSXSY (ideal) | 67,000 | 1,800,000 | 1,600,000 |
-| AstigmaticXYZNB (ideal) | 91,000 | 1,100,000 | 1,500,000 |
-| SplinePSFModel (ideal) | 18,000 | 390,000 | 740,000 |
-| JointSplinePSFModel (ideal, two ROIs per fit) | 11,000 | 140,000 | 300,000 |
+| AstigmaticXYZNB (ideal) | 91,000 | 1,000,000 | 1,400,000 |
+| SplinePSFModel (ideal) | 17,000 | 400,000 | 770,000 |
+| JointSplinePSFModel (ideal, two ROIs per fit) | 11,000 | 170,000 | 290,000 |
 
-Each number is the mean of the same two runs of every row (best of three timed fits after a warm-up fit); the two runs differed by up to 11 % on the CPU and 23 % on the GPU. The spline rows fit a tabulated astigmatic PSF with a `z_range` of ±0.6 µm from the default 5 z starts, plus one from an end of the range for a fit near that end, so each costs up to 6 Levenberg-Marquardt fits. The 100K column sets `batch_size = 100_000`; the default is 10K ROIs per GPU batch. Run the GPU test group (`GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'`) to benchmark your hardware.
+Each number is the mean of the same two runs of every row (best of three timed fits after a warm-up fit); the two runs differed by up to 6 % on the CPU and 19 % on the GPU. The spline rows fit a tabulated astigmatic PSF with a `z_range` of ±0.6 µm from the default 5 z starts, plus one from an end of the range for a fit near that end, so each costs up to 6 Levenberg-Marquardt fits. The 100K column sets `batch_size = 100_000`; the default is 10K ROIs per GPU batch. Run the GPU test group (`GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'`) to benchmark your hardware.
 
 ## Algorithm Reference
 

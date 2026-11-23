@@ -27,6 +27,12 @@ elseif CUDA.functional()
         n = 200_000
         big = rois(11, n)
         ideal_batch = ROIBatch(big, corners(n), corners(n), Int32.(1:n), ideal)
+        # CUDA.jl 6 trims the pool through internals (`_cuda_trim_pool`). Without them the
+        # fit falls back to a full reclaim only above 256 MiB unused, which leaves the cache
+        # to other processes on a shared GPU: a CUDA.jl release that changes them must be
+        # met by updating `_cuda_trim_pool`, so this fails then.
+        cuda6 = isdefined(CUDA, :RECLAIM_SYNC)
+        @test !cuda6 || GaussMLE._cuda_trim_available()
         cases = (
             ("GaussianXYNB, IdealCamera", ideal_batch, GaussianXYNB(0.13f0), n, false),
             (
@@ -63,11 +69,11 @@ elseif CUDA.functional()
                 @test info.backend == :gpu
                 @test info.n_batches == cld(size(batch.data, 3), nb)
                 @test CUDA.used_memory() <= used
-                # the pool's unused memory is returned: all of it by the trim; where the trim
-                # does not run on this CUDA.jl (the internals it calls changed), down to the
-                # package's threshold for a full reclaim
+                # the pool's unused memory is returned: all of it by CUDA.jl 5's reclaim or by
+                # the trim; where the trim does not run on a CUDA.jl 6 (the check above has
+                # failed), down to the package's threshold for a full reclaim
                 unused = CUDA.cached_memory() - CUDA.used_memory()
-                trimmed = GaussMLE._cuda_trim_pool()
+                trimmed = !cuda6 || GaussMLE._cuda_trim_pool()
                 @test unused <= (trimmed ? 64 * 2^20 : GaussMLE._GPU_CACHE_TRIM_BYTES)
             end
         end

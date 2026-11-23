@@ -107,10 +107,10 @@ uncertainties and p-values of every model change.
 
 ### Fixed
 
-- A GPU fit frees its own device arrays and trims the memory pool without a garbage
-  collection. With CUDA.jl 6 the reclaim after every fit ran a full collection: about 55 ms
-  per fit call (a fit of 1,000 ROIs took 55 ms, now 2 ms), more in a process with a large
-  heap, while the arrays of the call in progress stayed allocated until a later collection.
+- A GPU fit frees its own device arrays at the end of the call; before, they stayed
+  allocated until a later garbage collection. The pool is then trimmed without a collection
+  of its own: CUDA.jl 6's `reclaim()` runs a full collection first, about 55 ms per fit call
+  (a fit of 1,000 ROIs would take 55 ms; it takes 2 ms), more in a process with a large heap.
   The frees CUDA.jl defers (a GPU without stream-ordered frees, a fit on the per-thread
   stream) are released too.
 

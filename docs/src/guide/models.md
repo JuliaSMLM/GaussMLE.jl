@@ -254,6 +254,17 @@ z, and a fit on a bound reports infinite uncertainties, so a win by rounding alo
 an interior fit its uncertainties. A result therefore differs from the fixed starts' only
 where the end start reaches a higher maximum.
 
+That higher maximum is not always nearer the truth, and at low counts it is often on the bound
+itself. On one image of the same PSF and range, 9 x 9 ROIs, background 20, 300 emitters at
+each of z = -0.06, 0, 0.02, 0.04 and 0.06 µm from focus, the end start brought 221 more of the
+1,500 fits within 0.03 µm of the truth at 20,000 photons, with 5 more on the z bound; at 5,000
+photons 66 more within 0.03 µm and 71 more on the bound; at 2,000 photons 31 more and 120 more.
+Emitters on the far side of focus lose some: at z = -0.06 µm, 98 of 300 fits ended within
+0.03 µm of the truth at 2,000 photons with the end start and 117 without, 170 and 204 at 5,000,
+284 and 291 at 20,000. Each changed fit is the one the data favor (the higher likelihood); a
+fit on the bound reports infinite uncertainties, so filtering on finite uncertainties removes
+it.
+
 `starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
 defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
 one start ended more than 0.05 below the best log-likelihood found in 116 of 400 fits and

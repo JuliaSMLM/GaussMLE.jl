@@ -373,6 +373,19 @@ function _device_map(backend, m::AbstractMatrix)
     return d
 end
 _device_map(backend, m::Tuple) = map(x -> _device_map(backend, x), m)
+# Frees device arrays the fit is done with (`_free_device_arrays`). A failure only warns:
+# the memory is then left to the garbage collector, and results already on the host stand.
+function _release_device_arrays(vendor, arrays...)
+    try
+        _free_device_arrays(vendor, arrays...)
+    catch err
+        err isa InterruptException && rethrow()
+        @warn "Freeing GPU arrays after a batch failed; they are left to the garbage collector" exception = (
+            err, catch_backtrace(),
+        )
+    end
+    return nothing
+end
 _map_arrays(m::AbstractMatrix) = (m,)
 _map_arrays(m::Tuple) = m
 # The arrays of the device model that are not the host model's own: those the fit made.
@@ -623,13 +636,13 @@ function _run_mle_kernel!(
 
                     # The batch's device arrays are done with: hand their memory back now.
                     # Left to the garbage collector they would be held until its next run.
-                    _free_device_arrays(
+                    _release_device_arrays(
                         vendor, d_batch_data, d_x_corners, d_y_corners, d_results,
                         d_uncertainties, d_covariances, d_chi2, d_converged
                     )
                 end
                 # and so are the variance map and the device copy of a PSF table
-                _free_device_arrays(
+                _release_device_arrays(
                     vendor, _map_arrays(d_variance_map)...,
                     _device_only_arrays(device_psf, psf_pixels)...
                 )

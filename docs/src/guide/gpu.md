@@ -181,8 +181,9 @@ GPU fault and never followed by a CPU run.
 Cleanup after a failure (CUDA context release, AMD synchronize and reclaim) can itself
 throw on a poisoned context, for example after a sticky fault such as an illegal address.
 That failure is logged as a warning and never replaces the original error, which `:gpu`
-rethrows and `:auto` handles as above. The same holds for the reclaim after a successful
-fit.
+rethrows and `:auto` handles as above. The same holds for freeing a batch's device arrays
+and for the reclaim after a successful fit: a failure there only warns, and the results already
+on the host stand.
 
 ### Three Failure Modes
 
@@ -277,9 +278,9 @@ costs several Levenberg-Marquardt fits; `starts = 1` fits from the scan start al
 `AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored z. On 16 threads of
 an AMD Ryzen 9 5950X and on an NVIDIA RTX 4090, 10,000 simulated ROIs of 15 px (3,000
 photons, z within ±0.5 µm), fitted with a spline of an astigmatic Gaussian PSF and
-`z_range = (-1, 1)`, ran at 42,000 fits/s on the CPU and 650,000 on the GPU with
-`starts = 1`, and at 5,800 and 130,000 fits/s with the default starts (7.2 and about 5 times
-the time), against 33,000 and 290,000 fits/s for `AstigmaticXYZNB` with the same widths
+`z_range = (-1, 1)`, ran at 45,000 fits/s on the CPU and 650,000 on the GPU with
+`starts = 1`, and at 5,800 and 130,000 fits/s with the default starts (7.7 and about 5 times
+the time), against 33,000 and 320,000 fits/s for `AstigmaticXYZNB` with the same widths
 (focal offset 0.25 µm). On an 8-thread CPU, the second start of `AstigmaticXYZNB` cost 3.5
 times the time of one start with that strong astigmatism and 2.1 times with a focal offset
 of 0.05 µm.

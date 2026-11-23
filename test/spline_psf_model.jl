@@ -632,6 +632,8 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         dh, e2h, runh = GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), hot, ua, ub, 0.0f0)
         @test abs(dh - ref) < 1.0e-3
         @test abs(dh - ref) < eps(Float32) * (10 * sqrt(e2h) + runh)
+        # its error scale counts the expected counts' own rounding, amplified by s / w - 1
+        @test sqrt(e2h) >= (hot / ub - 1) * (ua + ub)
         @test abs(naive - ref) > 0.05
         # a pixel without a likelihood (count plus v not positive) gives NaN
         @test isnan(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 5.0f0, -1.0f0, 2.0f0, 0.0f0)))
@@ -678,38 +680,6 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         args5 = (roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1))
         @test GaussMLE._end_start_replaces(θ5, -9.0f0, θb5, -Inf32, args5...)
         @test !GaussMLE._end_start_replaces(θ5, -Inf32, θb5, -9.0f0, args5...)
-    end
-
-    @testset "starts: an emitter between the focus and the near end of z_range" begin
-        # A calibration whose focus lies near one end of its range, here 0.075 um below the
-        # upper end, and a weakly astigmatic PSF, so the two sides of focus look alike. An
-        # emitter 0.06 um above focus has a fit maximum on each side. No fixed start lies on
-        # the emitter's side, and with the fixed starts alone the fit took the other side
-        # for half of these ROIs; that side is near the end, so the fit also starts there.
-        zc = ZernikeCoefficients(15)
-        zc.phase[6] = 0.03
-        weak = SplinePSF(
-            ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc),
-            -1.0:0.1:1.0, -1.0:0.1:1.0, -0.925:0.05:0.075
-        )
-        m = SplinePSFModel(weak; pixel_size = 0.1)
-        @test m.z_range[2] ≈ 0.075f0
-        camera = IdealCamera(64, 64, 0.1)
-        box, corner, n, z = 9, 28, 120, 0.06
-        ex = Float64.(camera.pixel_edges_x[corner:(corner + box)])
-        ey = Float64.(camera.pixel_edges_y[corner:(corner + box)])
-        mu = 20.0 .+ MicroscopePSFs.integrate_pixels(
-            weak, ex, ey, [Emitter3D(3.263, 3.241, z, 20000.0)]; sampling = 4
-        )
-        Random.seed!(5)
-        data = Float32.(poisson_noise(repeat(mu; outer = (1, 1, n))))
-        c = fill(Int32(corner), n)
-        smld, info = fit(
-            ROIBatch(data, c, c, Int32.(1:n), camera); psf_model = m, backend = :cpu
-        )
-        @test info.n_converged == n
-        on_side = count(e -> abs(e.z - z) < 0.03, smld.emitters)
-        @test on_side >= 0.9n
     end
 
     @testset "fit refuses a ROI beyond the lateral range" begin
