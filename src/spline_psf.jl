@@ -107,7 +107,7 @@ start's x, y, N and background, as SMAP's fitter does, and keeps the fit with th
 likelihood (the earlier start on a tie). With one fixed start it sits at the center of
 `z_range`; with `m >= 2` they are `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`,
 `R` the width of `z_range`. With at least one fixed start, a best fit within `0.3 R` of an
-end of `z_range` is followed by one more start at that end: a fit stays on the side of focus
+end of `z_range` is followed by one more start at that end: a fit usually stays on the side of focus
 it starts on, and the fixed starts reach only to `0.1 R` from each end, so an emitter between
 a focus near an end and that end has no fixed start on its side. Each start costs one more
 Levenberg-Marquardt fit. On
@@ -198,7 +198,7 @@ end
 end
 
 # The start after the fixed ones: `(true, end)` when z, the best fit so far, lies within
-# 0.3 R of that end of z_range (R its width), else `(false, z)`. A fit climbs within the side
+# 0.3 R of that end of z_range (R its width), else `(false, z)`. A fit usually climbs within the side
 # of focus it starts on, and the fixed starts reach only to 0.1 R from each end, so an
 # emitter between a focus in the outer tenth of the range and that end has no fixed start on
 # its side. Its fit can then end on the other side, at the mirror of the emitter about the

@@ -380,9 +380,9 @@ function _release_device_arrays(vendor, arrays...)
         _free_device_arrays(vendor, arrays...)
     catch err
         err isa InterruptException && rethrow()
-        @warn "Freeing GPU arrays after a batch failed; they are left to the garbage collector" exception = (
+        @warn "Freeing GPU arrays the fit is done with failed; they are left to the garbage collector" exception = (
             err, catch_backtrace(),
-        )
+        ) maxlog = 1
     end
     return nothing
 end

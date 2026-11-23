@@ -344,14 +344,19 @@ end
 # difference of two `_fit_objective` values cancels the large terms they share, and a pixel
 # whose count far exceeds its expected count loses most of each term to rounding: about
 # eps (d + v)^2 / (mu + v), 0.4 in the log-likelihood for an 18,000-count hot pixel on a
-# background of 20. Written as s log1p((ua - ub) / (ub + v)) - (ua - ub), s = d + v, it is
-# computed from the two counts' difference instead. Its Float32 error, in units of eps: at
-# each pixel about |term| + |ua - ub| + |s / (u + v) - 1| (|ua| + |ub|) (the last from the
-# counts' own rounding), independent between pixels, so their squares add in e2; and the
-# running sum's own rounding, at most the sum of its magnitudes, in run. A pixel where
-# either count plus v is not positive has no likelihood difference: NaN, which no
-# comparison passes.
-@inline function _diff_accumulate(acc, d::T, ua::T, ub::T, v::T) where {T}
+# background of 20. Written as s log(wa / wb) - (ua - ub), s = d + v, w = u + v, it is
+# computed from the two counts instead: log1p((ua - ub) / wb) while the two are within a
+# factor of about 2 (accurate for nearby counts), log(wa / wb) beyond (finite where the
+# first rounds to log1p(-1), e.g. wa = 0.015 against wb = 290,601). Its Float32 error, in
+# units of eps: at each pixel about |term| + |ua - ub| from the evaluation, plus
+# |s / wa - 1| |ua| + |s / wb - 1| |ub| from each count's own rounding (none when `exact`:
+# counts known exactly, the background of an image with zero transmission); independent
+# between pixels, so their squares add in e2; and the running sum's own rounding, at most
+# the sum of its magnitudes, in run. A pixel where either count plus v is not positive has
+# no likelihood difference: NaN, which no comparison passes.
+@inline function _diff_accumulate(
+        acc, d::T, ua::T, ub::T, v::T, exact::Bool = false
+    ) where {T}
     diff, e2, run = acc
     s = d + v
     wa = ua + v
@@ -360,12 +365,21 @@ end
     if s == zero(T)
         # the limit of s log(w) - w at s = 0, as in `_fit_objective`
         term = wa >= zero(T) && wb >= zero(T) ? -du : T(NaN)
-        k = one(T)
+        ka = one(T)
+        kb = one(T)
     else
-        term = wa > zero(T) && wb > zero(T) ? s * log1p(du / wb) - du : T(NaN)
-        k = max(abs(s / wa - one(T)), abs(s / wb - one(T)))
+        # no log of a non-positive count (it throws on the CPU): NaN there
+        term = T(NaN)
+        if wa > zero(T) && wb > zero(T)
+            term = s * (abs(du) <= wb / 2 ? log1p(du / wb) : log(wa / wb)) - du
+        end
+        ka = abs(s / wa - one(T))
+        kb = abs(s / wb - one(T))
     end
-    e = abs(term) + abs(du) + k * (abs(ua) + abs(ub))
+    e = abs(term) + abs(du)
+    if !exact
+        e += ka * abs(ua) + kb * abs(ub)
+    end
     diff += term
     return (diff, e2 + e * e, run + abs(diff))
 end

@@ -53,24 +53,29 @@ using SMLMSim: poisson_noise
         @test changed >= n ÷ 4
     end
 
-    @testset "two images" begin
-        # two identical channels, identity registration, a 45/55 split, background 10 each
-        I23 = [1.0 0 0; 0 1 0]
-        mc = MultiChannelPSF(;
-            channels = [weak, weak], registration = [I23, I23], transmission = [0.45, 0.55]
-        )
-        jm = JointSplinePSFModel(mc; pixel_size = 0.1)
-        mu = ntuple(
-            v -> 10.0 .+ MicroscopePSFs.integrate_pixels(
-                weak, ex, ey, [Emitter3D(3.263, 3.241, z, 20000.0 * mc.transmission[v])];
-                sampling = 4
-            ), 2
-        )
-        Random.seed!(6)
-        d = ntuple(v -> Float32.(poisson_noise(repeat(mu[v]; outer = (1, 1, n)))), 2)
-        batches = (ROIBatch(d[1], c, c, frames, camera), ROIBatch(d[2], c, c, frames, camera))
-        smld, info = fit(batches; psf_model = jm, backend = :cpu)
-        @test info.n_converged == n
-        @test count(e -> abs(e.z - z) < 0.03, smld.emitters) >= 0.9n
+    if !isdefined(MicroscopePSFs, :MultiChannelPSF)
+        @info "long/spline_end_start.jl: MicroscopePSFs $(pkgversion(MicroscopePSFs)) has no " *
+            "MultiChannelPSF (0.5.7 and later), so JointSplinePSFModel is not defined"
+    else
+        @testset "two images" begin
+            # two identical channels, identity registration, a 45/55 split, background 10 each
+            I23 = [1.0 0 0; 0 1 0]
+            mc = MultiChannelPSF(;
+                channels = [weak, weak], registration = [I23, I23], transmission = [0.45, 0.55]
+            )
+            jm = JointSplinePSFModel(mc; pixel_size = 0.1)
+            mu = ntuple(
+                v -> 10.0 .+ MicroscopePSFs.integrate_pixels(
+                    weak, ex, ey, [Emitter3D(3.263, 3.241, z, 20000.0 * mc.transmission[v])];
+                    sampling = 4
+                ), 2
+            )
+            Random.seed!(6)
+            d = ntuple(v -> Float32.(poisson_noise(repeat(mu[v]; outer = (1, 1, n)))), 2)
+            batches = (ROIBatch(d[1], c, c, frames, camera), ROIBatch(d[2], c, c, frames, camera))
+            smld, info = fit(batches; psf_model = jm, backend = :cpu)
+            @test info.n_converged == n
+            @test count(e -> abs(e.z - z) < 0.03, smld.emitters) >= 0.9n
+        end
     end
 end

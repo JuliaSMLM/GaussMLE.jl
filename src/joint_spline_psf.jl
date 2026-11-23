@@ -553,6 +553,9 @@ end
     return acc
 end
 
+# A view with zero transmission predicts its background alone, exactly: its counts carry no
+# rounding of their own (`exact` in `_diff_accumulate`), so a hot pixel there, under the
+# same background in both fits, adds nothing to the difference or its error.
 @noinline function _view_objective_difference(
         acc, box_size::Int, camera_model, vmodel, r, vmap, cx, cy, A, tr, θav, θbv
     )
@@ -560,7 +563,7 @@ end
         ua, _ = compute_pixel_derivatives(i, j, θav, vmodel)
         ub, _ = compute_pixel_derivatives(i, j, θbv, vmodel)
         w = _readout_variance(camera_model, ua, vmap, cx, cy, i, j)
-        acc = _diff_accumulate(acc, r[i, j], ua, ub, w)
+        acc = _diff_accumulate(acc, r[i, j], ua, ub, w, iszero(tr))
     end
     return acc
 end

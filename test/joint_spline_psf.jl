@@ -507,6 +507,25 @@ else
             @test dd(θa, θb) ≈ obj(θa) - obj(θb) rtol = 1.0e-3
             @test dd(θb, θa) ≈ -dd(θa, θb) rtol = 1.0e-3
             @test dd(θa, θa) == 0
+
+            # a second image with zero transmission predicts its background alone, exactly:
+            # a hot pixel there, under the same background in both fits, changes neither the
+            # difference nor its error scale
+            mdark = MultiChannelPSF(;
+                channels = [spline, spline], registration = [I23, reg], transmission = [1.0, 0.0]
+            )
+            pd = GaussMLE._model_for_cameras(
+                JointSplinePSFModel(mdark; pixel_size = 0.1), cam1, cam2
+            )
+            flat = fill(64.0f0, box, box)
+            hotv = copy(flat)
+            hotv[5, 5] += 2048.0f0
+            θd = Base.setindex(θa, 64.0f0, 6)
+            θe = Base.setindex(θb, 64.0f0, 6)
+            ddark(r2) = GaussMLE._objective_difference(
+                θd, θe, (roi[1], r2), box, pd, Val(false), vm, cx, cy
+            )
+            @test ddark(hotv) == ddark(flat)
         end
 
         @testset "forward law at a rotated, scaled and mirrored registration" begin

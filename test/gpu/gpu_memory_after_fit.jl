@@ -69,12 +69,12 @@ elseif CUDA.functional()
                 @test info.backend == :gpu
                 @test info.n_batches == cld(size(batch.data, 3), nb)
                 @test CUDA.used_memory() <= used
-                # the pool's unused memory is returned: all of it by CUDA.jl 5's reclaim or by
-                # the trim; where the trim does not run on a CUDA.jl 6 (the check above has
-                # failed), down to the package's threshold for a full reclaim
+                # the pool's unused memory is returned, by CUDA.jl 5's reclaim or by the trim,
+                # which must run on CUDA.jl 6 (a trim that throws falls back at run time,
+                # leaving up to `_GPU_CACHE_TRIM_BYTES` cached: that must not pass here)
                 unused = CUDA.cached_memory() - CUDA.used_memory()
-                trimmed = !cuda6 || GaussMLE._cuda_trim_pool()
-                @test unused <= (trimmed ? 64 * 2^20 : GaussMLE._GPU_CACHE_TRIM_BYTES)
+                @test !cuda6 || GaussMLE._cuda_trim_pool()
+                @test unused <= 64 * 2^20
             end
         end
     end

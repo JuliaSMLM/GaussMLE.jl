@@ -633,8 +633,19 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test abs(dh - ref) < 1.0e-3
         @test abs(dh - ref) < eps(Float32) * (10 * sqrt(e2h) + runh)
         # its error scale counts the expected counts' own rounding, amplified by s / w - 1
-        @test sqrt(e2h) >= (hot / ub - 1) * (ua + ub)
+        @test sqrt(e2h) >= (hot / ua - 1) * ua + (hot / ub - 1) * ub
         @test abs(naive - ref) > 0.05
+        # counts orders of magnitude apart (a fit predicting 290,601 where one count fell, the
+        # other 0.015): log1p((ua - ub) / ub) rounds to log1p(-1) = -Inf there, the ratio's
+        # log stays finite, and the end start's gain of millions wins
+        t1 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 0.015067036f0, 290601.25f0, 0.0f0))
+        @test isfinite(t1)
+        @test t1 ≈ log(0.015067036 / 290601.25) - (0.015067036 - 290601.25) rtol = 1.0e-6
+        # counts known exactly (the background of an image with zero transmission) carry no
+        # rounding: a hot pixel under the same background in both fits adds nothing
+        @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0, true) ==
+            (0.0f0, 0.0f0, 0.0f0)
+        @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0)[2] > 1.0f6
         # a pixel without a likelihood (count plus v not positive) gives NaN
         @test isnan(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 5.0f0, -1.0f0, 2.0f0, 0.0f0)))
         @test first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 0.0f0, 3.0f0, 2.0f0, 0.0f0)) == -1.0f0
@@ -676,6 +687,25 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
             @test dd(θ5, θb5) ≈ obj5(θ5) - obj5(θb5) rtol = 1.0e-3
             @test dd(θ5, θ5) == 0
         end
+        # A scene where the end start decides: a PSF that narrows sharply above z = 0, its
+        # focus 0.015 um below the upper end of z_range, an emitter 0.06 um above it. Every
+        # fixed start ends at -0.055 um; the end start reaches the emitter.
+        narrowing(x, y, z) = (
+            t = clamp((z - 0.003) / 0.087, 0.0, 1.0);
+            h = t * t * (3 - 2t);
+            w = (1 - h) * (0.12 + 0.4 * (z + 0.055)^2) + h * 0.014;
+            exp(-((x - 0.04h)^2 + y * y) / (2 * w * w)) / (w * w)
+        )
+        mn = SplinePSFModel(narrowing; pixel_size = 0.1, z_range = (-0.925, 0.075), lateral_range = 1.0)
+        mun = [
+            Float64(GaussMLE.evaluate_psf(mn, i, j, SVector{5, Float32}(7.11, 6.93, 0.06, 2.0e4, 5)))
+                for i in 1:13, j in 1:13
+        ]
+        Random.seed!(31)
+        datan = Float32.(poisson_noise(repeat(mun; outer = (1, 1, 3))))
+        smldn, _ = fit(datan, GaussMLEConfig(; psf_model = mn, backend = :cpu))
+        @test all(e -> abs(e.z - 0.06) < 0.005, smldn.emitters)
+
         # a best fit with no likelihood gives way to the end start's; one with none never wins
         args5 = (roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1))
         @test GaussMLE._end_start_replaces(θ5, -9.0f0, θb5, -Inf32, args5...)

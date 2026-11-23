@@ -233,7 +233,7 @@ the width of `z_range`. Each fixed start keeps the scan start's x, y, N and back
 each start costs one more Levenberg-Marquardt fit with the full `iterations`.
 
 With at least one fixed start, the fit may run once more: when the best fit so far lies
-within `0.3 R` of an end of `z_range`, it also starts at that end. A fit stays on the side of
+within `0.3 R` of an end of `z_range`, it also starts at that end. A fit usually stays on the side of
 focus it starts on, and the fixed starts reach only to `0.1 R` from each end, so when a
 calibration's focus lies near an end of its range, an emitter between the focus and that
 end has no fixed start on its side; with a weakly astigmatic PSF, whose two sides of focus
