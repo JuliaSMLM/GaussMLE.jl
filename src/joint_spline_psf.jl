@@ -427,6 +427,8 @@ end
 _prepare_psf_model(backend, model::JointSplinePSFModel) = Adapt.adapt(backend, model)
 _psf_table_bytes(model::JointSplinePSFModel) =
     _psf_table_bytes(model.views[1]) + _psf_table_bytes(model.views[2])
+_table_arrays(model::JointSplinePSFModel) =
+    (_table_arrays(model.views[1])..., _table_arrays(model.views[2])...)
 
 # An image with zero transmission has no PSF in the fit (its expected count is its
 # background), so its table need not reach the box.

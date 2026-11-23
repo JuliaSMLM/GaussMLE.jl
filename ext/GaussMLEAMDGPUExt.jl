@@ -10,6 +10,7 @@ GaussMLE._functional(::ROCmGPU) = AMDGPU.functional()
 GaussMLE._ka_gpu_backend(::ROCmGPU) = ROCBackend()
 GaussMLE._activate_gpu!(::ROCmGPU, i) = AMDGPU.device!(AMDGPU.devices()[i + 1])
 GaussMLE._reclaim_gpu(::ROCmGPU) = AMDGPU.HIP.reclaim()
+GaussMLE._free_device_arrays(::ROCmGPU, arrays...) = foreach(AMDGPU.unsafe_free!, arrays)
 
 # Zero-based ordinal of the active device, as `_activate_gpu!` takes it (AMDGPU 2.10).
 GaussMLE._active_device_id(::ROCmGPU) = Int(AMDGPU.HIP.device_id(AMDGPU.device()))

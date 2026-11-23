@@ -116,7 +116,7 @@ workgroup of up to 1024, which never ran on that GPU.
 
 Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
 contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,
-the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
+the fit frees its device arrays and the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
 collection, then attempts synchronization and HIP pool reclamation on the failed
 device, restoring the previous device afterward. HIP cleanup errors are ignored;
 other errors propagate. No CUDA-style primary context is released.
@@ -228,7 +228,7 @@ If other processes are present but memory is sufficient and compute utilization 
 
 **On failure:** when the context could not be created, `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`, so its reservation cannot block other processes; `CUDA.reclaim()` is not called then, because it requires an active context and would either hang or silently re-create the released context. A live context is kept: releasing it under CUDA.jl makes every later call in the process fail with `CONTEXT_IS_DESTROYED`, so a retry with a smaller batch could not run. Instead the failed attempt's arrays are collected (`GC.gc(true)`) and the pool's memory is returned (`CUDA.reclaim()`).
 
-**On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
+**On success:** the fit frees each batch's device arrays as soon as the batch's results are on the host, and the variance map and the device copy of a PSF table after the last batch. It then trims CUDA.jl's memory pool, which returns the pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability. No garbage collection is involved: with CUDA.jl 6, `CUDA.reclaim()` runs a full collection first (tens of milliseconds per fit call, more in a process with a large heap), so the fit synchronizes and trims the pool directly. With CUDA.jl 5, `CUDA.reclaim()` is that trim.
 
 ### Multi-GPU Support
 
@@ -389,5 +389,5 @@ The CPU path uses work-groups of 64 fits.
 3. **Compute**: Run fitting kernel
 4. **Transfer**: Copy results back to CPU
 5. **Repeat**: Next batch (steps 2-4)
-6. **Reclaim**: Return GPU memory pool to OS after all batches succeed
+6. **Free and reclaim**: Free each batch's device arrays, then return the GPU memory pool to the OS after all batches succeed
 7. **Output**: BasicSMLD with fitted parameters

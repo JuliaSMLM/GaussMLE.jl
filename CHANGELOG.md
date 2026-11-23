@@ -104,6 +104,11 @@ uncertainties and p-values of every model change.
 
 ### Fixed
 
+- A GPU fit frees its own device arrays and trims the memory pool without a garbage
+  collection. With CUDA.jl 6 the reclaim after every fit ran a full collection: about 55 ms
+  per fit call (a fit of 1,000 ROIs took 55 ms, now 2 ms), more in a process with a large
+  heap, while the arrays of the call in progress stayed allocated until a later collection.
+
 - A read-noise variance map, or a camera's read noise, must be finite and non-negative;
   `fit` throws an `ArgumentError` where the kernel threw or returned nonsense. So must a
   photon or background lower bound in user constraints be at least 0; a negative one could

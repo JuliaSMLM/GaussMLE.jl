@@ -8,9 +8,49 @@ struct ROCmGPU <: GPUVendor end
 _functional(::CUDAGPU) = CUDA.functional()
 _activate_gpu!(::CUDAGPU, device_idx) = CUDA.device!(device_idx)
 _ka_gpu_backend(::CUDAGPU) = CUDABackend()
-_reclaim_gpu(::CUDAGPU) = CUDA.reclaim()
+_free_device_arrays(::CUDAGPU, arrays...) = foreach(CUDA.unsafe_free!, arrays)
+# A vendor without a method leaves its arrays to the garbage collector.
+_free_device_arrays(::GPUVendor, arrays...) = nothing
 _active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
 _release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
+
+# Pool memory above this, cached after a fit, is worth a full reclaim when the pool cannot be
+# trimmed alone (`_reclaim_gpu`).
+const _GPU_CACHE_TRIM_BYTES = 256 * 2^20
+
+# After a fit: return the pool's cached memory to the driver, so that other processes on a
+# shared GPU see it as free. The fit frees its own device arrays (`_free_device_arrays`), so
+# nothing here waits on the garbage collector; only the pool is trimmed.
+# - CUDA.jl 5: `CUDA.reclaim()` synchronizes and trims the pool.
+# - CUDA.jl 6: `CUDA.reclaim()` first runs a full `GC.gc`, about 55 ms on every fit call in a
+#   small process and more with the caller's heap, and its levels below `RECLAIM_GC` do not
+#   trim. So: synchronize (`RECLAIM_SYNC`), then the trim step alone. That step is not public
+#   in CUDA.jl; where it is missing, the full reclaim runs only when the pool caches more
+#   than `_GPU_CACHE_TRIM_BYTES`, a size at which the fit itself took far longer.
+function _reclaim_gpu(::CUDAGPU)
+    isdefined(CUDA, :RECLAIM_SYNC) || return CUDA.reclaim()
+    CUDA.reclaim(CUDA.RECLAIM_SYNC)
+    if _cuda_trim_pool()
+        return nothing
+    end
+    CUDA.cached_memory() > _GPU_CACHE_TRIM_BYTES && CUDA.reclaim(CUDA.RECLAIM_GC)
+    return nothing
+end
+
+# The pool trim of CUDA.jl 6's reclaim, without its garbage collection. `true` when it ran.
+function _cuda_trim_pool()
+    isdefined(CUDA, :CUDACore) || return false
+    core = CUDA.CUDACore
+    (isdefined(core, :trim_pools) && isdefined(core, :stream_ordered)) || return false
+    dev = CUDA.device()
+    core.trim_pools(dev, core.stream_ordered(dev))
+    return true
+end
+
+# After a failed attempt, when the arrays are left to the garbage collector: the vendor's
+# full reclaim.
+_reclaim_gpu_full(::CUDAGPU) = CUDA.reclaim()
+_reclaim_gpu_full(vendor::GPUVendor) = _reclaim_gpu(vendor)
 
 # Workgroup size of the fitting kernel's GPU launch; `nothing` lets the backend choose.
 # CUDA sizes it from its occupancy query. AMDGPU does the same from HIP's, up to 1024 work

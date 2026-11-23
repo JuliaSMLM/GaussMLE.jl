@@ -312,7 +312,7 @@ const CPU_WORKGROUP_SIZE = 64
 function _cleanup_after_failure(vendor, dev_idx, context_active::Bool)
     if context_active
         GC.gc(true)
-        _reclaim_gpu(vendor)
+        _reclaim_gpu_full(vendor)
     else
         _release_gpu_context(vendor, dev_idx)
     end
@@ -373,6 +373,12 @@ function _device_map(backend, m::AbstractMatrix)
     return d
 end
 _device_map(backend, m::Tuple) = map(x -> _device_map(backend, x), m)
+_map_arrays(m::AbstractMatrix) = (m,)
+_map_arrays(m::Tuple) = m
+# The arrays of the device model that are not the host model's own: those the fit made.
+_device_only_arrays(device_model, host_model) = filter(
+    a -> !any(h -> h === a, _table_arrays(host_model)), _table_arrays(device_model)
+)
 
 """
     _run_mle_kernel!(results, uncertainties, covariances, chi2,
@@ -614,7 +620,19 @@ function _run_mle_kernel!(
                     covariances[:, batch_start:batch_end] = Array(d_covariances)
                     chi2[batch_start:batch_end] = Array(d_chi2)
                     converged[batch_start:batch_end] = Array(d_converged)
+
+                    # The batch's device arrays are done with: hand their memory back now.
+                    # Left to the garbage collector they would be held until its next run.
+                    _free_device_arrays(
+                        vendor, d_batch_data, d_x_corners, d_y_corners, d_results,
+                        d_uncertainties, d_covariances, d_chi2, d_converged
+                    )
                 end
+                # and so are the variance map and the device copy of a PSF table
+                _free_device_arrays(
+                    vendor, _map_arrays(d_variance_map)...,
+                    _device_only_arrays(device_psf, psf_pixels)...
+                )
 
                 # All batches succeeded - reclaim pool memory so queries show it as free
                 # for other processes competing for the same GPU

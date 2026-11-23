@@ -309,6 +309,7 @@ end
 _prepare_psf_model(backend, model::SplinePSFModel) = Adapt.adapt(backend, model)
 _psf_table_bytes(model::SplinePSFModel{T}) where {T} =
     sizeof(T) * length(model.pixel_psf.coefficients)
+_table_arrays(model::SplinePSFModel) = (model.pixel_psf.coefficients,)
 
 _array_fit_pixel_size(model::SplinePSFModel) = model.pixel_size
 
