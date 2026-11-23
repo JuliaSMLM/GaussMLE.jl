@@ -253,9 +253,11 @@ whose count far exceeds its expected count (a hot pixel). The end start begins o
 z, and a fit on a bound reports infinite uncertainties, so a win by rounding alone would cost
 an interior fit its uncertainties. A result therefore differs from the fixed starts' only
 where the end start reaches a higher maximum. The rule errs on one side only: an end start it
-accepts is higher in fact; one it refuses can be higher by up to about twice its cutoff (a
-few 1e-4 to 1e-3 in log-likelihood), where the two maxima are indistinguishable in the data
-(a likelihood ratio of about 1.001) and the fit returns the fixed starts' result.
+accepts is higher in fact; one it refuses can be higher by up to about twice its cutoff, where
+the fit returns the fixed starts' result. The cutoff is a few 1e-4 to 1e-3 in log-likelihood
+for an ordinary ROI, where the two maxima are indistinguishable in the data (a likelihood
+ratio of about 1.001), and larger where Float32 cannot resolve the difference (0.04 for a
+21 x 21 ROI of 90,000 photons with an 18,000-count hot pixel).
 
 That higher maximum is not always nearer the truth, and at low counts it is often on the bound
 itself. On one image of the same PSF and range, 9 x 9 ROIs, background 20, 300 emitters at

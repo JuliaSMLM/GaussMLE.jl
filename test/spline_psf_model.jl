@@ -643,6 +643,22 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test t1 ≈ log(0.015067036 / 290601.25) - (0.015067036 - 290601.25) rtol = 1.0e-6
         # and where their ratio would underflow (subnormal counts, below the default bounds)
         @test isfinite(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2.0f0^-102, 2.0f0^-126, 2.0f0^24, 0.0f0)))
+        @test issubnormal(2.0f0^-140)
+        t2 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 2.0f0^-140, 1.0f0, 0.0f0))
+        @test t2 ≈ log(2.0^-140) - (2.0^-140 - 1) rtol = 1.0e-6
+        # counts a factor of 1.55 apart at every pixel of a 9 x 9 ROI (Codex, review round 5):
+        # two separately rounded logs, near 7.5 each, put the difference at +0.025 where it is
+        # -0.024 and accepted the lower end start. The difference agrees with Float64 within
+        # its error scale, and its sign decides, both ways round.
+        for (ua, ub) in ((1802.0f0, 1166.0f0), (1166.0f0, 1802.0f0))
+            acc = (0.0f0, 0.0f0, 0.0f0)
+            for _ in 1:81
+                acc = GaussMLE._diff_accumulate(acc, 1461.0f0, ua, ub, 0.0f0)
+            end
+            ref = 81 * (1461 * log(Float64(ua) / Float64(ub)) - (Float64(ua) - Float64(ub)))
+            @test abs(acc[1] - ref) <= eps(Float32) * (10 * sqrt(acc[2]) + acc[3])
+            @test GaussMLE._end_start_wins(acc...) == (ref > 0)
+        end
         # counts known exactly (the background of an image with zero transmission) carry no
         # rounding: a hot pixel under the same background in both fits adds nothing
         @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0, true) ==

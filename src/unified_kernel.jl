@@ -346,10 +346,13 @@ end
 # eps (d + v)^2 / (mu + v), 0.4 in the log-likelihood for an 18,000-count hot pixel on a
 # background of 20. Written as s log(wa / wb) - (ua - ub), s = d + v, w = u + v, it is
 # computed from the two counts instead: log1p((ua - ub) / wb) while the two are within a
-# factor of about 2 (accurate for nearby counts), log(wa) - log(wb) beyond (finite where the
-# first rounds to log1p(-1), e.g. wa = 0.015 against wb = 290,601, and where wa / wb would
-# underflow). Its Float32 error, in
-# units of eps: at each pixel about |term| + |ua - ub| from the evaluation, plus
+# factor of about 2 (accurate for nearby counts), log(wa / wb) beyond (finite where the
+# first rounds to log1p(-1), e.g. wa = 0.015 against wb = 290,601; |log| > 0.4 there, so the
+# ratio's rounding stays within the error scale below), and log(wa) - log(wb) only where
+# wa / wb is not a normal number (it would underflow or overflow; |log| > 87 there, so the
+# two logs' rounding stays within it too: subtracting two logs of counts a factor of 1.5
+# apart, each near 7.5, loses about 35 times more and misjudged a 9 x 9 ROI). Its Float32
+# error, in units of eps: at each pixel about |term| + |ua - ub| from the evaluation, plus
 # |s / wa - 1| |ua| + |s / wb - 1| |ub| from each count's own rounding (none when `exact`:
 # counts known exactly, the background of an image with zero transmission); independent
 # between pixels, so their squares add in e2; and the running sum's own rounding, at most
@@ -372,7 +375,10 @@ end
         # no log of a non-positive count (it throws on the CPU): NaN there
         term = T(NaN)
         if wa > zero(T) && wb > zero(T)
-            term = s * (abs(du) <= wb / 2 ? log1p(du / wb) : log(wa) - log(wb)) - du
+            r = wa / wb
+            lr = abs(du) <= wb / 2 ? log1p(du / wb) :
+                floatmin(T) <= r <= floatmax(T) ? log(r) : log(wa) - log(wb)
+            term = s * lr - du
         end
         ka = abs(s / wa - one(T))
         kb = abs(s / wb - one(T))
