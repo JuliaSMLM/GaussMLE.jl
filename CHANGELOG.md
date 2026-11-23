@@ -75,8 +75,29 @@ uncertainties and p-values of every model change.
   `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
   ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
   fitted. A MicroscopePSFs `PlanePSF` of a spline keeps the spline's grid with z shifted by
-  `-dz`. A `MultiChannelPSF` is refused: fit each channel with its own model (there is no
-  joint fit across channels).
+  `-dz`. A `MultiChannelPSF` is refused by `SplinePSFModel`: fit each channel with its own
+  model, or two channels at once with `JointSplinePSFModel`.
+- **JointSplinePSFModel**: one emitter fitted to two images of the same frame at once
+  (two polarization channels, two focal planes), from a two-channel MicroscopePSFs
+  `MultiChannelPSF` (MicroscopePSFs 0.5.7 or later). Shared x, y, z and total photons, one
+  background per image; the registration, photon split and z offsets of the
+  `MultiChannelPSF` are held fixed, and its reference channel's registration must be exactly
+  the identity. `fit((batch1, batch2), fitter)` takes one `ROIBatch` per image, each with its
+  own camera, `batch1` from the reference channel, and returns a `BasicSMLD` of
+  `Emitter3DFitJoint` (the fields of `Emitter3DFitGaussMLE`, then `bg2` and `σ_bg2`) with the
+  fit information. The corners enter the fit, so a ROI off its camera, a pair whose first ROI
+  maps entirely outside its second, unevenly spaced pixel edges, an sCMOS gain that is not
+  finite and positive, and counts that are not finite after calibration are refused. Pairs
+  whose second ROIs are farther from where the registration puts the first than ROIs placed
+  on their emitters can be give a warning and are fitted as given, and every pair's offset
+  is in `smld.metadata["pair_offsets_px"]`. A fit whose PSF table does not reach every pixel
+  of a ROI that receives light reports infinite uncertainties; a second image with zero
+  transmission takes no part in these checks. One pixel size per
+  camera, the mean over the sensor, serves the tables, the registration and the output
+  positions. The likelihood, Levenberg-Marquardt fit, stop test, z starts, CRLB and p-value
+  are `SplinePSFModel`'s, over both images; CPU, CUDA and AMDGPU.
+- Constraints for a different number of parameters than the model has are refused with an
+  `ArgumentError` (a `BoundsError` before).
 - `fit(Array; variance_map)` accepts a box x box or box x box x n map.
 - A precompile workload compiles the first CPU fit of `GaussianXYNBS` and `SplinePSFModel`
   for both cameras.

@@ -47,7 +47,8 @@ model's `lateral_range` shrinks to what it covers, and the ROI check below appli
 A `MicroscopePSFs.PlanePSF` (a plane focused `dz` away) of a SplinePSF keeps the spline's
 grid, and its own z range is the spline's shifted by `-dz`. A `MultiChannelPSF` throws
 `ArgumentError`: one model fits one channel, so build one per channel and fit each channel's
-ROIs; there is no joint fit across channels. A plain callable has no extent GaussMLE can
+ROIs, or fit two channels at once with [`JointSplinePSFModel`](@ref). A plain callable has
+no extent GaussMLE can
 check; its default `lateral_range` is 1.5 µm, and it must describe the PSF out to
 `lateral_range` plus one pixel.
 
@@ -182,7 +183,7 @@ end
 
 # z (µm) of fixed start q = 0 .. m - 1 of m: the center of z_range for m = 1, else m points
 # evenly over the central 80 % of the range (SMAP's wrapper places its starts the same way).
-@inline function _spline_start_z(model::SplinePSFModel{T}, q::Int, m::Int) where {T}
+@inline function _spline_start_z(model::PSFModel{N, T}, q::Int, m::Int) where {N, T}
     zlo, zhi = model.z_range
     R = zhi - zlo
     center = (zlo + zhi) / 2
@@ -821,13 +822,17 @@ function default_constraints(model::SplinePSFModel, box_size)
     )
 end
 
-function _resolve_constraints(
-        constraints::ParameterConstraints{5}, model::SplinePSFModel, box_size
-    )
+_resolve_constraints(
+    constraints::ParameterConstraints{5}, model::SplinePSFModel, box_size
+) = _z_range_constraints(constraints, model)
+
+# Custom constraints with their z interval (parameter 3) cut to the model's z_range; also
+# JointSplinePSFModel's.
+function _z_range_constraints(constraints::ParameterConstraints{N}, model) where {N}
     lo = max(constraints.lower[3], model.z_range[1])
     hi = min(constraints.upper[3], model.z_range[2])
     lo <= hi || throw(ArgumentError("custom z constraints do not intersect model.z_range"))
-    return ParameterConstraints{5}(
+    return ParameterConstraints{N}(
         Base.setindex(constraints.lower, lo, 3), Base.setindex(constraints.upper, hi, 3),
         constraints.max_step
     )

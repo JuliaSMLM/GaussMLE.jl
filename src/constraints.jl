@@ -85,8 +85,17 @@ _photon_background_indices(::AstigmaticXYZNB) = (4, 5)
 # The fit takes the log of each pixel's expected count plus read-noise variance, which a
 # negative photon count or background can make negative, so lower bounds below zero (or
 # NaN) are refused before the kernel runs.
-function _validate_constraints(constraints::ParameterConstraints, psf_model::PSFModel)
-    for (k, name) in zip(_photon_background_indices(psf_model), ("photon", "background"))
+function _validate_constraints(
+        constraints::ParameterConstraints{N}, psf_model::PSFModel
+    ) where {N}
+    N == length(psf_model) || throw(
+        ArgumentError(
+            "constraints for $N parameters given to a model with $(length(psf_model)) " *
+                "($(nameof(typeof(psf_model))))"
+        )
+    )
+    for (n, k) in enumerate(_photon_background_indices(psf_model))
+        name = n == 1 ? "photon" : "background"
         lo = constraints.lower[k]
         lo >= 0 || throw(
             ArgumentError("the $name lower bound must be at least 0, got $lo")

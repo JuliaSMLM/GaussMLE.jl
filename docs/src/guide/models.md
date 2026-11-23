@@ -172,10 +172,9 @@ callable has no grid GaussMLE can check: its default `lateral_range` is 1.5 µm,
 describe the PSF out to `lateral_range` plus one pixel.
 
 A `PlanePSF` (MicroscopePSFs' plane focused `dz` away) of a SplinePSF keeps the spline's
-grid, and its z range is the spline's shifted by `-dz`. One model fits one PSF in one ROI:
-a `MultiChannelPSF` is refused. For data from several channels (two planes, two
-polarizations), build a model per channel and fit each channel's ROIs on their own; nothing
-links x, y and z across channels, so the channels' photons are not pooled.
+grid, and its z range is the spline's shifted by `-dz`. One `SplinePSFModel` fits one PSF
+in one ROI, so a `MultiChannelPSF` is refused: fit each channel with its own model, or fit
+two channels at once with [`JointSplinePSFModel`](@ref) (below).
 
 Construction builds a Float32 table of pixel averages, using composite two-point Gauss-Legendre
 quadrature with five sub-intervals per lateral axis. The lateral table spacings are
@@ -254,6 +253,124 @@ of the Gaussian models.
 - You have a calibrated PSF that a Gaussian does not describe well
 - You need z-position information from that PSF
 
+### JointSplinePSFModel - One Emitter in Two Images
+
+One emitter seen in two images of the same frame, such as the two polarization channels
+behind a polarizing beam splitter or two focal planes, fitted to both images at once:
+shared x, y, z and total photons, one background per image (6 parameters). The model is
+built from a two-channel MicroscopePSFs `MultiChannelPSF`, such as the one PSFLearning
+exports for a multi-channel setup, and fits its forward law: image `v` records
+`N * transmission[v]` photons of channel `v`'s PSF, at the position its registration maps
+the emitter to and at `z + z_offset[v]`. The registration (an affine `[A t]` from the
+reference camera's microns to channel `v`'s), the transmissions (the photon split between
+the images, learned with the PSF) and the z offsets are held fixed. Each channel must be a
+3D `SplinePSF` (or a `PlanePSF` of one) that integrates to one at every z; a 4Pi channel,
+normalized only on average over its fringe, is not supported.
+
+```julia
+using GaussMLE, MicroscopePSFs
+
+mc = load_psf("hv.h5")                            # a two-channel MultiChannelPSF
+model = JointSplinePSFModel(mc; pixel_size = 0.1)
+smld, info = fit((batch_ref, batch_other); psf_model = model)
+smld.emitters[1].bg2                              # the second image's background
+```
+
+The two `ROIBatch`es hold the same emitters in the same order and frames, the first from
+the reference channel (`mc.reference`, which need not be channel 1); each batch's corners
+place its ROIs on its own camera, which may be the same camera object (two halves of one
+sensor) or two crops. Each camera's pixel size and calibration apply to its own image, and
+any registration with an invertible linear part works, mirrored and rotated ones included
+(one close to singular, `|det|` below `1e-6` times its largest entry squared, is refused).
+The reference channel's registration must be exactly the identity: MicroscopePSFs accepts
+one within rounding of it, and that is refused here, because positions are reported on the
+reference camera. Positions come back in the reference camera's microns, in
+`Emitter3DFitJoint`: the fields of `Emitter3DFitGaussMLE`, with `photons` the total over
+both images before transmission and `bg` the reference image's background, then `bg2` and
+`σ_bg2`.
+
+The corners are part of the fit, not only of the output: with the registration they say
+where the emitter of the first ROI lies in the second. Each ROI must contain its emitter's
+position in its image; that is the caller's to ensure, and `fit` checks only that the two
+ROIs of a pair overlap. A pair with wrong corners is a wrong fit, and beyond that
+requirement its corners alone cannot show it.
+
+`fit` refuses, with an `ArgumentError`:
+
+- a ROI that does not lie on its camera (for an `IdealCamera` too);
+- a pair whose first ROI the registration maps entirely outside its second ROI, so that no
+  position is in both;
+- a camera whose pixel edges are not evenly spaced, an sCMOS gain that is not finite and
+  positive, and counts that are not finite after the camera calibration.
+
+`fit` warns, and fits every pair as given, when second ROIs are farther from where the
+registration puts the first ones than two ROIs each placed on the pixel that holds the
+emitter can be: one first-camera pixel mapped to the second camera plus one second-camera
+pixel, per axis, between the mapped centre of the first ROI and the centre of the second.
+The warning comes when the median over at least 5 pairs is beyond that, or single pairs are
+beyond 1.5 times that. Pairs with a ROI at a sensor edge are not counted: a box finder
+moves such a ROI inward of its emitter. A registration that does not match the cameras,
+swapped batches and a crop with the wrong origin give this warning when they are not
+refused and move the ROIs beyond that limit; a smaller error, such as a crop origin one
+pixel off, can give none, so silence is not a confirmation. Valid pairs placed another way give the warning too, for example ROIs
+centred on the brightest pixel of a PSF whose peak is off its emitter, which is why it is a
+warning.
+
+Every pair's offset is in the result, as `smld.metadata["pair_offsets_px"]`: a 2 × n
+matrix, x and y in second-camera pixels, of the centre of the first ROI mapped to the
+second camera minus the centre of the second ROI. A caller who knows how the ROIs were
+placed can filter on it with a limit of its own.
+
+A fit reports infinite uncertainties, as a fit on a position bound does, when its emitter
+ends so far from a ROI's centre, in an image that receives light, that some pixel of that
+ROI lies beyond the image's table (zero beyond `lateral_range` plus about one pixel): it
+was fitted with a PSF cut off there. With a box as wide as the table reaches, this includes
+an emitter in the outermost pixels of a sensor.
+
+An image with zero transmission holds no light of the emitter. Its table need not reach the
+box, and its ROI is not judged for a cut-off PSF. If it is the second image, its ROI may lie
+anywhere on its camera, and the pair is neither refused nor warned about. The reference ROI
+is judged whatever its transmission, because the fitted position is expressed in its pixels
+and bounded near its box (the default bounds reach about a pixel beyond it).
+
+With `starts = 1` the fit relies on the z scan of its start alone. Where two z, one on each
+side of focus, fit the start almost equally well, the scan can take the wrong one and the
+fit then converges there; the default starts are there for that.
+
+A second ROI that is a pixel or two from where it should be is fitted with finite
+uncertainties and a wrong position, and neither filter is sure to catch it. The p-value
+shows a large error of this kind, but at a few hundred photons most fits with a one-pixel
+error pass `p > 0.05`. The pairing is the caller's to get right; the simplest way is to
+find ROIs in the reference image and place the second ROI through the registration.
+
+A camera that is a crop of a sensor must carry the crop's pixel edges
+(`IdealCamera(edges_x, edges_y)`); a camera built from a pixel range starts at 0 whatever
+the range's first pixel. When a camera's pixel size differs from the model's `pixel_size`,
+that image's table is integrated again on every `fit` call, as `SplinePSFModel`'s is.
+
+Each image gets `SplinePSFModel`'s checks (its channel's grid must cover `lateral_range`
+plus one pixel, its table must cover the z range shifted by its offset), and the fit is
+`SplinePSFModel`'s: the same likelihood summed over both images, the same
+Levenberg-Marquardt fit on the full (here 6 × 6) Fisher matrix and stop test, and the same
+z starts. The start uses both images: each image's edge background, the two centroids
+weighted by transmission times signal (an image with zero transmission sets only its own
+background), and a z scan of the Poisson likelihood of both images, for sCMOS pairs too
+(as `SplinePSFModel`'s scan; the fit then climbs the sCMOS likelihood). The CRLB
+is the inverse Fisher matrix over both images, so it reflects all the information they
+carry together: on simulated pairs of an astigmatic PSF with the second image focused
+0.15 µm deeper, the joint fit's x uncertainty was below either image's alone, and fits
+scatter at their CRLB. The p-value is the Pearson statistic over both images' pixels,
+`2 * box^2 - 6` degrees of freedom. On simulated 9 px pairs a joint fit took about 1.5 times
+as long as a `SplinePSFModel` fit of one image on the CPU (16 threads). On an NVIDIA RTX
+4090 it took about twice as long in batches of 100,000 pairs or more, and close to the same
+time in batches of 10,000, where the fixed cost of a GPU call dominates both.
+`JointSplinePSFModel` needs MicroscopePSFs 0.5.7 or later.
+
+**Use this model when:**
+- Every emitter appears in two images (channels, planes or polarizations) with a known
+  registration and photon split
+- You want one localization and one CRLB from both images, rather than two fits to merge
+
 ## Custom PSF Models
 
 A subtype of `GaussMLE.PSFModel` defined outside this package must be `isbits` after
@@ -280,14 +397,14 @@ without them a model is treated as 2D and its bounds are not checked:
 
 ## Model Comparison
 
-| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel |
-|---------|--------------|---------------|------------------|-----------------|----------------|
-| Parameters | 4 | 5 | 6 | 5 | 5 |
-| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape |
-| Dimensions | 2D | 2D | 2D | 3D | 3D |
-| Speed | Fastest | Medium | Slowest | Medium | Table lookup |
-| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration |
-| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
+| Feature | GaussianXYNB | GaussianXYNBS | GaussianXYNBSXSY | AstigmaticXYZNB | SplinePSFModel | JointSplinePSFModel |
+|---------|--------------|---------------|------------------|-----------------|----------------|---------------------|
+| Parameters | 4 | 5 | 6 | 5 | 5 | 6 |
+| PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape | Tabulated, per image |
+| Dimensions | 2D | 2D | 2D | 3D | 3D | 3D, two images |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup | 1.5 to 2 × SplinePSFModel's time |
+| Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration | Depends on calibration |
+| Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 
 ## Unit Convention
 
