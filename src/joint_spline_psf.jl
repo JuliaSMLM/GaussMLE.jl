@@ -544,7 +544,7 @@ end
         corner_x, corner_y
     ) where {T}
     o = _joint_offset(model, corner_x, corner_y)
-    acc = (zero(T), zero(T), zero(T))
+    acc = (0.0, zero(T), zero(T))
     for v in 1:2
         ca = _view_context(model, v, θa, o, roi, variance_map, corner_x, corner_y)
         θbv = _view_context(model, v, θb, o, roi, variance_map, corner_x, corner_y)[8]

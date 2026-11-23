@@ -646,18 +646,30 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test issubnormal(2.0f0^-140)
         t2 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 2.0f0^-140, 1.0f0, 0.0f0))
         @test t2 ≈ log(2.0^-140) - (2.0^-140 - 1) rtol = 1.0e-6
-        # counts a factor of 1.55 apart at every pixel of a 9 x 9 ROI (Codex, review round 5):
-        # two separately rounded logs, near 7.5 each, put the difference at +0.025 where it is
-        # -0.024 and accepted the lower end start. The difference agrees with Float64 within
-        # its error scale, and its sign decides, both ways round.
-        for (ua, ub) in ((1802.0f0, 1166.0f0), (1166.0f0, 1802.0f0))
-            acc = (0.0f0, 0.0f0, 0.0f0)
-            for _ in 1:81
-                acc = GaussMLE._diff_accumulate(acc, 1461.0f0, ua, ub, 0.0f0)
+        # ROIs whose pixels are alike (Codex, review rounds 5 and 6): Float32 rounds alike at
+        # every pixel, so its errors add up across the ROI past any per-pixel bound. Two logs
+        # near 7.5 subtracted put a 9 x 9 difference at +0.025 where it is -0.024; the log of
+        # a ratio near 1.6 put a 21 x 21 one at +0.108 where it is -0.026, and an sCMOS 9 x 9
+        # one at +0.0097 where it is -0.0005; each accepted a lower end start. In Float64 the
+        # difference matches the exact sum, and its sign decides, both ways round.
+        cases = (
+            (1461.0f0, fill(1802.0f0, 81), fill(1166.0f0, 81), 0.0f0),
+            (4141.0f0, fill(5264.9326f0, 441), fill(3189.681f0, 441), 0.0f0),
+            (1040.0f0, fill(1276.9766f0, 81), [fill(834.269f0, 74); fill(834.26904f0, 7)], 2.3f0),
+        )
+        for (d, uas, ubs, v) in cases, (A, B) in ((uas, ubs), (ubs, uas))
+            acc = (0.0, 0.0f0, 0.0f0)
+            for k in eachindex(A)
+                acc = GaussMLE._diff_accumulate(acc, d, A[k], B[k], v)
             end
-            ref = 81 * (1461 * log(Float64(ua) / Float64(ub)) - (Float64(ua) - Float64(ub)))
-            @test abs(acc[1] - ref) <= eps(Float32) * (10 * sqrt(acc[2]) + acc[3])
-            @test GaussMLE._end_start_wins(acc...) == (ref > 0)
+            s = Float64(d) + Float64(v)
+            ref = sum(
+                s * log((Float64(a) + v) / (Float64(b) + v)) - (Float64(a) - Float64(b))
+                    for (a, b) in zip(A, B)
+            )
+            @test acc[1] ≈ ref rtol = 1.0e-9 atol = 1.0e-9
+            @test GaussMLE._end_start_wins(acc...) == (ref > 1.0e-4 + eps(Float32) * (10 * sqrt(acc[2]) + acc[3]))
+            @test !(ref < 0 && GaussMLE._end_start_wins(acc...))
         end
         # counts known exactly (the background of an image with zero transmission) carry no
         # rounding: a hot pixel under the same background in both fits adds nothing

@@ -220,22 +220,22 @@ end
 end
 
 # Whether the end start's fit replaces the best fit so far, from the difference of their
-# log-likelihoods computed pixel by pixel (`_objective_difference`, with its error scales e2
-# and run): only when that is above the stop test's tolerance (`_LM_GAIN_TOL`: each fit
-# stops within about that of its maximum, so a smaller difference does not tell two maxima
-# apart) plus eps (10 sqrt(e2) + run), ten times the pixels' independent rounding and all of
-# the sum's. The end start begins on a bound of z, and a fit that starts within the stop
-# tolerance of a maximum stops where it starts; won on rounding, it would put an interior
-# fit on the bound, whose uncertainties are `Inf` (`_mark_pinned_fits!`). The two fits' own
-# Float32 objectives do not tell: a pixel whose count far exceeds its expected count loses
-# tenths of a log-likelihood unit to rounding in each. A NaN difference (no likelihood at
-# some pixel) never wins. On simulated ROIs this difference was within 2.4e-4 of the Float64
-# value where the two objectives' difference was off by 0.26 (a hot pixel), and within
-# 1.5e-5 for two maxima 0.0009 apart. So a result differs from the fixed starts' only where
-# the end start reaches a higher maximum that the fit resolves. The rule errs on one side
-# only: an accepted end start is higher in fact; a refused one can be higher by up to about
-# twice the cutoff, where the two maxima are indistinguishable in the data.
-@inline function _end_start_wins(diff::T, e2::T, run::T) where {T}
+# log-likelihoods computed pixel by pixel in Float64 (`_objective_difference`, with the
+# error scales e2 and run in the counts' type T): only when that is above the stop test's
+# tolerance (`_LM_GAIN_TOL`: each fit stops within about that of its maximum, so a smaller
+# difference does not tell two maxima apart) plus eps(T) (10 sqrt(e2) + run), a margin for
+# the counts' own Float32 rounding and the size of the terms. The end start begins on a
+# bound of z, and a fit that starts within the stop tolerance of a maximum stops where it
+# starts; won on rounding, it would put an interior fit on the bound, whose uncertainties
+# are `Inf` (`_mark_pinned_fits!`). The two fits' own Float32 objectives do not tell: a pixel
+# whose count far exceeds its expected count loses tenths of a log-likelihood unit to
+# rounding in each, and a Float32 sum over a ROI of alike pixels rounds alike at every pixel.
+# A NaN difference (no likelihood at some pixel) never wins. So a result differs from the
+# fixed starts' only where the end start reaches a higher maximum that the fit resolves.
+# The rule errs on one side only: an accepted end start is higher in fact (for the counts
+# the fit computes, to about 1e-12); a refused one can be higher by up to about twice the
+# cutoff.
+@inline function _end_start_wins(diff, e2::T, run::T) where {T}
     return diff > T(_LM_GAIN_TOL) + eps(T) * (10 * sqrt(e2) + run)
 end
 

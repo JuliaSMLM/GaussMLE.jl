@@ -246,17 +246,20 @@ than 0.03 µm from the truth for most of these ROIs: the noise decides the side 
 there, and no start changes it.) Fits away from the ends take no more time.
 
 The end start's fit replaces the best one only when its log-likelihood is higher by more than
-the fit resolves: above 1e-4 (each fit stops within about that of its maximum) plus the
-Float32 error of the difference. The difference is computed pixel by pixel from the two fits'
-expected counts, because each fit's own Float32 log-likelihood can be off by tenths at a pixel
-whose count far exceeds its expected count (a hot pixel). The end start begins on the bound of
+the fit resolves: above 1e-4 (each fit stops within about that of its maximum) plus a margin
+for the Float32 rounding of the expected counts. The difference is computed pixel by pixel from
+the two fits' expected counts, in Float64, because each fit's own Float32 log-likelihood can be
+off by tenths at a pixel whose count far exceeds its expected count (a hot pixel), and a
+Float32 sum over a ROI whose pixels are alike rounds alike at every pixel, so its errors add up
+rather than average out. This one pass per fit that runs the end start is the only Float64
+arithmetic in the fit. The end start begins on the bound of
 z, and a fit on a bound reports infinite uncertainties, so a win by rounding alone would cost
 an interior fit its uncertainties. A result therefore differs from the fixed starts' only
 where the end start reaches a higher maximum. The rule errs on one side only: an end start it
 accepts is higher in fact; one it refuses can be higher by up to about twice its cutoff, where
 the fit returns the fixed starts' result. The cutoff is a few 1e-4 to 1e-3 in log-likelihood
 for an ordinary ROI, where the two maxima are indistinguishable in the data (a likelihood
-ratio of about 1.001), and larger where Float32 cannot resolve the difference (0.04 for a
+ratio of about 1.001), and larger where the counts' own rounding is large (0.04 for a
 21 x 21 ROI of 90,000 photons with an 18,000-count hot pixel).
 
 That higher maximum is not always nearer the truth, and at low counts it is often on the bound

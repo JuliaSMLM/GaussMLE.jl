@@ -345,54 +345,51 @@ end
 # whose count far exceeds its expected count loses most of each term to rounding: about
 # eps (d + v)^2 / (mu + v), 0.4 in the log-likelihood for an 18,000-count hot pixel on a
 # background of 20. Written as s log(wa / wb) - (ua - ub), s = d + v, w = u + v, it is
-# computed from the two counts instead: log1p((ua - ub) / wb) while the two are within a
-# factor of about 2 (accurate for nearby counts), log(wa / wb) beyond (finite where the
-# first rounds to log1p(-1), e.g. wa = 0.015 against wb = 290,601; |log| > 0.4 there, so the
-# ratio's rounding stays within the error scale below), and log(wa) - log(wb) only where
-# wa / wb is not a normal number (it would underflow or overflow; |log| > 87 there, so the
-# two logs' rounding stays within it too: subtracting two logs of counts a factor of 1.5
-# apart, each near 7.5, loses about 35 times more and misjudged a 9 x 9 ROI). Its Float32
-# error, in units of eps: at each pixel about |term| + |ua - ub| from the evaluation, plus
-# |s / wa - 1| |ua| + |s / wb - 1| |ub| from each count's own rounding (none when `exact`:
-# counts known exactly, the background of an image with zero transmission); independent
-# between pixels, so their squares add in e2; and the running sum's own rounding, at most
-# the sum of its magnitudes, in run. A pixel where either count plus v is not positive has
-# no likelihood difference: NaN, which no comparison passes.
+# computed from the two counts instead, and in Float64 from the Float32 counts: a ROI whose
+# pixels are alike rounds alike at every pixel, so Float32 rounding errors add up across the
+# ROI rather than averaging out, past any per-pixel bound (three review rounds found such
+# ROIs: two logs near 7.5 subtracted, then the log of a ratio near 1.6, over 81 and 441 equal
+# pixels). In Float64 the evaluation is exact to about 1e-12 for any Float32 counts (their
+# ratio cannot underflow there): log1p((ua - ub) / wb) while the two are within a factor of
+# about 2, log(wa / wb) beyond. The pass runs once per fit that runs the end start. The error
+# scales e2 and run, in Float32 units of eps, keep the cutoff the rule had: at each pixel
+# |term| + |ua - ub|, plus |s / wa - 1| |ua| + |s / wb - 1| |ub| from each count's own
+# Float32 rounding (none when `exact`: counts known exactly, the background of an image with
+# zero transmission), their squares added in e2; and the sum of the running difference's
+# magnitudes in run. A pixel where either count plus v is not positive has no likelihood
+# difference: NaN, which no comparison passes.
 @inline function _diff_accumulate(
         acc, d::T, ua::T, ub::T, v::T, exact::Bool = false
     ) where {T}
     diff, e2, run = acc
-    s = d + v
-    wa = ua + v
-    wb = ub + v
-    du = ua - ub
-    if s == zero(T)
+    s = Float64(d) + Float64(v)
+    wa = Float64(ua) + Float64(v)
+    wb = Float64(ub) + Float64(v)
+    du = Float64(ua) - Float64(ub)
+    if s == 0.0
         # the limit of s log(w) - w at s = 0, as in `_fit_objective`
-        term = wa >= zero(T) && wb >= zero(T) ? -du : T(NaN)
+        term = wa >= 0.0 && wb >= 0.0 ? -du : NaN
         ka = one(T)
         kb = one(T)
     else
         # no log of a non-positive count (it throws on the CPU): NaN there
-        term = T(NaN)
-        if wa > zero(T) && wb > zero(T)
-            r = wa / wb
-            lr = abs(du) <= wb / 2 ? log1p(du / wb) :
-                floatmin(T) <= r <= floatmax(T) ? log(r) : log(wa) - log(wb)
-            term = s * lr - du
+        term = NaN
+        if wa > 0.0 && wb > 0.0
+            term = s * (abs(du) <= wb / 2 ? log1p(du / wb) : log(wa / wb)) - du
         end
-        ka = abs(s / wa - one(T))
-        kb = abs(s / wb - one(T))
+        ka = T(abs(s / wa - 1.0))
+        kb = T(abs(s / wb - 1.0))
     end
-    e = abs(term) + abs(du)
+    e = T(abs(term) + abs(du))
     if !exact
         e += ka * abs(ua) + kb * abs(ub)
     end
     diff += term
-    return (diff, e2 + e * e, run + abs(diff))
+    return (diff, e2 + e * e, run + T(abs(diff)))
 end
 
-# L(θa) - L(θb) of the objective the fit climbs, over the ROI, with the scales of its
-# Float32 error: `(difference, e2, run)` (`_diff_accumulate`). The spline models'
+# L(θa) - L(θb) of the objective the fit climbs, over the ROI, in Float64, with the error
+# scales of the cutoff: `(difference, e2, run)` (`_diff_accumulate`). The spline models'
 # `_optimize` compares its end start with the best fit by this. Not inlined: the kernel
 # holds one copy (POCL, as `_lm_solve`). A model fitted to several images at once
 # (JointSplinePSFModel) has its own method.
@@ -400,7 +397,7 @@ end
         θa, θb, roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
         corner_x, corner_y
     ) where {N, T}
-    acc = (zero(T), zero(T), zero(T))
+    acc = (0.0, zero(T), zero(T))
     @inbounds for j in 1:box_size, i in 1:box_size
         ua, _ = compute_pixel_derivatives(i, j, θa, psf_model)
         ub, _ = compute_pixel_derivatives(i, j, θb, psf_model)

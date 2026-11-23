@@ -260,10 +260,15 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      leaves the emitters between it and that end without a start on their side of focus);
      the end start's fit is kept only by `_end_start_replaces`/`_end_start_wins`: the
      log-likelihood difference computed pixel by pixel from the two fits' expected counts
-     (`_objective_difference`, `_diff_accumulate`: s log1p(Δu / w) - Δu, free of the
-     cancellation that costs a hot pixel's own objective tenths) above `_LM_GAIN_TOL` plus
-     eps (10 sqrt(e2) + run). It starts on the z bound, and a win by rounding put an interior
-     fit on the bound (`Inf` σ); the two fits' Float32 objectives misjudged a hot-pixel ROI.
+     (`_objective_difference`, `_diff_accumulate`: s log1p(Δu / w) - Δu, or s log(wa / wb) - Δu
+     for counts more than a factor of 2 apart, free of the cancellation that costs a hot
+     pixel's own objective tenths) above `_LM_GAIN_TOL` plus eps(T) (10 sqrt(e2) + run). The
+     difference is computed and summed in Float64 from the Float32 counts (the fit's only
+     Float64 arithmetic, one pass per fit that runs the end start): over a ROI of alike pixels
+     Float32 rounds alike at every pixel and its errors add up past any per-pixel bound (three
+     review rounds, 81 and 441 equal pixels). It starts on the z bound, and a win by rounding
+     put an interior fit on the bound (`Inf` σ); the two fits' Float32 objectives misjudged a
+     hot-pixel ROI.
      The joint model's difference loops over both views (`_view_objective_difference`).
      One `_lm_fit` call site per `_optimize`. `starts = 1` is the scan start alone
 
