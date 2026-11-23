@@ -254,7 +254,11 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      `_optimize(::SplinePSFModel)` fits from the scan start and then from `starts - 1` fixed
      z starts (`_spline_start_z`; x, y, N, bg from the scan start; default count
      `_default_spline_starts`, one fixed start per 0.4 µm over the central 80 % of
-     `z_range`). `starts = 1` is the scan start alone
+     `z_range`), then, with at least one fixed start, once more from the nearer end of
+     `z_range` when the best fit so far lies within 0.3 R of it (`_end_start`, R the range's
+     width; the fixed starts reach only to 0.1 R from each end, and a focus near an end
+     leaves the emitters between it and that end without a start on their side of focus).
+     One `_lm_fit` call site per `_optimize`. `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties

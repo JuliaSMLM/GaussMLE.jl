@@ -593,6 +593,61 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         end
     end
 
+    @testset "starts: the end start" begin
+        # after the fixed starts, a best fit within 0.3 R of an end of z_range starts once
+        # more at that end (R = 1 here)
+        zr = (-0.925, 0.075)
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = zr)
+        @test GaussMLE._end_start(m, -0.06f0) == (true, m.z_range[2])
+        @test GaussMLE._end_start(m, -0.7f0) == (true, m.z_range[1])
+        @test GaussMLE._end_start(m, -0.45f0) == (false, -0.45f0)
+
+        # starts = 1 is one fit from the scan start, also where the fit ends near an end
+        one_start = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = zr, starts = 1)
+        box = 11
+        cons = GaussMLE.default_constraints(one_start, box)
+        vmap = zeros(Float32, box, box)
+        Random.seed!(12)
+        roi = Float32.(poisson_noise(roi_at(one_start, 0.05f0; photons = 2000)))
+        θ0 = GaussMLE.simple_initialize(roi, box, one_start)
+        args = (Val(false), vmap, Int32(1), Int32(1), cons, 50, θ0)
+        θ_one = first(GaussMLE._optimize(roi, box, one_start, args...))
+        @test θ_one == first(GaussMLE._lm_fit(roi, box, one_start, args...))
+        @test first(GaussMLE._end_start(one_start, θ_one[3]))
+    end
+
+    @testset "starts: an emitter between the focus and the near end of z_range" begin
+        # A calibration whose focus lies near one end of its range, here 0.075 um below the
+        # upper end, and a weakly astigmatic PSF, so the two sides of focus look alike. An
+        # emitter 0.06 um above focus has a fit maximum on each side. No fixed start lies on
+        # the emitter's side, and with the fixed starts alone the fit took the other side
+        # for half of these ROIs; that side is near the end, so the fit also starts there.
+        zc = ZernikeCoefficients(15)
+        zc.phase[6] = 0.03
+        weak = SplinePSF(
+            ScalarPSF(1.4, 0.68, 1.518; zernike_coeffs = zc),
+            -1.0:0.1:1.0, -1.0:0.1:1.0, -0.925:0.05:0.075
+        )
+        m = SplinePSFModel(weak; pixel_size = 0.1)
+        @test m.z_range[2] ≈ 0.075f0
+        camera = IdealCamera(64, 64, 0.1)
+        box, corner, n, z = 9, 28, 120, 0.06
+        ex = Float64.(camera.pixel_edges_x[corner:(corner + box)])
+        ey = Float64.(camera.pixel_edges_y[corner:(corner + box)])
+        mu = 20.0 .+ MicroscopePSFs.integrate_pixels(
+            weak, ex, ey, [Emitter3D(3.263, 3.241, z, 20000.0)]; sampling = 4
+        )
+        Random.seed!(5)
+        data = Float32.(poisson_noise(repeat(mu; outer = (1, 1, n))))
+        c = fill(Int32(corner), n)
+        smld, info = fit(
+            ROIBatch(data, c, c, Int32.(1:n), camera); psf_model = m, backend = :cpu
+        )
+        @test info.n_converged == n
+        on_side = count(e -> abs(e.z - z) < 0.03, smld.emitters)
+        @test on_side >= 0.9n
+    end
+
     @testset "fit refuses a ROI beyond the lateral range" begin
         # The table is zero beyond lateral_range plus one pixel, so a ROI whose
         # half-diagonal exceeds lateral_range would be fitted with a truncated PSF.

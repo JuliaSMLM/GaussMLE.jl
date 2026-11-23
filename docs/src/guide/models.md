@@ -230,6 +230,19 @@ is one fixed start per 0.4 µm over the central 80 % of `z_range`: 6 starts for 
 fixed starts sit at `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`, with `R`
 the width of `z_range`. Each fixed start keeps the scan start's x, y, N and background, and
 each start costs one more Levenberg-Marquardt fit with the full `iterations`.
+
+With at least one fixed start, the fit may run once more: when the best fit so far lies
+within `0.3 R` of an end of `z_range`, it also starts at that end. A fit stays on the side of
+focus it starts on, and the fixed starts reach only to `0.1 R` from each end, so when a
+calibration's focus lies near an end of its range, an emitter between the focus and that
+end has no fixed start on its side; with a weakly astigmatic PSF, whose two sides of focus
+look alike, its fit then often takes the other side, which lies within `0.2 R` of the end.
+On simulated ROIs of such a PSF, its focus 0.075 µm inside the end of a 1 µm range, the fit
+took the other side for up to half of the emitters 0.015 to 0.055 µm from the end without
+this start, and for none with it, at 20,000 and at 2,000 photons. Fits away from the ends
+take no more time; a result differs from the fixed starts' only where the end start reaches
+a strictly higher likelihood.
+
 `starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
 defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
 one start ended more than 0.05 below the best log-likelihood found in 116 of 400 fits and

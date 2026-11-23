@@ -70,8 +70,9 @@ uncertainties and p-values of every model change.
   through a weak-dependency extension, fitted on the CPU and GPU from one table of pixel
   integrals, with rectangular pixels and analytic spline derivatives, by the same
   Levenberg-Marquardt fit (Poisson objective; Poisson-shifted for sCMOS). By default it also
-  fits from fixed z starts, one per 0.4 um of the central 80 % of `z_range`, and keeps the
-  highest likelihood. A MicroscopePSFs spline is zero outside its own grid, so its
+  fits from fixed z starts, one per 0.4 um of the central 80 % of `z_range`, then from the
+  nearer end of the range when the best fit lies within 0.3 of the range's width of it, and
+  keeps the highest likelihood. A MicroscopePSFs spline is zero outside its own grid, so its
   `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
   ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
   fitted. A MicroscopePSFs `PlanePSF` of a spline keeps the spline's grid with z shifted by

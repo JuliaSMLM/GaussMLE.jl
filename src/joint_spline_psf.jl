@@ -649,9 +649,10 @@ end
     return SVector{6, T}(x, y, best_z, N, bg1, bg2)
 end
 
-# As SplinePSFModel: the scan start, then `starts - 1` fixed z starts, keeping the fit with
-# the strictly higher objective (the earlier start on a tie). One `_lm_fit` call site, so
-# the kernel holds one copy of the fit.
+# As SplinePSFModel: the scan start, then `starts - 1` fixed z starts and, with at least one
+# fixed start, the end of z_range that `_end_start` picks, keeping the fit with the strictly
+# higher objective (the earlier start on a tie). One `_lm_fit` call site, so the kernel
+# holds one copy of the fit.
 @inline function _optimize(
         roi, box_size::Int, psf_model::JointSplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
@@ -660,8 +661,16 @@ end
     obj_best = T(-Inf)
     stopped_best = false
     m = psf_model.starts - 1
-    for q in -1:(m - 1)
-        θs = q < 0 ? θ0 : Base.setindex(θ0, _spline_start_z(psf_model, q, m), 3)
+    for q in -1:m
+        z = θ0[3]
+        if q == m
+            m >= 1 || break
+            near_end, z = _end_start(psf_model, θ_best[3])
+            near_end || break
+        elseif q >= 0
+            z = _spline_start_z(psf_model, q, m)
+        end
+        θs = Base.setindex(θ0, z, 3)
         θ, obj, _, stopped = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
