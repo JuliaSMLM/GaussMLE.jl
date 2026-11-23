@@ -232,7 +232,9 @@ end
 # some pixel) never wins. On simulated ROIs this difference was within 2.4e-4 of the Float64
 # value where the two objectives' difference was off by 0.26 (a hot pixel), and within
 # 1.5e-5 for two maxima 0.0009 apart. So a result differs from the fixed starts' only where
-# the end start reaches a higher maximum that the fit resolves.
+# the end start reaches a higher maximum that the fit resolves. The rule errs on one side
+# only: an accepted end start is higher in fact; a refused one can be higher by up to about
+# twice the cutoff, where the two maxima are indistinguishable in the data.
 @inline function _end_start_wins(diff::T, e2::T, run::T) where {T}
     return diff > T(_LM_GAIN_TOL) + eps(T) * (10 * sqrt(e2) + run)
 end

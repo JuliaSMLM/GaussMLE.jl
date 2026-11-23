@@ -55,7 +55,7 @@ using SMLMSim: poisson_noise
 
     if !isdefined(MicroscopePSFs, :MultiChannelPSF)
         @info "long/spline_end_start.jl: MicroscopePSFs $(pkgversion(MicroscopePSFs)) has no " *
-            "MultiChannelPSF (0.5.7 and later), so JointSplinePSFModel is not defined"
+            "MultiChannelPSF (0.5.7 and later) to build the two-image model from; two-image part skipped"
     else
         @testset "two images" begin
             # two identical channels, identity registration, a 45/55 split, background 10 each

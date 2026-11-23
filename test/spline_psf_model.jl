@@ -641,6 +641,8 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         t1 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 0.015067036f0, 290601.25f0, 0.0f0))
         @test isfinite(t1)
         @test t1 ≈ log(0.015067036 / 290601.25) - (0.015067036 - 290601.25) rtol = 1.0e-6
+        # and where their ratio would underflow (subnormal counts, below the default bounds)
+        @test isfinite(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2.0f0^-102, 2.0f0^-126, 2.0f0^24, 0.0f0)))
         # counts known exactly (the background of an image with zero transmission) carry no
         # rounding: a hot pixel under the same background in both fits adds nothing
         @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0, true) ==

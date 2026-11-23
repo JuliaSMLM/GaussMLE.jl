@@ -46,12 +46,15 @@ elseif CUDA.functional()
                 SplinePSFModel(joint_test_spline(); pixel_size = 0.1), 20_000, false,
             ),
             ("GaussianXYNB, four batches", ideal_batch, GaussianXYNB(0.13f0), n ÷ 4, false),
-            # CUDA.jl defers the free of memory last used on the per-thread stream
+            # CUDA.jl 6 defers the free of memory last used on the per-thread stream (a fit on
+            # that stream crashes CUDA.jl 5.11's synchronization worker, main's code too: CUDA.jl
+            # 6 only)
             (
                 "GaussianXYNB on the per-thread stream", ideal_batch, GaussianXYNB(0.13f0),
                 n, true,
             ),
         )
+        cases = filter(c -> !c[5] || isdefined(CUDA, :RECLAIM_SYNC), cases)
         for (name, batch, model, nb, per_thread) in cases
             @testset "$name" begin
                 fit1() = fit(batch; psf_model = model, backend = :gpu, batch_size = nb, iterations = 20)
