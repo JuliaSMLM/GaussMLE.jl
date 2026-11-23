@@ -272,15 +272,17 @@ The GPU group also checks spline CPU/GPU agreement and GPU bias/CRLB in each 0.1
 band. Independent spline Monte Carlo validation remains in the Long group on CPU.
 
 `SplinePSFModel` fits each ROI from several z starts by default (six for a ±1 µm
-`z_range`), so a spline fit costs several Levenberg-Marquardt fits; `starts = 1` fits from
-the scan start alone. `AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored
-z. On an 8-thread workstation CPU (load average about 8 from other users), 10,000 simulated
-ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of an astigmatic
-Gaussian PSF and `z_range = (-1, 1)`, ran at 26,600 fits/s with `starts = 1` and 3,900
-fits/s with the default six starts (6.8 times the time), against 18,100 fits/s for
-`AstigmaticXYZNB` with the same widths (focal offset 0.25 µm). Its second start costs 3.5
+`z_range`, and one more from an end of the range for a fit near that end), so a spline fit
+costs several Levenberg-Marquardt fits; `starts = 1` fits from the scan start alone.
+`AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored z. On 16 threads of
+an AMD Ryzen 9 5950X and on an NVIDIA RTX 4090, 10,000 simulated ROIs of 15 px (3,000
+photons, z within ±0.5 µm), fitted with a spline of an astigmatic Gaussian PSF and
+`z_range = (-1, 1)`, ran at 42,000 fits/s on the CPU and 650,000 on the GPU with
+`starts = 1`, and at 5,800 and 130,000 fits/s with the default starts (7.2 and about 5 times
+the time), against 33,000 and 290,000 fits/s for `AstigmaticXYZNB` with the same widths
+(focal offset 0.25 µm). On an 8-thread CPU, the second start of `AstigmaticXYZNB` cost 3.5
 times the time of one start with that strong astigmatism and 2.1 times with a focal offset
-of 0.05 µm. These ratios are on one machine and were not measured on a GPU.
+of 0.05 µm.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
