@@ -14,37 +14,62 @@ _free_device_arrays(::GPUVendor, arrays...) = nothing
 _active_device_id(::CUDAGPU) = Int(CUDA.device().handle)
 _release_gpu_context(::CUDAGPU, device_idx) = _release_gpu_context(device_idx)
 
-# Pool memory above this, cached after a fit, is worth a full reclaim when the pool cannot be
-# trimmed alone (`_reclaim_gpu`).
+# Unused pool memory (cached and not in use) above this, after a fit, is worth a full reclaim
+# when the pool cannot be trimmed alone (`_reclaim_gpu`).
 const _GPU_CACHE_TRIM_BYTES = 256 * 2^20
 
-# After a fit: return the pool's cached memory to the driver, so that other processes on a
-# shared GPU see it as free. The fit frees its own device arrays (`_free_device_arrays`), so
-# nothing here waits on the garbage collector; only the pool is trimmed.
+# After a fit: return the fit's memory to the driver, so that other processes on a shared GPU
+# see it as free. The fit frees its own device arrays (`_free_device_arrays`), so nothing here
+# waits on the garbage collector.
 # - CUDA.jl 5: `CUDA.reclaim()` synchronizes and trims the pool.
 # - CUDA.jl 6: `CUDA.reclaim()` first runs a full `GC.gc`, about 55 ms on every fit call in a
-#   small process and more with the caller's heap, and its levels below `RECLAIM_GC` do not
-#   trim. So: synchronize (`RECLAIM_SYNC`), then the trim step alone. That step is not public
-#   in CUDA.jl; where it is missing, the full reclaim runs only when the pool caches more
-#   than `_GPU_CACHE_TRIM_BYTES`, a size at which the fit itself took far longer.
+#   small process and more with the caller's heap, and only that level trims the pool. So
+#   the steps of that level without its collection: synchronize the frees issued in stream
+#   order (`RECLAIM_SYNC`); release the frees CUDA.jl defers to a reclaim (`RECLAIM_PURGE`:
+#   on a device without stream-ordered frees, and for memory last used on the per-thread
+#   stream, which a caller may have made the task's stream); synchronize the frees that
+#   released; trim the pools. The trim alone is not public in CUDA.jl (`_cuda_trim_pool`);
+#   where it cannot run, the full reclaim, with its garbage collection, runs only when the
+#   pool holds more than `_GPU_CACHE_TRIM_BYTES` unused, a size at which the fit itself took
+#   far longer.
 function _reclaim_gpu(::CUDAGPU)
     isdefined(CUDA, :RECLAIM_SYNC) || return CUDA.reclaim()
     CUDA.reclaim(CUDA.RECLAIM_SYNC)
-    if _cuda_trim_pool()
-        return nothing
-    end
-    CUDA.cached_memory() > _GPU_CACHE_TRIM_BYTES && CUDA.reclaim(CUDA.RECLAIM_GC)
+    CUDA.reclaim(CUDA.RECLAIM_PURGE)
+    CUDA.reclaim(CUDA.RECLAIM_SYNC)
+    _cuda_trim_pool() && return nothing
+    # no pool (JULIA_CUDA_MEMORY_POOL=none): the counters are `missing`, nothing is cached
+    unused = coalesce(CUDA.cached_memory(), 0) - coalesce(CUDA.used_memory(), 0)
+    unused > _GPU_CACHE_TRIM_BYTES && CUDA.reclaim(CUDA.RECLAIM_GC)
     return nothing
 end
 
-# The pool trim of CUDA.jl 6's reclaim, without its garbage collection. `true` when it ran.
+# The pool trim of CUDA.jl 6's `RECLAIM_GC` level alone, through CUDA.jl internals: `true`
+# when it ran or was skipped for a graph capture, `false` when those internals are missing,
+# have another signature, or throw. It runs inside CUDA.jl's `releasing`, which skips it
+# while a graph capture is in progress, as CUDA.jl's own reclaim does.
 function _cuda_trim_pool()
+    _cuda_trim_available() || return false
+    core = CUDA.CUDACore
+    try
+        dev = CUDA.device()
+        so = core.stream_ordered(dev)
+        core.releasing(() -> core.trim_pools(dev, so); blocking = true)
+    catch
+        return false
+    end
+    return true
+end
+
+# Whether CUDA.jl has the internals `_cuda_trim_pool` calls, with the signatures it calls.
+function _cuda_trim_available()
     isdefined(CUDA, :CUDACore) || return false
     core = CUDA.CUDACore
-    (isdefined(core, :trim_pools) && isdefined(core, :stream_ordered)) || return false
+    all(n -> isdefined(core, n), (:trim_pools, :stream_ordered, :releasing)) ||
+        return false
     dev = CUDA.device()
-    core.trim_pools(dev, core.stream_ordered(dev))
-    return true
+    return applicable(core.stream_ordered, dev) &&
+        applicable(core.trim_pools, dev, true) && applicable(core.releasing, () -> nothing)
 end
 
 # After a failed attempt, when the arrays are left to the garbage collector: the vendor's

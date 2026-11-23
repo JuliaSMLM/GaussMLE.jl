@@ -400,10 +400,11 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
 # - The whole step is scaled to the step limits instead of clamping each component.
 # - A trial that rounds to the accepted point with lambda at its cap ends the fit (every
 #   later pass would make the same trial).
-# Returns the last accepted point, the objective there, the pixel passes made and whether
-# the stop test ended the fit, `(θ_acc, obj_acc, passes, stopped)`: the first pass always
-# accepts its start, so iterations = 1 returns the clamped start with its objective. The
-# multi-start `_optimize` methods compare these objectives.
+# Returns the last accepted point, the objective there, the pixel passes made, whether the
+# stop test ended the fit, and the scale of the objective's Float32 rounding there
+# (`_lm_accumulate`), `(θ_acc, obj_acc, passes, stopped, rounding_acc)`: the first pass
+# always accepts its start, so iterations = 1 returns the clamped start with its objective.
+# The multi-start `_optimize` methods compare these objectives.
 # Immutable state only: no allocation, no throw.
 @inline function _lm_fit(
         roi, box_size::Int, psf_model::PSFModel{N, T}, camera_model, variance_map,
@@ -415,6 +416,7 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
     g_acc = zero(SVector{N, T})
     F_acc = zero(SMatrix{N, N, T})
     obj_acc = zero(T)
+    rounding_acc = zero(T)
     λ = T(1.0e-3)
     ν = T(2)
     pred = zero(T)
@@ -444,6 +446,7 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
             g_acc = g
             F_acc = F
             obj_acc = obj
+            rounding_acc = rounding
             if iter > 1
                 # Damping from rho, the actual over the predicted gain (Nielsen 1999)
                 ρ = pred > zero(T) ? gain / pred : T(0.5)
@@ -498,7 +501,7 @@ _fit_pixels(box_size::Int, ::PSFModel) = box_size * box_size
         # cap a larger lambda gives a new step, which can differ.)
         ok && λ >= T(1.0e7) && θ == θ_acc && break
     end
-    return θ_acc, obj_acc, passes, stopped
+    return θ_acc, obj_acc, passes, stopped, rounding_acc
 end
 
 # Next trial of a fit, `(θ, pred)`. The whole step is scaled so that no

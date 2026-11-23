@@ -136,7 +136,7 @@ z, where the two widths swap, and with weak astigmatism (a focal offset of 0.05 
 depth scale of 0.4 µm) a single start ended there for 1 to 12 % of in-range emitters at 300
 to 1,000 photons, with z of the wrong sign; the second start removes those, at 2 to 3.5 times
 the fit time. `SplinePSFModel` fits from the scan start, from `starts - 1` fixed z
-starts and, near an end of `z_range`, from that end (see the model guide). `iterations` caps the pixel passes of every start (see
+starts and, with `starts >= 2` and a fit near an end of `z_range`, from that end (see the model guide). `iterations` caps the pixel passes of every start (see
 Iteration Strategy).
 
 The full Fisher matrix at the final $\theta$ is inverted once for uncertainties. The

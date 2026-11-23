@@ -232,7 +232,7 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
    - Default photon and background steps are uncapped (`Inf32` in `default_constraints`)
    - `iterations` caps the pixel passes of each start, the last only evaluating, so a start
      takes at most `iterations - 1` steps; default `_default_iterations` 100;
-     `_lm_fit` returns `(θ_acc, obj_acc, passes, stopped)`, and `_optimize` returns
+     `_lm_fit` returns `(θ_acc, obj_acc, passes, stopped, rounding_acc)`, and `_optimize` returns
      `(θ, converged)`
    - One schedule for every model (`gain_tol = _LM_GAIN_TOL = 1e-4`, an optional last
      argument of `_lm_fit` that tests lower for a fit that runs on): stop after an accepted
@@ -257,7 +257,10 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      `z_range`), then, with at least one fixed start, once more from the nearer end of
      `z_range` when the best fit so far lies within 0.3 R of it (`_end_start`, R the range's
      width; the fixed starts reach only to 0.1 R from each end, and a focus near an end
-     leaves the emitters between it and that end without a start on their side of focus).
+     leaves the emitters between it and that end without a start on their side of focus);
+     the end start's fit is kept only by `_end_start_wins`: higher by more than
+     `_LM_GAIN_TOL` plus 10 eps times the larger rounding scale `_lm_fit` returns (it starts
+     on the z bound, and a win by rounding put an interior fit on the bound, `Inf` σ).
      One `_lm_fit` call site per `_optimize`. `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix

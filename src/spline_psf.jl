@@ -27,12 +27,12 @@ in microns; it must be finite, increasing, and at least 0.01 µm wide after inwa
 rounding. The fit clamps z into it. Custom z constraints are intersected with `z_range`;
 an empty intersection throws `ArgumentError`.
 
-`starts` is the number of Levenberg-Marquardt starts per ROI; the fit keeps the one that
-reaches the highest likelihood. `starts = nothing` (the default) gives the scan start plus
+`starts` is the number of Levenberg-Marquardt starts per ROI before the end start below;
+the fit keeps the one that reaches the highest likelihood. `starts = nothing` (the default) gives the scan start plus
 one fixed z start per 0.4 µm over the central 80 % of `z_range`: 6 for ±1 µm, 5 for ±0.6 µm,
 4 for ±0.5 µm. With `starts >= 2` the fit runs once more, from the nearer end of `z_range`,
-when the best fit of those starts lies within 0.3 of the range's width of that end.
-`starts = 1` fits from the scan start alone; `starts < 1` throws `ArgumentError`.
+when the best fit of those starts lies within 0.3 of the range's width of that end, and keeps
+that fit only where its likelihood is higher by more than the fit resolves. `starts = 1` fits from the scan start alone; `starts < 1` throws `ArgumentError`.
 
     SplinePSFModel(psf::MicroscopePSFs.SplinePSF; pixel_size,
                    z_range = (psf.z_min, psf.z_max), lateral_range = nothing,
@@ -137,8 +137,9 @@ step. Default x/y bounds are `[-1,n+2]` ROI pixels for a box of side n; z bounds
 - `px_scale::T`: pixel area for a photon density, or reference normalization for a callable
 - `z_ref::T`: reference plane nearest zero in the inward-rounded callable range
   (microns), preserved on rescaling
-- `starts::Int`: Levenberg-Marquardt starts per ROI (the scan start plus `starts - 1`
-  fixed z starts)
+- `starts::Int`: Levenberg-Marquardt starts per ROI before the end start (the scan start
+  plus `starts - 1` fixed z starts; with `starts >= 2`, one more from an end of `z_range`
+  for a fit near it)
 
 # Example
 ```jldoctest
@@ -200,20 +201,36 @@ end
 # 0.3 R of that end of z_range (R its width), else `(false, z)`. A fit climbs within the side
 # of focus it starts on, and the fixed starts reach only to 0.1 R from each end, so an
 # emitter between a focus in the outer tenth of the range and that end has no fixed start on
-# its side. Its fit then takes the other side, at the mirror of the emitter about the focus,
-# within 0.2 R of the end. On simulated pairs of a weakly astigmatic PSF whose focus lies
-# 0.075 µm inside the end of a 1 µm range, the fit took the other side for up to half of the
-# emitters between the focus and the end; with this start, for none at 20,000 or 2,000
-# photons, where a threshold of 0.2 R still missed one in 300. Starts at both ends on every
-# fit cleared the same cases at 1.5 times the fit time; this start costs a fit only near an
-# end, and a result differs from the fixed starts' only where it reaches a strictly higher
-# likelihood.
+# its side. Its fit can then end on the other side, at the mirror of the emitter about the
+# focus, within 0.2 R of the end. On simulated pairs of a weakly astigmatic PSF whose focus
+# lies 0.075 µm inside the end of a 1 µm range, the fixed starts ended in a lower maximum
+# than a fit from 81 starts over the whole range for up to half of the emitters between the
+# focus and the end; with this start, for none at 20,000 or 2,000 photons, where a
+# threshold of 0.2 R still missed one in 300. (At 2,000 photons the best maximum itself lies
+# on the wrong side of focus for many of these ROIs: the noise decides that, not the
+# starts.) Starts at both ends on every fit cleared the same cases at 1.5 times the fit
+# time; this start costs a fit only near an end, and it replaces the best fit only when
+# `_end_start_wins`.
 @inline function _end_start(model::PSFModel{N, T}, z) where {N, T}
     zlo, zhi = model.z_range
     w = T(0.3) * (zhi - zlo)
     z - zlo <= w && return true, zlo
     zhi - z <= w && return true, zhi
     return false, z
+end
+
+# Whether the end start's fit (objective `obj`, rounding scale `rnd` from `_lm_fit`) replaces
+# the best fit so far: only when its objective is higher by more than the stop test's
+# tolerance (`_LM_GAIN_TOL`: each fit stops within about that of its maximum) and the two
+# objectives' Float32 rounding. The end start begins on a bound of z, and a fit that starts
+# within the stop tolerance of a maximum stops where it starts; won on rounding alone, it
+# would turn an interior fit into one on the bound, whose uncertainties are `Inf`
+# (`_mark_pinned_fits!`). So a result differs from the fixed starts' only where the end start
+# reaches a higher maximum that the fit resolves.
+@inline function _end_start_wins(obj::T, rnd::T, obj_best::T, rnd_best::T) where {T}
+    isfinite(obj) || return false
+    isfinite(obj_best) || return true
+    return obj - obj_best > T(_LM_GAIN_TOL) + 10 * eps(T) * max(rnd, rnd_best)
 end
 
 function _spline_pixel_size(::Type{T}, pixel_size::Union{Real, Tuple{Real, Real}}) where {T}
@@ -813,14 +830,16 @@ end
 # z starts (x, y, N and bg from θ0) and, with at least one fixed start, from the end of
 # z_range that `_end_start` picks for the best fit so far. Each start runs to convergence or
 # the `iterations` cap, and the fit keeps the θ with the strictly higher objective; on a tie
-# the earlier start wins, the scan start first. The fit counts as converged when the start it
-# keeps met the stop test. One `_lm_fit` call site, so the kernel holds one copy of the fit.
+# the earlier start wins, the scan start first. The end start must win by more than the fit
+# resolves (`_end_start_wins`). The fit counts as converged when the start it keeps met the
+# stop test. One `_lm_fit` call site, so the kernel holds one copy of the fit.
 @inline function _optimize(
         roi, box_size::Int, psf_model::SplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {T}
     θ_best = θ0
     obj_best = T(-Inf)
+    rnd_best = zero(T)
     stopped_best = false
     m = psf_model.starts - 1
     for q in -1:m
@@ -833,13 +852,14 @@ end
             z = _spline_start_z(psf_model, q, m)
         end
         θs = SVector{5, T}(θ0[1], θ0[2], z, θ0[4], θ0[5])
-        θ, obj, _, stopped = _lm_fit(
+        θ, obj, _, stopped, rnd = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        if q < 0 || obj > obj_best
+        if q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, rnd, obj_best, rnd_best))
             θ_best = θ
             obj_best = obj
+            rnd_best = rnd
             stopped_best = stopped
         end
     end

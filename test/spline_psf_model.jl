@@ -614,6 +614,40 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         θ_one = first(GaussMLE._optimize(roi, box, one_start, args...))
         @test θ_one == first(GaussMLE._lm_fit(roi, box, one_start, args...))
         @test first(GaussMLE._end_start(one_start, θ_one[3]))
+
+        # The end start replaces the best fit only when its objective is higher by more than
+        # the stop tolerance and the Float32 rounding of the two sums (scale from `_lm_fit`)
+        @test !GaussMLE._end_start_wins(-9.087356f0, 157.0f0, -9.087357f0, 157.0f0)
+        @test GaussMLE._end_start_wins(-9.0f0, 157.0f0, -9.01f0, 157.0f0)
+        @test GaussMLE._end_start_wins(-9.0f0, 157.0f0, -Inf32, Inf32)
+        @test !GaussMLE._end_start_wins(-Inf32, Inf32, -9.0f0, 157.0f0)
+        @test !GaussMLE._end_start_wins(NaN32, NaN32, -9.0f0, 157.0f0)
+
+        # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
+        # begins on that bound and stops there, within the stop tolerance of the maximum;
+        # it reached an objective higher by one Float32 ulp only and, kept, put the fit on
+        # the bound, whose uncertainties are Inf. The fit must stay inside, with finite
+        # uncertainties.
+        tilt(x, y, z) = (
+            w = 0.13 + 0.1z;
+            exp(-(x - 0.23z)^2 / (2w^2) - y^2 / (2 * (0.13^2 / w)^2))
+        )
+        mt = SplinePSFModel(tilt; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 0.4)
+        roi5 = Float32[
+            31.746 59.603 86.186 104.111 101.515
+            61.027 123.167 149.827 213.717 173.846
+            44.609 82.929 135.723 156.53 137.195
+            32.865 43.785 37.853 64.399 50.42
+            24.911 18.98 19.915 23.757 32.012
+        ]
+        cons5 = GaussMLE.default_constraints(mt, 5)
+        θ5, _ = GaussMLE._optimize(
+            roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1), cons5, 100,
+            GaussMLE.simple_initialize(roi5, 5, mt)
+        )
+        @test 0.4999f0 < θ5[3] < mt.z_range[2]
+        e5, _ = fit(roi5, GaussMLEConfig(; psf_model = mt, backend = :cpu))
+        @test e5.z < mt.z_range[2] && isfinite(e5.σ_z) && isfinite(e5.σ_x)
     end
 
     @testset "starts: an emitter between the focus and the near end of z_range" begin

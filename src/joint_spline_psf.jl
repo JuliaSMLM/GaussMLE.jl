@@ -651,14 +651,15 @@ end
 
 # As SplinePSFModel: the scan start, then `starts - 1` fixed z starts and, with at least one
 # fixed start, the end of z_range that `_end_start` picks, keeping the fit with the strictly
-# higher objective (the earlier start on a tie). One `_lm_fit` call site, so the kernel
-# holds one copy of the fit.
+# higher objective (the earlier start on a tie; the end start only by `_end_start_wins`).
+# One `_lm_fit` call site, so the kernel holds one copy of the fit.
 @inline function _optimize(
         roi, box_size::Int, psf_model::JointSplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y, constraints, iterations::Int, θ0
     ) where {T}
     θ_best = θ0
     obj_best = T(-Inf)
+    rnd_best = zero(T)
     stopped_best = false
     m = psf_model.starts - 1
     for q in -1:m
@@ -671,13 +672,14 @@ end
             z = _spline_start_z(psf_model, q, m)
         end
         θs = Base.setindex(θ0, z, 3)
-        θ, obj, _, stopped = _lm_fit(
+        θ, obj, _, stopped, rnd = _lm_fit(
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        if q < 0 || obj > obj_best
+        if q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, rnd, obj_best, rnd_best))
             θ_best = θ
             obj_best = obj
+            rnd_best = rnd
             stopped_best = stopped
         end
     end
