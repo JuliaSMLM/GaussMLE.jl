@@ -360,9 +360,11 @@ is the inverse Fisher matrix over both images, so it reflects all the informatio
 carry together: on simulated pairs of an astigmatic PSF with the second image focused
 0.15 µm deeper, the joint fit's x uncertainty was below either image's alone, and fits
 scatter at their CRLB. The p-value is the Pearson statistic over both images' pixels,
-`2 * box^2 - 6` degrees of freedom. On simulated 9 px pairs a joint fit took about 1.4 times
-as long as a `SplinePSFModel` fit of one image on the CPU (16 threads), and 1.25 times on an
-NVIDIA RTX 4090. `JointSplinePSFModel` needs MicroscopePSFs 0.5.7 or later.
+`2 * box^2 - 6` degrees of freedom. On simulated 9 px pairs a joint fit took about 1.5 times
+as long as a `SplinePSFModel` fit of one image on the CPU (16 threads). On an NVIDIA RTX
+4090 it took about twice as long in batches of 100,000 pairs or more, and close to the same
+time in batches of 10,000, where the fixed cost of a GPU call dominates both.
+`JointSplinePSFModel` needs MicroscopePSFs 0.5.7 or later.
 
 **Use this model when:**
 - Every emitter appears in two images (channels, planes or polarizations) with a known
@@ -400,7 +402,7 @@ without them a model is treated as 2D and its bounds are not checked:
 | Parameters | 4 | 5 | 6 | 5 | 5 | 6 |
 | PSF sigma | Fixed | Fitted | Fitted (x,y) | Calibrated | Tabulated shape | Tabulated, per image |
 | Dimensions | 2D | 2D | 2D | 3D | 3D | 3D, two images |
-| Speed | Fastest | Medium | Slowest | Medium | Table lookup | About 1.4 × SplinePSFModel (CPU) |
+| Speed | Fastest | Medium | Slowest | Medium | Table lookup | 1.5 to 2 × SplinePSFModel's time |
 | Stability | Most stable | Less stable | Least stable | Stable | Depends on calibration | Depends on calibration |
 | Backend | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU | CPU/GPU |
 
