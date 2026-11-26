@@ -1,4 +1,4 @@
-# The end start of the spline models (`_end_start`, `_end_start_replaces`). A calibration
+# The end start of the spline models (`_end_start`, `_end_start_wins`). A calibration
 # whose focus lies 0.075 µm below the upper end of a 1 µm z_range, with a weakly astigmatic
 # PSF (Zernike astigmatism 0.03), so the two sides of focus look alike. An emitter 0.06 µm
 # above focus, between the focus and the end, has a fit maximum on each side and no fixed

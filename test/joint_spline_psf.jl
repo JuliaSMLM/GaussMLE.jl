@@ -486,48 +486,6 @@ else
             end
         end
 
-        @testset "end start: log-likelihood difference over both views" begin
-            # The end start's fit is compared with the best fit by a log-likelihood difference
-            # summed pixel by pixel over both views; where the two fits' own objectives are
-            # exact enough (two θ far apart), it is their difference
-            pm = GaussMLE._model_for_cameras(
-                JointSplinePSFModel(mc; pixel_size = 0.1), cam1, cam2
-            )
-            mu, cd = joint_expected(mc, (cam1, cam2), truths[1:1]; photons, bgs, box)
-            roi = (mu[1][:, :, 1], mu[2][:, :, 1])
-            cx = (cd[1][1][1], cd[2][1][1])
-            cy = (cd[1][2][1], cd[2][2][1])
-            vm = (zeros(Float32, 1, 1), zeros(Float32, 1, 1))
-            θa = GaussMLE._fit_start(roi, box, pm, cx, cy)
-            θb = Base.setindex(θa, θa[3] + 0.2f0, 3)
-            obj(θ) = first(GaussMLE._lm_pass(θ, roi, box, pm, Val(false), vm, cx, cy))
-            dd(a, b) = first(
-                GaussMLE._objective_difference(a, b, roi, box, pm, Val(false), vm, cx, cy)
-            )
-            @test dd(θa, θb) ≈ obj(θa) - obj(θb) rtol = 1.0e-3
-            @test dd(θb, θa) ≈ -dd(θa, θb) rtol = 1.0e-3
-            @test dd(θa, θa) == 0
-
-            # a second image with zero transmission predicts its background alone, exactly:
-            # a hot pixel there, under the same background in both fits, changes neither the
-            # difference nor its error scale
-            mdark = MultiChannelPSF(;
-                channels = [spline, spline], registration = [I23, reg], transmission = [1.0, 0.0]
-            )
-            pd = GaussMLE._model_for_cameras(
-                JointSplinePSFModel(mdark; pixel_size = 0.1), cam1, cam2
-            )
-            flat = fill(64.0f0, box, box)
-            hotv = copy(flat)
-            hotv[5, 5] += 2048.0f0
-            θd = Base.setindex(θa, 64.0f0, 6)
-            θe = Base.setindex(θb, 64.0f0, 6)
-            ddark(r2) = GaussMLE._objective_difference(
-                θd, θe, (roi[1], r2), box, pd, Val(false), vm, cx, cy
-            )
-            @test ddark(hotv) == ddark(flat)
-        end
-
         @testset "forward law at a rotated, scaled and mirrored registration" begin
             # No fit decides this: the kernel's expected counts are compared with
             # MicroscopePSFs' integrate_pixels at channel_position, and its derivatives

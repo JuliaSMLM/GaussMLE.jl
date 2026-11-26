@@ -240,36 +240,36 @@ end has no fixed start on its side; with a weakly astigmatic PSF, whose two side
 look alike, its fit then often ends on the other side, which lies within `0.2 R` of the end.
 On simulated pairs of ROIs of such a PSF, its focus 0.075 µm inside the end of a 1 µm range,
 the joint fit ended more than 0.03 µm in z from a fit from 81 starts over the whole range for
-up to half of the emitters 0.015 to 0.055 µm from the end without this start, and for none
-with it, at 20,000 and at 2,000 photons. (At 2,000 photons the 81-start fit itself lies more
-than 0.03 µm from the truth for most of these ROIs: the noise decides the side of focus
-there, and no start changes it.) Fits away from the ends take no more time.
+up to half of the emitters 0.015 to 0.055 µm from the end without this start, and for at most
+4 of 300 with it, at 20,000 photons. At 2,000 photons it changes little (7 to 9 % of these
+fits end at the other maximum with it, 10 to 14 % without): there the two sides of focus
+differ by less than the margin below, the 81-start fit itself lies more than 0.03 µm from the
+truth for most of these ROIs, and the noise decides the side of focus. Fits away from the
+ends take no more time.
 
 The end start's fit replaces the best one only when its log-likelihood is higher by more than
-the fit resolves: above 1e-4 (each fit stops within about that of its maximum) plus a margin
-for the Float32 rounding of the expected counts. The difference is computed pixel by pixel from
-the two fits' expected counts, in Float64, because each fit's own Float32 log-likelihood can be
-off by tenths at a pixel whose count far exceeds its expected count (a hot pixel), and a
-Float32 sum over a ROI whose pixels are alike rounds alike at every pixel, so its errors add up
-rather than average out. This one pass per fit that runs the end start is the only Float64
-arithmetic in the fit. The end start begins on the bound of
-z, and a fit on a bound reports infinite uncertainties, so a win by rounding alone would cost
-an interior fit its uncertainties. A result therefore differs from the fixed starts' only
-where the end start reaches a higher maximum. The rule errs on one side only: an end start it
-accepts is higher in fact; one it refuses can be higher by up to about twice its cutoff, where
-the fit returns the fixed starts' result. The cutoff is a few 1e-4 to 1e-3 in log-likelihood
-for an ordinary ROI, where the two maxima are indistinguishable in the data (a likelihood
-ratio of about 1.001), and larger where the counts' own rounding is large (0.04 for a
-21 x 21 ROI of 90,000 photons with an 18,000-count hot pixel).
+0.5, compared in the same single-precision arithmetic as every other start. Two maxima closer
+than that are hardly told apart by the data: their likelihood ratio is below e^0.5 ≈ 1.65,
+the drop in log-likelihood that bounds a 68 % likelihood interval of one parameter. The margin
+matters because the end start begins on the bound of z: a fit that starts within its stop
+tolerance of a maximum stops where it starts, and taken on a tie it would put an interior fit
+on the bound, where it reports infinite uncertainties. The margin is far above the rounding of
+single-precision log-likelihoods, also on ROIs whose pixels are alike, where the rounding adds
+up (at most 0.03 on the cases found in review); only a pixel whose count is hundreds of times
+its expected count (a hot pixel) rounds by more, about 1 for 18,000 counts on an expected 20,
+in a fit its p-value rejects. On six simulated calibrations, 20,000 one-image fits, a margin
+of 0.5 missed the highest maximum by more than 0.5 as often as a comparison in double
+precision down to 1e-4 (50 fits, against 81 with the fixed starts alone and 74 with a margin
+of 1) and put fewer fits on the z bound (177 against 223).
 
 That higher maximum is not always nearer the truth, and at low counts it is often on the bound
 itself. On one image of the same PSF and range, 9 x 9 ROIs, background 20, 300 emitters at
-each of z = -0.06, 0, 0.02, 0.04 and 0.06 µm from focus, the end start brought 221 more of the
+each of z = -0.06, 0, 0.02, 0.04 and 0.06 µm from focus, the end start brought 211 more of the
 1,500 fits within 0.03 µm of the truth at 20,000 photons, with 5 more on the z bound; at 5,000
-photons 66 more within 0.03 µm and 71 more on the bound; at 2,000 photons 31 more and 120 more.
-Emitters on the far side of focus lose some: at z = -0.06 µm, 98 of 300 fits ended within
-0.03 µm of the truth at 2,000 photons with the end start and 117 without, 170 and 204 at 5,000,
-284 and 291 at 20,000. Each changed fit is the one the data favor (the higher likelihood); a
+photons 36 more within 0.03 µm and 59 more on the bound; at 2,000 photons 10 more and 43 more.
+Emitters on the far side of focus lose a few: at z = -0.06 µm, 113 of 300 fits ended within
+0.03 µm of the truth at 2,000 photons with the end start and 117 without, 186 and 204 at 5,000,
+289 and 291 at 20,000. Each changed fit is the one the data favor (the higher likelihood); a
 fit on the bound reports infinite uncertainties, so filtering on finite uncertainties removes
 it.
 

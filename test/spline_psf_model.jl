@@ -615,70 +615,13 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test θ_one == first(GaussMLE._lm_fit(roi, box, one_start, args...))
         @test first(GaussMLE._end_start(one_start, θ_one[3]))
 
-        # The end start replaces the best fit only when their log-likelihood difference,
-        # summed pixel by pixel from the two fits' expected counts, is above the stop
-        # tolerance (1e-4) plus its Float32 error, eps (10 sqrt(e2) + run)
-        @test !GaussMLE._end_start_wins(5.0f-5, 0.0f0, 0.0f0)
-        @test GaussMLE._end_start_wins(2.0f-4, 0.0f0, 0.0f0)
-        @test !GaussMLE._end_start_wins(0.1f0, 1.0f10, 0.0f0)
-        @test GaussMLE._end_start_wins(0.2f0, 1.0f10, 0.0f0)
-        @test !GaussMLE._end_start_wins(0.1f0, 0.0f0, 1.0f6)
-        @test !GaussMLE._end_start_wins(NaN32, 0.0f0, 0.0f0)
-        # an 18,000-count hot pixel on a background of 20: the difference of the two fits'
-        # objectives there is off by tenths, the pixel-by-pixel difference is not
-        hot, ua, ub = 18020.0f0, 20.31f0, 20.17f0
-        ref = Float64(hot) * log(Float64(ua) / Float64(ub)) - (Float64(ua) - Float64(ub))
-        naive = GaussMLE._fit_objective(hot, ua, 0.0f0) - GaussMLE._fit_objective(hot, ub, 0.0f0)
-        dh, e2h, runh = GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), hot, ua, ub, 0.0f0)
-        @test abs(dh - ref) < 1.0e-3
-        @test abs(dh - ref) < eps(Float32) * (10 * sqrt(e2h) + runh)
-        # its error scale counts the expected counts' own rounding, amplified by s / w - 1
-        @test sqrt(e2h) >= (hot / ua - 1) * ua + (hot / ub - 1) * ub
-        @test abs(naive - ref) > 0.05
-        # counts orders of magnitude apart (a fit predicting 290,601 where one count fell, the
-        # other 0.015): log1p((ua - ub) / ub) rounds to log1p(-1) = -Inf there, the ratio's
-        # log stays finite, and the end start's gain of millions wins
-        t1 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 0.015067036f0, 290601.25f0, 0.0f0))
-        @test isfinite(t1)
-        @test t1 ≈ log(0.015067036 / 290601.25) - (0.015067036 - 290601.25) rtol = 1.0e-6
-        # and where their ratio would underflow (subnormal counts, below the default bounds)
-        @test isfinite(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2.0f0^-102, 2.0f0^-126, 2.0f0^24, 0.0f0)))
-        @test issubnormal(2.0f0^-140)
-        t2 = first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 1.0f0, 2.0f0^-140, 1.0f0, 0.0f0))
-        @test t2 ≈ log(2.0^-140) - (2.0^-140 - 1) rtol = 1.0e-6
-        # ROIs whose pixels are alike (Codex, review rounds 5 and 6): Float32 rounds alike at
-        # every pixel, so its errors add up across the ROI past any per-pixel bound. Two logs
-        # near 7.5 subtracted put a 9 x 9 difference at +0.025 where it is -0.024; the log of
-        # a ratio near 1.6 put a 21 x 21 one at +0.108 where it is -0.026, and an sCMOS 9 x 9
-        # one at +0.0097 where it is -0.0005; each accepted a lower end start. In Float64 the
-        # difference matches the exact sum, and its sign decides, both ways round.
-        cases = (
-            (1461.0f0, fill(1802.0f0, 81), fill(1166.0f0, 81), 0.0f0),
-            (4141.0f0, fill(5264.9326f0, 441), fill(3189.681f0, 441), 0.0f0),
-            (1040.0f0, fill(1276.9766f0, 81), [fill(834.269f0, 74); fill(834.26904f0, 7)], 2.3f0),
-        )
-        for (d, uas, ubs, v) in cases, (A, B) in ((uas, ubs), (ubs, uas))
-            acc = (0.0, 0.0f0, 0.0f0)
-            for k in eachindex(A)
-                acc = GaussMLE._diff_accumulate(acc, d, A[k], B[k], v)
-            end
-            s = Float64(d) + Float64(v)
-            ref = sum(
-                s * log((Float64(a) + v) / (Float64(b) + v)) - (Float64(a) - Float64(b))
-                    for (a, b) in zip(A, B)
-            )
-            @test acc[1] ≈ ref rtol = 1.0e-9 atol = 1.0e-9
-            @test GaussMLE._end_start_wins(acc...) == (ref > 1.0e-4 + eps(Float32) * (10 * sqrt(acc[2]) + acc[3]))
-            @test !(ref < 0 && GaussMLE._end_start_wins(acc...))
-        end
-        # counts known exactly (the background of an image with zero transmission) carry no
-        # rounding: a hot pixel under the same background in both fits adds nothing
-        @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0, true) ==
-            (0.0f0, 0.0f0, 0.0f0)
-        @test GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 2112.0f0, 89.28f0, 89.28f0, 0.0f0)[2] > 1.0f6
-        # a pixel without a likelihood (count plus v not positive) gives NaN
-        @test isnan(first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 5.0f0, -1.0f0, 2.0f0, 0.0f0)))
-        @test first(GaussMLE._diff_accumulate((0.0f0, 0.0f0, 0.0f0), 0.0f0, 3.0f0, 2.0f0, 0.0f0)) == -1.0f0
+        # The end start replaces the best fit only when its log-likelihood is higher by more
+        # than the margin, on the Float32 objectives every start compares
+        M = Float32(GaussMLE._END_START_MARGIN)
+        @test !GaussMLE._end_start_wins(-41.0f0 + 0.9f0 * M, -41.0f0)
+        @test GaussMLE._end_start_wins(-41.0f0 + 1.1f0 * M, -41.0f0)
+        @test !GaussMLE._end_start_wins(-41.0f0, -41.0f0)
+        @test !GaussMLE._end_start_wins(-40.0f0, -39.0f0)
 
         # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
         # begins on that bound and stops there, within the stop tolerance of the maximum;
@@ -706,17 +649,6 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         e5, _ = fit(roi5, GaussMLEConfig(; psf_model = mt, backend = :cpu))
         @test e5.z < mt.z_range[2] && isfinite(e5.σ_z) && isfinite(e5.σ_x)
 
-        # the pixel-by-pixel difference equals the difference of the objectives where those
-        # are exact enough (two fits far apart), for both cameras; a fit against itself is 0
-        θb5 = Base.setindex(θ5, 0.0f0, 3)
-        for (cam, vmap) in ((Val(false), zeros(Float32, 5, 5)), (Val(true), fill(2.5f0, 5, 5)))
-            obj5(θ) = first(GaussMLE._lm_pass(θ, roi5, 5, mt, cam, vmap, Int32(1), Int32(1)))
-            dd(a, b) = first(
-                GaussMLE._objective_difference(a, b, roi5, 5, mt, cam, vmap, Int32(1), Int32(1))
-            )
-            @test dd(θ5, θb5) ≈ obj5(θ5) - obj5(θb5) rtol = 1.0e-3
-            @test dd(θ5, θ5) == 0
-        end
         # A scene where the end start decides: a PSF that narrows sharply above z = 0, its
         # focus 0.015 um below the upper end of z_range, an emitter 0.06 um above it. Every
         # fixed start ends at -0.055 um; the end start reaches the emitter.
@@ -737,9 +669,9 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test all(e -> abs(e.z - 0.06) < 0.005, smldn.emitters)
 
         # a best fit with no likelihood gives way to the end start's; one with none never wins
-        args5 = (roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1))
-        @test GaussMLE._end_start_replaces(θ5, -9.0f0, θb5, -Inf32, args5...)
-        @test !GaussMLE._end_start_replaces(θ5, -Inf32, θb5, -9.0f0, args5...)
+        @test GaussMLE._end_start_wins(-9.0f0, -Inf32)
+        @test !GaussMLE._end_start_wins(-Inf32, -9.0f0)
+        @test !GaussMLE._end_start_wins(NaN32, -9.0f0)
     end
 
     @testset "fit refuses a ROI beyond the lateral range" begin

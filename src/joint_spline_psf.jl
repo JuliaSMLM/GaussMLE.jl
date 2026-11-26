@@ -537,37 +537,6 @@ end
     return acc
 end
 
-# L(θa) - L(θb) over both views (`_objective_difference`), one loop over the views as in
-# `_lm_pass`.
-@inline function _objective_difference(
-        θa, θb, roi, box_size::Int, model::JointSplinePSFModel{T}, camera_model, variance_map,
-        corner_x, corner_y
-    ) where {T}
-    o = _joint_offset(model, corner_x, corner_y)
-    acc = (0.0, zero(T), zero(T))
-    for v in 1:2
-        ca = _view_context(model, v, θa, o, roi, variance_map, corner_x, corner_y)
-        θbv = _view_context(model, v, θb, o, roi, variance_map, corner_x, corner_y)[8]
-        acc = _view_objective_difference(acc, box_size, camera_model, ca..., θbv)
-    end
-    return acc
-end
-
-# A view with zero transmission predicts its background alone, exactly: its counts carry no
-# rounding of their own (`exact` in `_diff_accumulate`), so a hot pixel there, under the
-# same background in both fits, adds nothing to the difference or its error.
-@noinline function _view_objective_difference(
-        acc, box_size::Int, camera_model, vmodel, r, vmap, cx, cy, A, tr, θav, θbv
-    )
-    @inbounds for j in 1:box_size, i in 1:box_size
-        ua, _ = compute_pixel_derivatives(i, j, θav, vmodel)
-        ub, _ = compute_pixel_derivatives(i, j, θbv, vmodel)
-        w = _readout_variance(camera_model, ua, vmap, cx, cy, i, j)
-        acc = _diff_accumulate(acc, r[i, j], ua, ub, w, iszero(tr))
-    end
-    return acc
-end
-
 @inline function _final_pass(
         θ, roi, box_size::Int, model::JointSplinePSFModel{T}, camera_model, variance_map,
         corner_x, corner_y
@@ -706,16 +675,7 @@ end
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        better = if q < 0
-            true
-        elseif q < m
-            obj > obj_best
-        else
-            _end_start_replaces(
-                θ, obj, θ_best, obj_best, roi, box_size, psf_model, camera_model,
-                variance_map, corner_x, corner_y
-            )
-        end
+        better = q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, obj_best))
         if better
             θ_best = θ
             obj_best = obj

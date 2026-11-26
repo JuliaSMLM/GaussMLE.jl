@@ -73,8 +73,8 @@ uncertainties and p-values of every model change.
   Levenberg-Marquardt fit (Poisson objective; Poisson-shifted for sCMOS). By default it also
   fits from fixed z starts, one per 0.4 um of the central 80 % of `z_range`, then from the
   nearer end of the range when the best fit lies within 0.3 of the range's width of it, and
-  keeps the highest likelihood (the end start's fit only where it is higher by more than the
-  fit resolves). A MicroscopePSFs spline is zero outside its own grid, so its
+  keeps the highest likelihood (the end start's fit only where its log-likelihood is higher
+  by more than 0.5). A MicroscopePSFs spline is zero outside its own grid, so its
   `lateral_range` defaults to the largest the grid covers and a larger one is refused, and a
   ROI wider than the model covers is refused: a PSF cut off at its grid's edge is never
   fitted. A MicroscopePSFs `PlanePSF` of a spline keeps the spline's grid with z shifted by
