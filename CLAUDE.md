@@ -254,7 +254,24 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      `_optimize(::SplinePSFModel)` fits from the scan start and then from `starts - 1` fixed
      z starts (`_spline_start_z`; x, y, N, bg from the scan start; default count
      `_default_spline_starts`, one fixed start per 0.4 µm over the central 80 % of
-     `z_range`). `starts = 1` is the scan start alone
+     `z_range`), then, with at least one fixed start, once more from the nearer end of
+     `z_range` when the best fit so far lies within 0.3 R of it (`_end_start`, R the range's
+     width; the fixed starts reach only to 0.1 R from each end, and a focus near an end
+     leaves the emitters between it and that end without a start on their side of focus);
+     the end start's fit is kept only by `_end_start_wins(obj, obj_best, n)`: its Float32
+     objective (the one every start compares) above the best by more than
+     `_END_START_MARGIN` = 0.5 in log-likelihood (a likelihood ratio of e^0.5, the drop that
+     bounds a 68 % likelihood interval of one parameter) plus `(n - 1) u (|obj| + |obj_best|)`,
+     the bound of the rounding of two Float32 sums of n pixel terms (u = eps/2; every
+     deviance term is at most 0 where data + read-noise variance ≥ 0; n = box² for
+     SplinePSFModel, 2 box² for the joint model).
+     It starts on the z bound, and a win on a tie or on rounding would put an interior fit on
+     the bound (`Inf` σ). The bound is at most 0.014 up to 21 × 21 pixels; at 129 × 129 a
+     ROI of alike pixels rounded by 1.69 and, without it, kept an end start 0.05 lower in
+     log-likelihood. Not in the bound: a term's own rounding, about 1 at a hot pixel of
+     18,000 counts on an expected 20 (a fit its p-value rejects). A non-finite best gives way;
+     a non-finite end start never wins. Both `_optimize` methods use it.
+     One `_lm_fit` call site per `_optimize`. `starts = 1` is the scan start alone
 
 2. **Uncertainty (CRLB)**: Requires full Fisher Information Matrix
    - Full symmetric matrix needed for proper uncertainties

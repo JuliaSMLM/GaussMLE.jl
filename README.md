@@ -20,9 +20,11 @@ GaussMLE 0.5 supports KernelAbstractions 0.9 and 0.10. Reactant (every version f
 and CUDA 5 (5.9 or later). That environment runs the CPU and CUDA paths but not AMD
 GPUs, because AMDGPU 2.10 requires KernelAbstractions 0.10. A fresh environment resolves
 KernelAbstractions 0.10 and CUDA 6.5, which also run AMD GPUs.
-CUDA is supported at 5.9 to 5.x and 6.5 or later. CUDA 6.0 to 6.4 are excluded: 6.5 is
+CUDA is supported at 5.9 to 5.x and 6.5.1 or later. CUDA 6.0 to 6.4 are excluded: 6.5 is
 the first CUDA 6 that allows KernelAbstractions 0.10 (6.0 to 6.4 allow only 0.9, per the
-General registry), and 6.0 to 6.4 are untested with GaussMLE.
+General registry), and 6.0 to 6.4 are untested with GaussMLE. CUDA 6.5.0 is excluded
+because its synchronization after a fit does not return memory freed outside the memory
+pool (`JULIA_CUDA_MEMORY_POOL=none`) to the driver; 6.5.1 does.
 
 ## Quick Start
 
@@ -99,16 +101,19 @@ For IdealCamera fits, `photons` and `σ_photons` use photons, and `bg` and `σ_b
 
 ## Performance
 
-Benchmarked on AMD Ryzen Threadripper PRO 5975WX / NVIDIA RTX A6000, 11x11 ROIs, 10K fits:
+Fits per second on an AMD Ryzen 9 5950X (16 threads) and an NVIDIA RTX 4090 (CUDA.jl 6), simulated 11x11 ROIs, default fit settings; times include the transfers to and from the GPU:
 
-| Model | CPU (fits/s) | GPU (fits/s) |
-|-------|-------------|--------------|
-| GaussianXYNB (ideal) | 2,120 | 401,572 |
-| GaussianXYNB (sCMOS) | 2,077 | 261,590 |
-| GaussianXYNBS (ideal) | 1,633 | 215,745 |
-| AstigmaticXYZNB (ideal) | 1,341 | 265,083 |
+| Model | CPU, 10K fits | GPU, 10K fits | GPU, 100K fits in one batch |
+|-------|--------------:|--------------:|----------------------------:|
+| GaussianXYNB (ideal) | 200,000 | 2,500,000 | 1,700,000 |
+| GaussianXYNB (sCMOS) | 190,000 | 1,700,000 | 1,200,000 |
+| GaussianXYNBS (ideal) | 170,000 | 1,700,000 | 1,700,000 |
+| GaussianXYNBSXSY (ideal) | 67,000 | 1,800,000 | 1,600,000 |
+| AstigmaticXYZNB (ideal) | 91,000 | 1,000,000 | 1,400,000 |
+| SplinePSFModel (ideal) | 17,000 | 400,000 | 770,000 |
+| JointSplinePSFModel (ideal, two ROIs per fit) | 11,000 | 170,000 | 290,000 |
 
-GPU throughput scales with batch size; these numbers use the default batch size of 10K. Run the GPU test group (`GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'`) to benchmark your hardware.
+Each number is the mean of the same two runs of every row (best of three timed fits after a warm-up fit); the two runs differed by up to 6 % on the CPU and 19 % on the GPU. The spline rows fit a tabulated astigmatic PSF with a `z_range` of ±0.6 µm from the default 5 z starts, plus one from an end of the range for a fit near that end, so each costs up to 6 Levenberg-Marquardt fits. The 100K column sets `batch_size = 100_000`; the default is 10K ROIs per GPU batch. Run the GPU test group (`GROUP=GPU julia --project -e 'using Pkg; Pkg.test()'`) to benchmark your hardware.
 
 ## Algorithm Reference
 

@@ -116,7 +116,7 @@ workgroup of up to 1024, which never ran on that GPU.
 
 Memory waits query HIP free memory on each visible AMD device. There is no NVML-style
 contention check on AMD: ROCm under WSL has no SMI process/utilization data. On success,
-the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
+the fit frees its device arrays and the HIP pool's cached memory is reclaimed. Failure cleanup performs full garbage
 collection, then attempts synchronization and HIP pool reclamation on the failed
 device, restoring the previous device afterward. HIP cleanup errors are ignored;
 other errors propagate. No CUDA-style primary context is released.
@@ -181,8 +181,9 @@ GPU fault and never followed by a CPU run.
 Cleanup after a failure (CUDA context release, AMD synchronize and reclaim) can itself
 throw on a poisoned context, for example after a sticky fault such as an illegal address.
 That failure is logged as a warning and never replaces the original error, which `:gpu`
-rethrows and `:auto` handles as above. The same holds for the reclaim after a successful
-fit.
+rethrows and `:auto` handles as above. The same holds for freeing a batch's device arrays
+and for the reclaim after a successful fit: a failure there only warns, and the results already
+on the host stand.
 
 ### Three Failure Modes
 
@@ -228,7 +229,7 @@ If other processes are present but memory is sufficient and compute utilization 
 
 **On failure:** when the context could not be created, `_release_gpu_context()` makes a best effort to release this process's reference to the device's primary context by calling `cuDevicePrimaryCtxRelease`, so its reservation cannot block other processes; `CUDA.reclaim()` is not called then, because it requires an active context and would either hang or silently re-create the released context. A live context is kept: releasing it under CUDA.jl makes every later call in the process fail with `CONTEXT_IS_DESTROYED`, so a retry with a smaller batch could not run. Instead the failed attempt's arrays are collected (`GC.gc(true)`) and the pool's memory is returned (`CUDA.reclaim()`).
 
-**On success:** `CUDA.reclaim()` is called after all GPU batches complete to return pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability.
+**On success:** the fit frees each batch's device arrays as soon as the batch's results are on the host, and the variance map and the device copy of a PSF table after the last batch. It then trims CUDA.jl's memory pool, which returns the pooled memory to the OS. Without this, NVML reports the memory as used even though no GPU arrays exist, blocking other processes waiting for GPU availability. The fit runs no garbage collection of its own: with CUDA.jl 6, `CUDA.reclaim()` runs a full collection first (tens of milliseconds per fit call, more in a process with a large heap), so the fit runs the other steps of that reclaim itself: it waits for the frees, releases the frees CUDA.jl defers (on a GPU without stream-ordered frees, and for memory used on the per-thread stream, for a caller that fits inside `CUDA.stream!(CUDA.per_thread_stream())`), and trims the pool. The trim step is internal to CUDA.jl; on a CUDA.jl 6 release that lacks it, the fit runs the full `CUDA.reclaim(CUDA.RECLAIM_GC)`, with its collection, only when the pool holds more than 256 MiB it does not use. A graph capture in progress on another task skips the trim, as it skips CUDA.jl's own reclaim. CUDA.jl's own collection under memory pressure can still run while the fit synchronizes, in a process that holds most of the GPU's memory. With CUDA.jl 5.11, a fit inside `CUDA.stream!(CUDA.per_thread_stream())` crashes CUDA.jl's synchronization worker (with earlier GaussMLE releases too); fit on the per-thread stream only with CUDA.jl 6. With CUDA.jl 5, `CUDA.reclaim()` is the trim, as before.
 
 ### Multi-GPU Support
 
@@ -272,15 +273,17 @@ The GPU group also checks spline CPU/GPU agreement and GPU bias/CRLB in each 0.1
 band. Independent spline Monte Carlo validation remains in the Long group on CPU.
 
 `SplinePSFModel` fits each ROI from several z starts by default (six for a ±1 µm
-`z_range`), so a spline fit costs several Levenberg-Marquardt fits; `starts = 1` fits from
-the scan start alone. `AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored
-z. On an 8-thread workstation CPU (load average about 8 from other users), 10,000 simulated
-ROIs of 15 px (3,000 photons, z within ±0.5 µm), fitted with a spline of an astigmatic
-Gaussian PSF and `z_range = (-1, 1)`, ran at 26,600 fits/s with `starts = 1` and 3,900
-fits/s with the default six starts (6.8 times the time), against 18,100 fits/s for
-`AstigmaticXYZNB` with the same widths (focal offset 0.25 µm). Its second start costs 3.5
+`z_range`, and one more from an end of the range for a fit near that end), so a spline fit
+costs several Levenberg-Marquardt fits; `starts = 1` fits from the scan start alone.
+`AstigmaticXYZNB` fits each ROI twice, the second time from the mirrored z. On 16 threads of
+an AMD Ryzen 9 5950X and on an NVIDIA RTX 4090, 10,000 simulated ROIs of 15 px (3,000
+photons, z within ±0.5 µm), fitted with a spline of an astigmatic Gaussian PSF and
+`z_range = (-1, 1)`, ran at 45,000 fits/s on the CPU and 650,000 on the GPU with
+`starts = 1`, and at 5,800 and 130,000 fits/s with the default starts (7.7 and about 5 times
+the time), against 33,000 and 320,000 fits/s for `AstigmaticXYZNB` with the same widths
+(focal offset 0.25 µm). On an 8-thread CPU, the second start of `AstigmaticXYZNB` cost 3.5
 times the time of one start with that strong astigmatism and 2.1 times with a focal offset
-of 0.05 µm. These ratios are on one machine and were not measured on a GPU.
+of 0.05 µm.
 
 GPU throughput scales with batch size and varies significantly by GPU model. Typical speedups range from 100-200x over single-threaded CPU for large batches.
 
@@ -389,5 +392,5 @@ The CPU path uses work-groups of 64 fits.
 3. **Compute**: Run fitting kernel
 4. **Transfer**: Copy results back to CPU
 5. **Repeat**: Next batch (steps 2-4)
-6. **Reclaim**: Return GPU memory pool to OS after all batches succeed
+6. **Free and reclaim**: Free each batch's device arrays, then return the GPU memory pool to the OS after all batches succeed
 7. **Output**: BasicSMLD with fitted parameters

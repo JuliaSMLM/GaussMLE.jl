@@ -224,12 +224,64 @@ at those values (grid spacing at most 0.1 µm). One Levenberg-Marquardt fit reac
 maximum of the basin it starts in, and the scan start is often in the wrong basin for a
 defocused ROI. By default the fit therefore also starts from several fixed z values, as
 SMAP's fitter does, and keeps the fit with the highest likelihood. The `starts` keyword
-sets the total number of starts (the scan start plus `starts - 1` fixed ones). The default
+sets the number of starts before the end start described below (the scan start plus
+`starts - 1` fixed ones). The default
 is one fixed start per 0.4 µm over the central 80 % of `z_range`: 6 starts for ±1 µm, 5 for
 ±0.6 µm and 4 for ±0.5 µm. A single fixed start sits at the center of `z_range`; `m >= 2`
 fixed starts sit at `center + 0.8 R (q / (m - 1) - 1/2)` for `q = 0 .. m - 1`, with `R`
 the width of `z_range`. Each fixed start keeps the scan start's x, y, N and background, and
 each start costs one more Levenberg-Marquardt fit with the full `iterations`.
+
+With at least one fixed start, the fit may run once more: when the best fit so far lies
+within `0.3 R` of an end of `z_range`, it also starts at that end. A fit usually stays on the side of
+focus it starts on, and the fixed starts reach only to `0.1 R` from each end, so when a
+calibration's focus lies near an end of its range, an emitter between the focus and that
+end has no fixed start on its side; with a weakly astigmatic PSF, whose two sides of focus
+look alike, its fit then often ends on the other side, which lies within `0.2 R` of the end.
+On simulated pairs of ROIs of such a PSF, its focus 0.075 µm inside the end of a 1 µm range,
+the joint fit ended more than 0.03 µm in z from a fit from 81 starts over the whole range for
+up to half of the emitters 0.015 to 0.055 µm from the end without this start, and for at most
+4 of 300 with it, at 20,000 photons. At 2,000 photons it changes little (7 to 9 % of these
+fits end at the other maximum with it, 10 to 14 % without): there the two sides of focus
+differ by less than the margin below, the 81-start fit itself lies more than 0.03 µm from the
+truth for most of these ROIs, and the noise decides the side of focus. Fits away from the
+ends take no more time.
+
+The end start's fit replaces the best one only when its log-likelihood is higher by more than
+0.5, compared in the same single-precision arithmetic as every other start. Two maxima closer
+than that are hardly told apart by the data: their likelihood ratio is below e^0.5 ≈ 1.65,
+the drop in log-likelihood that bounds a 68 % likelihood interval of one parameter. The margin
+matters because the end start begins on the bound of z: a fit that starts within its stop
+tolerance of a maximum stops where it starts, and taken on a tie it would put an interior fit
+on the bound, where it reports infinite uncertainties.
+
+Each log-likelihood is a single-precision sum over the ROI's pixels, whose rounding grows
+with the number of pixels, so the end start must also win by more than the largest error that
+rounding can have: `(n - 1) u (|L1| + |L2|)` for `n` pixels (both images' for
+`JointSplinePSFModel`), `u = 2^-24`, and `L1`, `L2` the two log-likelihoods in the deviance
+form the fit climbs, each term at most 0 (wherever the count plus the read-noise variance is
+at least 0). On simulated fits the difference of two starts'
+log-likelihoods rounded by at most 0.002 on ROIs up to 21 x 21 pixels, where the bound is at
+most 0.014, and by up to 0.06 at 51 x 51 (bound 0.43). At 129 x 129 it rounded by up to 1.9,
+and without the bound an end start whose log-likelihood was 0.05 lower moved a fit 0.036 µm in
+z. The bound, 13 to 17 there, keeps the earlier fit on such ROIs. A pixel whose count is
+hundreds of times its expected count (a hot pixel) rounds by more on its own, about 1 for
+18,000 counts on an expected 20, in a fit its p-value rejects. On six simulated calibrations, 20,000 one-image fits, a margin
+of 0.5 missed the highest maximum by more than 0.5 as often as a comparison in double
+precision down to 1e-4 (50 fits, against 81 with the fixed starts alone and 74 with a margin
+of 1) and put fewer fits on the z bound (177 against 223).
+
+That higher maximum is not always nearer the truth, and at low counts it is often on the bound
+itself. On one image of the same PSF and range, 9 x 9 ROIs, background 20, 300 emitters at
+each of z = -0.06, 0, 0.02, 0.04 and 0.06 µm from focus, the end start brought 211 more of the
+1,500 fits within 0.03 µm of the truth at 20,000 photons, with 5 more on the z bound; at 5,000
+photons 36 more within 0.03 µm and 59 more on the bound; at 2,000 photons 10 more and 43 more.
+Emitters on the far side of focus lose a few: at z = -0.06 µm, 113 of 300 fits ended within
+0.03 µm of the truth at 2,000 photons with the end start and 117 without, 186 and 204 at 5,000,
+289 and 291 at 20,000. Each changed fit is the one the data favor (the higher likelihood); a
+fit on the bound reports infinite uncertainties, so filtering on finite uncertainties removes
+it.
+
 `starts = 1` fits from the scan start alone, which often settles in a wrong z basin of a
 defocused ROI: on simulated 15 px ROIs of an aberrated vector PSF at |z| 0.4 to 0.5 µm,
 one start ended more than 0.05 below the best log-likelihood found in 116 of 400 fits and

@@ -593,6 +593,120 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         end
     end
 
+    @testset "starts: the end start" begin
+        # after the fixed starts, a best fit within 0.3 R of an end of z_range starts once
+        # more at that end (R = 1 here)
+        zr = (-0.925, 0.075)
+        m = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = zr)
+        @test GaussMLE._end_start(m, -0.06f0) == (true, m.z_range[2])
+        @test GaussMLE._end_start(m, -0.7f0) == (true, m.z_range[1])
+        @test GaussMLE._end_start(m, -0.45f0) == (false, -0.45f0)
+
+        # starts = 1 is one fit from the scan start, also where the fit ends near an end
+        one_start = SplinePSFModel(astig_shape; pixel_size = 0.1, z_range = zr, starts = 1)
+        box = 11
+        cons = GaussMLE.default_constraints(one_start, box)
+        vmap = zeros(Float32, box, box)
+        Random.seed!(12)
+        roi = Float32.(poisson_noise(roi_at(one_start, 0.05f0; photons = 2000)))
+        θ0 = GaussMLE.simple_initialize(roi, box, one_start)
+        args = (Val(false), vmap, Int32(1), Int32(1), cons, 50, θ0)
+        θ_one = first(GaussMLE._optimize(roi, box, one_start, args...))
+        @test θ_one == first(GaussMLE._lm_fit(roi, box, one_start, args...))
+        @test first(GaussMLE._end_start(one_start, θ_one[3]))
+
+        # The end start replaces the best fit only when its log-likelihood is higher by more
+        # than the margin plus the bound of the rounding of the two Float32 objectives, sums
+        # over n pixels: (n - 1) u (|obj| + |obj_best|), 0.0119 for 101 pixels at -1000
+        M = Float32(GaussMLE._END_START_MARGIN)
+        @test !GaussMLE._end_start_wins(-41.0f0 + 0.9f0 * M, -41.0f0, 81)
+        @test GaussMLE._end_start_wins(-41.0f0 + 1.1f0 * M, -41.0f0, 81)
+        @test !GaussMLE._end_start_wins(-41.0f0, -41.0f0, 81)
+        @test !GaussMLE._end_start_wins(-40.0f0, -39.0f0, 81)
+        @test !GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 101)
+        @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.02f0, -1000.0f0, 101)
+        @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 1)
+        # objectives near floatmax(Float32): the bound must not overflow (a gain of 1.7e37
+        # against a bound of 6.4e32 wins), and with one pixel it is 0, not NaN
+        @test GaussMLE._end_start_wins(-2.1655855f38, -2.3330158f38, 25)
+        @test GaussMLE._end_start_wins(-2.1655855f38, -2.3330158f38, 1)
+
+        # A 129 x 129 ROI of alike pixels: each pixel 0.948 standard deviations of its
+        # background of 3,000 above or below its expected count, in a checkerboard. The
+        # terms round alike and their sums by more than the margin: the end start's Float32
+        # objective came out 1.64 higher, its exact log-likelihood 0.05 lower, and kept, it
+        # moved the fit from z = 0.062 to 0.097 um (bound 14.8). The fit keeps the earlier
+        # start.
+        swirl(x, y, z) = (
+            w = 0.13 + 20 * (z - 0.08)^2;
+            a = 2 * (z - 0.08);
+            X = cos(a) * x + sin(a) * y;
+            Y = cos(a) * y - sin(a) * x;
+            exp(-X^2 / (2w^2) - Y^2 / (2 * (0.13^2 / w)^2))
+        )
+        mw = SplinePSFModel(
+            swirl; pixel_size = 0.1, z_range = (-0.1, 0.1), lateral_range = 9.13, starts = 2
+        )
+        θw = SVector{5, Float32}(65.11, 64.93, 0.061852, 12000, 3000)
+        roiw = [
+            Float32(GaussMLE.evaluate_psf(mw, i, j, θw) - (-1)^(i + j) * 0.948 * sqrt(3000))
+                for i in 1:129, j in 1:129
+        ]
+        ew, _ = fit(roiw, GaussMLEConfig(; psf_model = mw, backend = :cpu))
+        @test abs(ew.z - 0.0619) < 0.002
+        @test isfinite(ew.σ_z) && isfinite(ew.σ_x)
+
+        # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
+        # begins on that bound and stops there, within the stop tolerance of the maximum;
+        # it reached an objective higher by one Float32 ulp only and, kept, put the fit on
+        # the bound, whose uncertainties are Inf. The fit must stay inside, with finite
+        # uncertainties.
+        tilt(x, y, z) = (
+            w = 0.13 + 0.1z;
+            exp(-(x - 0.23z)^2 / (2w^2) - y^2 / (2 * (0.13^2 / w)^2))
+        )
+        mt = SplinePSFModel(tilt; pixel_size = 0.1, z_range = (-0.5, 0.5), lateral_range = 0.4)
+        roi5 = Float32[
+            31.746 59.603 86.186 104.111 101.515
+            61.027 123.167 149.827 213.717 173.846
+            44.609 82.929 135.723 156.53 137.195
+            32.865 43.785 37.853 64.399 50.42
+            24.911 18.98 19.915 23.757 32.012
+        ]
+        cons5 = GaussMLE.default_constraints(mt, 5)
+        θ5, _ = GaussMLE._optimize(
+            roi5, 5, mt, Val(false), zeros(Float32, 5, 5), Int32(1), Int32(1), cons5, 100,
+            GaussMLE.simple_initialize(roi5, 5, mt)
+        )
+        @test 0.4999f0 < θ5[3] < mt.z_range[2]
+        e5, _ = fit(roi5, GaussMLEConfig(; psf_model = mt, backend = :cpu))
+        @test e5.z < mt.z_range[2] && isfinite(e5.σ_z) && isfinite(e5.σ_x)
+
+        # A scene where the end start decides: a PSF that narrows sharply above z = 0, its
+        # focus 0.015 um below the upper end of z_range, an emitter 0.06 um above it. Every
+        # fixed start ends at -0.055 um; the end start reaches the emitter.
+        narrowing(x, y, z) = (
+            t = clamp((z - 0.003) / 0.087, 0.0, 1.0);
+            h = t * t * (3 - 2t);
+            w = (1 - h) * (0.12 + 0.4 * (z + 0.055)^2) + h * 0.014;
+            exp(-((x - 0.04h)^2 + y * y) / (2 * w * w)) / (w * w)
+        )
+        mn = SplinePSFModel(narrowing; pixel_size = 0.1, z_range = (-0.925, 0.075), lateral_range = 1.0)
+        mun = [
+            Float64(GaussMLE.evaluate_psf(mn, i, j, SVector{5, Float32}(7.11, 6.93, 0.06, 2.0e4, 5)))
+                for i in 1:13, j in 1:13
+        ]
+        Random.seed!(31)
+        datan = Float32.(poisson_noise(repeat(mun; outer = (1, 1, 3))))
+        smldn, _ = fit(datan, GaussMLEConfig(; psf_model = mn, backend = :cpu))
+        @test all(e -> abs(e.z - 0.06) < 0.005, smldn.emitters)
+
+        # a best fit with no likelihood gives way to the end start's; one with none never wins
+        @test GaussMLE._end_start_wins(-9.0f0, -Inf32, 81)
+        @test !GaussMLE._end_start_wins(-Inf32, -9.0f0, 81)
+        @test !GaussMLE._end_start_wins(NaN32, -9.0f0, 81)
+    end
+
     @testset "fit refuses a ROI beyond the lateral range" begin
         # The table is zero beyond lateral_range plus one pixel, so a ROI whose
         # half-diagonal exceeds lateral_range would be fitted with a truncated PSF.

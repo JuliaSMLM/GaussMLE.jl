@@ -177,6 +177,8 @@ Base.length(::PSFModel{N, T}) where {N, T} = N
 # Gaussian models contain only scalars. Tabulated models specialize these host helpers.
 _prepare_psf_model(backend, model::PSFModel) = model
 _psf_table_bytes(::PSFModel) = 0
+# The arrays a model holds (a tabulated PSF's coefficients); none for analytic models.
+_table_arrays(::PSFModel) = ()
 
 # Whether parameter 3 is axial position (x, y, z, N, bg ordering).
 _has_axial_position(::Type{<:PSFModel}) = false
