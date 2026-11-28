@@ -264,7 +264,7 @@ at least 0). On simulated fits the difference of two starts'
 log-likelihoods rounded by at most 0.002 on ROIs up to 21 x 21 pixels, where the bound is at
 most 0.014, and by up to 0.06 at 51 x 51 (bound 0.43). At 129 x 129 it rounded by up to 1.9,
 and without the bound an end start whose log-likelihood was 0.05 lower moved a fit 0.036 µm in
-z. The bound, 15 to 17 there, keeps the earlier fit on such ROIs. A pixel whose count is
+z. The bound, 13 to 17 there, keeps the earlier fit on such ROIs. A pixel whose count is
 hundreds of times its expected count (a hot pixel) rounds by more on its own, about 1 for
 18,000 counts on an expected 20, in a fit its p-value rejects. On six simulated calibrations, 20,000 one-image fits, a margin
 of 0.5 missed the highest maximum by more than 0.5 as often as a comparison in double

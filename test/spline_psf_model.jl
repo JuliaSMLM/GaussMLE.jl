@@ -626,6 +626,10 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test !GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 101)
         @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.02f0, -1000.0f0, 101)
         @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 1)
+        # objectives near floatmax(Float32): the bound must not overflow (a gain of 1.7e37
+        # against a bound of 6.4e32 wins), and with one pixel it is 0, not NaN
+        @test GaussMLE._end_start_wins(-2.1655855f38, -2.3330158f38, 25)
+        @test GaussMLE._end_start_wins(-2.1655855f38, -2.3330158f38, 1)
 
         # A 129 x 129 ROI of alike pixels: each pixel 0.948 standard deviations of its
         # background of 3,000 above or below its expected count, in a checkerboard. The
@@ -650,6 +654,7 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         ]
         ew, _ = fit(roiw, GaussMLEConfig(; psf_model = mw, backend = :cpu))
         @test abs(ew.z - 0.0619) < 0.002
+        @test isfinite(ew.σ_z) && isfinite(ew.σ_x)
 
         # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
         # begins on that bound and stops there, within the stop tolerance of the maximum;

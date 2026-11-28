@@ -241,7 +241,7 @@ const _END_START_MARGIN = 0.5
 # Σ|term| = |obj|.
 # On simulated fits the difference of two starts' objectives rounded by at most 0.002 on
 # ROIs up to 21 × 21 pixels (bound 0.014) and 0.06 at 51 × 51 (bound 0.43); at 129 × 129
-# by up to 1.9 (bound 15 to 17), where without the bound an end start 0.05 lower in
+# by up to 1.9 (bound 13 to 17), where without the bound an end start 0.05 lower in
 # log-likelihood replaced the fit. The terms' own rounding is not in the bound: at most
 # 0.003 up to 31 × 31 and 0.09 at 129 × 129, except at a pixel hundreds of times its
 # expected count (a hot pixel), whose term alone rounds by about 1 at 18,000 counts on an
@@ -250,7 +250,10 @@ const _END_START_MARGIN = 0.5
 @inline function _end_start_wins(obj::T, obj_best::T, n::Int) where {T}
     isfinite(obj) || return false
     isfinite(obj_best) || return true
-    rounding = T(n - 1) * (eps(T) / 2) * (abs(obj) + abs(obj_best))
+    # each magnitude scaled before the two are added, so that objectives near floatmax(T)
+    # cannot overflow the sum (and n = 1 gives 0, not 0 * Inf)
+    s = T(n - 1) * (eps(T) / 2)
+    rounding = s * abs(obj) + s * abs(obj_best)
     return obj - obj_best > T(_END_START_MARGIN) + rounding
 end
 

@@ -267,7 +267,7 @@ The kernel uses the Fisher matrix for both optimization and uncertainty estimati
      SplinePSFModel, 2 box² for the joint model).
      It starts on the z bound, and a win on a tie or on rounding would put an interior fit on
      the bound (`Inf` σ). The bound is at most 0.014 up to 21 × 21 pixels; at 129 × 129 a
-     ROI of alike pixels rounded by 1.6 and, without it, kept an end start 0.05 lower in
+     ROI of alike pixels rounded by 1.69 and, without it, kept an end start 0.05 lower in
      log-likelihood. Not in the bound: a term's own rounding, about 1 at a hot pixel of
      18,000 counts on an expected 20 (a fit its p-value rejects). A non-finite best gives way;
      a non-finite end start never wins. Both `_optimize` methods use it.
