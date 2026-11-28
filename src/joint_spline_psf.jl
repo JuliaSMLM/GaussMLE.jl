@@ -675,7 +675,9 @@ end
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        better = q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, obj_best))
+        # the objective sums the pixels of both images
+        better = q < 0 ||
+            (q < m ? obj > obj_best : _end_start_wins(obj, obj_best, 2 * box_size * box_size))
         if better
             θ_best = θ
             obj_best = obj

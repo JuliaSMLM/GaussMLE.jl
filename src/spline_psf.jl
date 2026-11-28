@@ -227,23 +227,31 @@ end
 # (`_end_start_wins`).
 const _END_START_MARGIN = 0.5
 
-# Whether the end start's fit (objective obj) replaces the best fit so far (obj_best): only
-# when its log-likelihood is higher by more than `_END_START_MARGIN`, from the same Float32
-# objectives the fixed starts compare. Two maxima closer than that are hardly told apart by
-# the data: their likelihood ratio is below e^0.5 = 1.65, the drop that bounds a 68 %
+# Whether the end start's fit (objective obj) replaces the best fit so far (obj_best), each
+# objective the Float32 sum of n pixel terms that every start compares: only when its
+# log-likelihood is higher by more than `_END_START_MARGIN` plus the largest error the
+# rounding of the two sums can have. Two maxima closer than the margin are hardly told apart
+# by the data: their likelihood ratio is below e^0.5 = 1.65, the drop that bounds a 68 %
 # likelihood interval of one parameter. The end start begins on a bound of z, and a fit that
 # starts within the stop tolerance of a maximum stops where it starts; taken on a tie or on
 # rounding, it would put an interior fit on the bound, whose uncertainties are `Inf`
-# (`_mark_pinned_fits!`). The margin is far above the objectives' Float32 rounding, also on
-# ROIs whose pixels are alike, where it adds up (at most 0.03 on those of the review rounds);
-# only a pixel whose count is hundreds of times its expected count (a hot pixel) rounds by
-# more, about 1 for 18,000 counts on an expected 20, in a fit its p-value rejects. A best
-# fit with no likelihood (a non-finite objective) gives way to one with a likelihood; an end
-# start with none never wins.
-@inline function _end_start_wins(obj::T, obj_best::T) where {T}
+# (`_mark_pinned_fits!`). Terms added in turn round by at most (n - 1) u Σ|term| in all
+# (u = eps/2, to first order), and no term of the deviance is above 0 where data plus
+# read-noise variance is at least 0 (every pixel but an sCMOS one far below its offset), so
+# Σ|term| = |obj|.
+# On simulated fits the difference of two starts' objectives rounded by at most 0.002 on
+# ROIs up to 21 × 21 pixels (bound 0.014) and 0.06 at 51 × 51 (bound 0.43); at 129 × 129
+# by up to 1.9 (bound 15 to 17), where without the bound an end start 0.05 lower in
+# log-likelihood replaced the fit. The terms' own rounding is not in the bound: at most
+# 0.003 up to 31 × 31 and 0.09 at 129 × 129, except at a pixel hundreds of times its
+# expected count (a hot pixel), whose term alone rounds by about 1 at 18,000 counts on an
+# expected 20, in a fit its p-value rejects. A best fit with no likelihood (a non-finite
+# objective) gives way to one with a likelihood; an end start with none never wins.
+@inline function _end_start_wins(obj::T, obj_best::T, n::Int) where {T}
     isfinite(obj) || return false
     isfinite(obj_best) || return true
-    return obj - obj_best > T(_END_START_MARGIN)
+    rounding = T(n - 1) * (eps(T) / 2) * (abs(obj) + abs(obj_best))
+    return obj - obj_best > T(_END_START_MARGIN) + rounding
 end
 
 function _spline_pixel_size(::Type{T}, pixel_size::Union{Real, Tuple{Real, Real}}) where {T}
@@ -844,7 +852,8 @@ end
 # z_range that `_end_start` picks for the best fit so far. Each start runs to convergence or
 # the `iterations` cap, and the fit keeps the θ with the strictly higher objective; on a tie
 # the earlier start wins, the scan start first. The end start must win by more than
-# `_END_START_MARGIN` in log-likelihood (`_end_start_wins`). The fit counts as converged
+# `_END_START_MARGIN` in log-likelihood plus the rounding bound of the two objectives, sums
+# over the box's pixels (`_end_start_wins`). The fit counts as converged
 # when the start it keeps met the stop test. One `_lm_fit` call site, so the kernel holds
 # one copy of the fit.
 @inline function _optimize(
@@ -869,7 +878,8 @@ end
             roi, box_size, psf_model, camera_model, variance_map, corner_x, corner_y,
             constraints, iterations, θs
         )
-        better = q < 0 || (q < m ? obj > obj_best : _end_start_wins(obj, obj_best))
+        better = q < 0 ||
+            (q < m ? obj > obj_best : _end_start_wins(obj, obj_best, box_size * box_size))
         if better
             θ_best = θ
             obj_best = obj

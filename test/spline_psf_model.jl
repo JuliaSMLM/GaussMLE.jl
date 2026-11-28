@@ -616,12 +616,40 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test first(GaussMLE._end_start(one_start, θ_one[3]))
 
         # The end start replaces the best fit only when its log-likelihood is higher by more
-        # than the margin, on the Float32 objectives every start compares
+        # than the margin plus the bound of the rounding of the two Float32 objectives, sums
+        # over n pixels: (n - 1) u (|obj| + |obj_best|), 0.0119 for 101 pixels at -1000
         M = Float32(GaussMLE._END_START_MARGIN)
-        @test !GaussMLE._end_start_wins(-41.0f0 + 0.9f0 * M, -41.0f0)
-        @test GaussMLE._end_start_wins(-41.0f0 + 1.1f0 * M, -41.0f0)
-        @test !GaussMLE._end_start_wins(-41.0f0, -41.0f0)
-        @test !GaussMLE._end_start_wins(-40.0f0, -39.0f0)
+        @test !GaussMLE._end_start_wins(-41.0f0 + 0.9f0 * M, -41.0f0, 81)
+        @test GaussMLE._end_start_wins(-41.0f0 + 1.1f0 * M, -41.0f0, 81)
+        @test !GaussMLE._end_start_wins(-41.0f0, -41.0f0, 81)
+        @test !GaussMLE._end_start_wins(-40.0f0, -39.0f0, 81)
+        @test !GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 101)
+        @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.02f0, -1000.0f0, 101)
+        @test GaussMLE._end_start_wins(-1000.0f0 + M + 0.005f0, -1000.0f0, 1)
+
+        # A 129 x 129 ROI of alike pixels: each pixel 0.948 standard deviations of its
+        # background of 3,000 above or below its expected count, in a checkerboard. The
+        # terms round alike and their sums by more than the margin: the end start's Float32
+        # objective came out 1.64 higher, its exact log-likelihood 0.05 lower, and kept, it
+        # moved the fit from z = 0.062 to 0.097 um (bound 14.8). The fit keeps the earlier
+        # start.
+        swirl(x, y, z) = (
+            w = 0.13 + 20 * (z - 0.08)^2;
+            a = 2 * (z - 0.08);
+            X = cos(a) * x + sin(a) * y;
+            Y = cos(a) * y - sin(a) * x;
+            exp(-X^2 / (2w^2) - Y^2 / (2 * (0.13^2 / w)^2))
+        )
+        mw = SplinePSFModel(
+            swirl; pixel_size = 0.1, z_range = (-0.1, 0.1), lateral_range = 9.13, starts = 2
+        )
+        θw = SVector{5, Float32}(65.11, 64.93, 0.061852, 12000, 3000)
+        roiw = [
+            Float32(GaussMLE.evaluate_psf(mw, i, j, θw) - (-1)^(i + j) * 0.948 * sqrt(3000))
+                for i in 1:129, j in 1:129
+        ]
+        ew, _ = fit(roiw, GaussMLEConfig(; psf_model = mw, backend = :cpu))
+        @test abs(ew.z - 0.0619) < 0.002
 
         # A ROI whose best fit lies 2e-6 um inside the upper end of z_range. The end start
         # begins on that bound and stops there, within the stop tolerance of the maximum;
@@ -669,9 +697,9 @@ GaussMLE.Adapt.adapt_storage(::Type{PtrArray}, a::Array{T, 3}) where {T} =
         @test all(e -> abs(e.z - 0.06) < 0.005, smldn.emitters)
 
         # a best fit with no likelihood gives way to the end start's; one with none never wins
-        @test GaussMLE._end_start_wins(-9.0f0, -Inf32)
-        @test !GaussMLE._end_start_wins(-Inf32, -9.0f0)
-        @test !GaussMLE._end_start_wins(NaN32, -9.0f0)
+        @test GaussMLE._end_start_wins(-9.0f0, -Inf32, 81)
+        @test !GaussMLE._end_start_wins(-Inf32, -9.0f0, 81)
+        @test !GaussMLE._end_start_wins(NaN32, -9.0f0, 81)
     end
 
     @testset "fit refuses a ROI beyond the lateral range" begin
